@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLD practice problems</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m6-5">
+<main class="lesson">
+
+<section class="story">
+  <h2>Building a toy town from Lego</h2>
+  <p>You get a big box of Lego and a request: "Build me a railway station." You do not start by snapping bricks. First you ask: "How many platforms? Do trains go both ways?" Then you pick the pieces: platform, train, signal. Then you decide which piece connects to which. Only then do you build.</p>
+  <p>Low-level design interviews work the same way. The interviewer says "Design a parking lot." You ask questions, pick the classes, connect them, and then write the important methods. Talking through the steps matters as much as the final code.</p>
+</section>
+
+<section class="explain">
+  <h2>The LLD interview flow, then five problems</h2>
+  <p>Use these seven steps every time. In a 45-minute round, spend about 5 on requirements, 10 on entities and relationships, 5 on the diagram, 20 on key methods and patterns, and 5 on edge cases.</p>
+  <ol>
+    <li><b>Requirements:</b> ask questions and write down what is in and out of scope.</li>
+    <li><b>Entities:</b> list the nouns. They become classes.</li>
+    <li><b>Relationships:</b> who owns whom, who uses whom, and how many (see <a href="m6-4.html">UML class diagrams</a>).</li>
+    <li><b>Class diagram:</b> draw it.</li>
+    <li><b>Key methods:</b> write the two or three methods that carry the real logic.</li>
+    <li><b>Patterns:</b> use one only where behaviour varies (see <a href="m6-3.html">design patterns</a> and <a href="m6-2.html">SOLID</a>).</li>
+    <li><b>Edge cases:</b> full, empty, invalid, and concurrency.</li>
+  </ol>
+  <p>Every skeleton below is plain TypeScript, kept small on purpose, with time passed in as a number so the output is the same every run. They compile with <code>tsc --strict</code> and the outputs are real. They keep data in memory; a real system would save it in a database.</p>
+  <div class="warn">Concurrency: these skeletons are safe only because one Node process runs one piece of code at a time. As soon as two servers or two database calls can race (two people picking the last parking spot or the same cinema seat), you need a database transaction, a row lock or a unique constraint. The system-design version of this problem is in <a href="m5-6.html">Ticket booking</a>.</div>
+
+  <h3>1. Parking lot</h3>
+  <p><b>Clarifying questions:</b> What vehicle types (bike, car, truck)? One floor or many? Fixed spot sizes? Fee: per hour, flat, or by vehicle type? Pay at exit or at a machine? Multiple entrances? Is a lost ticket in scope?</p>
+  <p><b>Classes and relationships:</b> <code>ParkingLot</code> owns many <code>Spot</code>s (composition) and creates <code>Ticket</code>s. A <code>Ticket</code> refers to a <code>Vehicle</code> and a spot. A fee rule sits behind an interface.</p>
+  <p><b>Patterns:</b> <b>Strategy</b> for the fee (hourly, flat, weekend rates) and for how to pick a spot (nearest to the gate, lowest floor). <b>Factory</b> to create vehicles or spots from a type. The lot is often a <b>Singleton</b> in the answer, but passing it in is cleaner.</p>
+  <pre><code>type VehicleType = "bike" | "car";
+interface Vehicle { plate: string; type: VehicleType }
+interface Ticket { id: number; plate: string; spotId: string; inTime: number }
+
+class Spot {
+  vehicle?: Vehicle;
+  constructor(public id: string, public type: VehicleType) {}
+  get free(): boolean { return !this.vehicle; }
+}
+
+const RATE_PER_HOUR: Record&lt;VehicleType, number&gt; = { bike: 10, car: 30 };
+const HOUR = 3_600_000;
+
+class ParkingLot {
+  private tickets = new Map&lt;number, Ticket&gt;();
+  private nextId = 1;
+  constructor(private spots: Spot[]) {}
+
+  park(v: Vehicle, now: number): Ticket {
+    const spot = this.spots.find((s) =&gt; s.free &amp;&amp; s.type === v.type);
+    if (!spot) throw new Error(`Lot full for ${v.type}`);
+    spot.vehicle = v;
+    const t: Ticket = { id: this.nextId++, plate: v.plate, spotId: spot.id, inTime: now };
+    this.tickets.set(t.id, t);
+    return t;
+  }
+
+  unpark(ticketId: number, now: number): number {
+    const t = this.tickets.get(ticketId);
+    if (!t) throw new Error("Invalid ticket");
+    const spot = this.spots.find((s) =&gt; s.id === t.spotId)!;
+    const hours = Math.max(1, Math.ceil((now - t.inTime) / HOUR));
+    spot.vehicle = undefined;
+    this.tickets.delete(ticketId);
+    return hours * RATE_PER_HOUR[spot.type];
+  }
+}
+
+const lot = new ParkingLot([new Spot("C1", "car"), new Spot("B1", "bike")]);
+const t = lot.park({ plate: "MH12AB1234", type: "car" }, 0);
+console.log("Ticket", t.id, "spot", t.spotId);
+try {
+  lot.park({ plate: "MH14XY9999", type: "car" }, 0);
+} catch (e) {
+  console.log((e as Error).message);
+}
+console.log("Fee:", lot.unpark(t.id, 2.5 * HOUR));</code></pre>
+  <pre><code>Ticket 1 spot C1
+Lot full for car
+Fee: 90</code></pre>
+  <p><b>Edge cases:</b> lot full (shown above), unknown or already-used ticket, a car parked past the time, two gates picking the same spot at once (needs a lock or unique constraint, see the warning above), and what to do with a bigger vehicle in a smaller-only lot.</p>
+
+  <h3>2. Splitwise (expense sharing)</h3>
+  <p><b>Clarifying questions:</b> Equal splits only, or also exact amounts and percentages? Groups? Do we need "simplify debts"? Currency? Should we notify people?</p>
+  <p><b>Classes and relationships:</b> <code>User</code>, <code>Group</code> (many users), <code>Expense</code> (paid by one user, shared by several), and a balance sheet (<code>ExpenseBook</code>) that tracks "who owes whom". Each expense has a <code>Split</code> rule.</p>
+  <p><b>Patterns:</b> <b>Strategy</b> for split types (equal, exact, percent), so adding "by shares" is one new class. <b>Observer</b> to notify members when an expense is added.</p>
+  <pre><code>type UserId = string;
+
+class ExpenseBook {
+  // owes.get(a)?.get(b) = paise that a owes to b
+  private owes = new Map&lt;UserId, Map&lt;UserId, number&gt;&gt;();
+
+  private get(from: UserId, to: UserId): number {
+    return this.owes.get(from)?.get(to) ?? 0;
+  }
+  private set(from: UserId, to: UserId, paise: number): void {
+    if (!this.owes.has(from)) this.owes.set(from, new Map());
+    this.owes.get(from)!.set(to, paise);
+  }
+  private add(from: UserId, to: UserId, paise: number): void {
+    const back = this.get(to, from);
+    if (back &gt;= paise) {
+      this.set(to, from, back - paise); // cancel against what they owed us
+    } else {
+      this.set(to, from, 0);
+      this.set(from, to, this.get(from, to) + paise - back);
+    }
+  }
+
+  addEqualExpense(paidBy: UserId, totalPaise: number, users: UserId[]): void {
+    const share = Math.floor(totalPaise / users.length);
+    let leftover = totalPaise - share * users.length; // spread odd paise
+    for (const u of users) {
+      const mine = share + (leftover-- &gt; 0 ? 1 : 0);
+      if (u !== paidBy) this.add(u, paidBy, mine);
+    }
+  }
+
+  print(): void {
+    for (const [from, row] of this.owes)
+      for (const [to, p] of row)
+        if (p &gt; 0) console.log(`${from} owes ${to}: Rs ${(p / 100).toFixed(2)}`);
+  }
+}
+
+const book = new ExpenseBook();
+book.addEqualExpense("Asha", 90000, ["Asha", "Ravi", "Meera"]);
+book.addEqualExpense("Ravi", 10000, ["Ravi", "Meera", "Asha"]);
+book.print();</code></pre>
+  <pre><code>Ravi owes Asha: Rs 266.67
+Meera owes Asha: Rs 300.00
+Meera owes Ravi: Rs 33.33</code></pre>
+  <p>Check the second line by hand: Ravi owed Asha Rs 300; then Ravi paid Rs 100 shared by three, so Asha now owes Ravi Rs 33.33, which cancels against the 300, leaving Rs 266.67.</p>
+  <p><b>Edge cases:</b> money is stored in <b>paise</b> (whole numbers), never floats, because <code>0.1 + 0.2</code> is not <code>0.3</code> in floating point. Odd paise are spread across people so the total always matches. Also: a person paying for an expense they are not part of, settle-up payments, and "simplify debts" (a greedy match of the biggest debtor to the biggest creditor).</p>
+
+  <h3>3. Elevator</h3>
+  <p><b>Clarifying questions:</b> One elevator or a bank of them? How many floors? Do we handle weight limits, emergency stops, doors? Is the algorithm part of the question or just "works correctly"?</p>
+  <p><b>Classes and relationships:</b> <code>Elevator</code> (floor, direction, stops), <code>Request</code> (hall call or cabin call), <code>Controller</code> (chooses which elevator takes a hall call), <code>Door</code>, <code>Button</code>.</p>
+  <p><b>Patterns:</b> <b>State</b> for the elevator (Idle, MovingUp, MovingDown, Maintenance), and <b>Strategy</b> for scheduling (nearest car, or SCAN: keep going in one direction while there are stops, then reverse; this is the idea below).</p>
+  <pre><code>type Direction = "UP" | "DOWN" | "IDLE";
+
+class Elevator {
+  floor = 0;
+  direction: Direction = "IDLE";
+  private stops = new Set&lt;number&gt;();
+
+  request(floor: number): void {
+    if (floor !== this.floor) this.stops.add(floor);
+  }
+
+  step(): void {
+    if (this.stops.size === 0) { this.direction = "IDLE"; return; }
+    const above = [...this.stops].some((f) =&gt; f &gt; this.floor);
+    const below = [...this.stops].some((f) =&gt; f &lt; this.floor);
+    if (this.direction === "IDLE") this.direction = above ? "UP" : "DOWN";
+    else if (this.direction === "UP" &amp;&amp; !above) this.direction = "DOWN";
+    else if (this.direction === "DOWN" &amp;&amp; !below) this.direction = "UP";
+    this.floor += this.direction === "UP" ? 1 : -1;
+    if (this.stops.delete(this.floor)) console.log(`Door opens at floor ${this.floor}`);
+  }
+}
+
+const lift = new Elevator();
+lift.request(5);
+lift.request(2);
+for (let i = 0; i &lt; 5; i++) lift.step();
+lift.request(1);
+for (let i = 0; i &lt; 5; i++) lift.step();
+console.log(lift.floor, lift.direction);</code></pre>
+  <pre><code>Door opens at floor 2
+Door opens at floor 5
+Door opens at floor 1
+1 IDLE</code></pre>
+  <p><b>Edge cases:</b> a request for the current floor, new requests while moving, no requests (idle), overload, emergency stop, and with many elevators, which one takes a call. The skeleton handles one elevator and serves 5 and 2 on the way up, then comes back for 1.</p>
+
+  <h3>4. BookMyShow (classes only)</h3>
+  <p><b>Clarifying questions:</b> Only seat booking, or food too? Seat types and prices? How long can a person hold seats before paying? Cancellation and refunds? Do we model many cities and theatres?</p>
+  <p><b>Classes and relationships:</b> <code>City</code> has many <code>Theatre</code>s; a Theatre has many <code>Screen</code>s (composition); a Screen has <code>Seat</code>s. A <code>Show</code> ties a <code>Movie</code>, a Screen and a start time together. A <code>Booking</code> ties a user, a Show and a set of seats, and has a <code>Payment</code>.</p>
+  <p><b>Patterns:</b> <b>State</b> for a booking (Pending, Confirmed, Expired, Cancelled), <b>Strategy</b> for pricing (weekday, weekend, premium seat), <b>Observer</b> to send confirmation messages. The key method below is "hold, then confirm".</p>
+  <pre><code>type SeatState =
+  | { status: "HELD"; userId: string; until: number }
+  | { status: "BOOKED"; userId: string };
+
+class Show {
+  private state = new Map&lt;string, SeatState&gt;();
+  constructor(public id: string, public movie: string, public seatIds: string[]) {}
+
+  holdSeats(userId: string, ids: string[], now: number, holdMs = 300_000): boolean {
+    for (const id of ids) {
+      const s = this.state.get(id);
+      if (s &amp;&amp; (s.status === "BOOKED" || s.until &gt; now)) return false; // taken
+    }
+    for (const id of ids) this.state.set(id, { status: "HELD", userId, until: now + holdMs });
+    return true;
+  }
+
+  confirm(userId: string, ids: string[], now: number): boolean {
+    const ok = ids.every((id) =&gt; {
+      const s = this.state.get(id);
+      return s?.status === "HELD" &amp;&amp; s.userId === userId &amp;&amp; s.until &gt; now;
+    });
+    if (!ok) return false;
+    for (const id of ids) this.state.set(id, { status: "BOOKED", userId });
+    return true;
+  }
+}
+
+const show = new Show("S1", "Some Movie", ["A1", "A2", "A3"]);
+console.log(show.holdSeats("asha", ["A1", "A2"], 0));
+console.log(show.holdSeats("ravi", ["A2", "A3"], 1000));
+console.log(show.confirm("asha", ["A1", "A2"], 2000));
+console.log(show.holdSeats("ravi", ["A2"], 600_000));</code></pre>
+  <pre><code>true
+false
+true
+false</code></pre>
+  <p>Read the four lines in order: Asha holds A1 and A2 (true); Ravi tries A2 and A3 and is refused because A2 is held (false); Asha confirms (true); much later Ravi tries A2 again and is refused because it is now booked, not just held (false).</p>
+  <p><b>Edge cases:</b> a hold that expires and frees the seat, paying after the hold expired, the same user double-clicking, partial group seats (all or nothing, as the code does), and above all <b>two people clicking the same seat at the same moment</b>. In memory, one process handles one call at a time. In real life with many servers this must be a database transaction or a unique constraint on (show, seat); read <a href="m5-6.html">Ticket booking</a> for the full design.</p>
+
+  <h3>5. Vending machine</h3>
+  <p><b>Clarifying questions:</b> Which coins and notes? Does it give change? What if an item is sold out? Can the user cancel and get money back? Does an operator refill stock?</p>
+  <p><b>Classes and relationships:</b> <code>VendingMachine</code> holds the stock (<code>Slot</code>s with price and quantity), the credit, and a current <code>State</code>. States: <code>Idle</code>, <code>HasMoney</code>, <code>Dispensing</code>.</p>
+  <p><b>Patterns:</b> <b>State</b> is the star. Each state answers "what happens if the user inserts money / selects an item?" in its own class, so there is no giant <code>if (state === ...)</code>. This is the pattern that separates it from Strategy: the object moves between states by itself.</p>
+  <pre><code>interface State {
+  insert(m: VendingMachine, rupees: number): void;
+  select(m: VendingMachine, code: string): void;
+}
+
+class VendingMachine {
+  credit = 0;
+  stock = new Map([["A1", { price: 20, qty: 1 }]]);
+  state: State = new Idle();
+  insert(rupees: number): void { this.state.insert(this, rupees); }
+  select(code: string): void { this.state.select(this, code); }
+}
+
+class Idle implements State {
+  insert(m: VendingMachine, rupees: number): void {
+    m.credit += rupees;
+    m.state = new HasMoney();
+  }
+  select(): void { console.log("Insert money first"); }
+}
+
+class HasMoney implements State {
+  insert(m: VendingMachine, rupees: number): void { m.credit += rupees; }
+  select(m: VendingMachine, code: string): void {
+    const item = m.stock.get(code);
+    if (!item || item.qty === 0) return console.log("Sold out");
+    if (m.credit &lt; item.price) return console.log(`Need Rs ${item.price - m.credit} more`);
+    item.qty--;
+    console.log(`Dispensed ${code}, change Rs ${m.credit - item.price}`);
+    m.credit = 0;
+    m.state = new Idle();
+  }
+}
+
+const vm = new VendingMachine();
+vm.select("A1");
+vm.insert(10);
+vm.select("A1");
+vm.insert(20);
+vm.select("A1");
+vm.insert(20);
+vm.select("A1");</code></pre>
+  <pre><code>Insert money first
+Need Rs 10 more
+Dispensed A1, change Rs 10
+Sold out</code></pre>
+  <p><b>Edge cases:</b> note the last line. The item was sold out, but the Rs 20 stays as credit with no way out. A real machine needs a <code>cancel()</code> that refunds. Also consider: not enough change in the machine, a jam, power cut in the middle, and invalid codes.</p>
+
+  <h3>Which pattern for which problem</h3>
+  <table>
+    <tr><th>Problem</th><th>Main patterns</th><th>The hard part</th></tr>
+    <tr><td>Parking lot</td><td>Strategy (fee, spot choice), Factory</td><td>Two gates, one last spot</td></tr>
+    <tr><td>Splitwise</td><td>Strategy (split types), Observer</td><td>Money rounding and netting debts</td></tr>
+    <tr><td>Elevator</td><td>State, Strategy (scheduling)</td><td>Which elevator takes which call</td></tr>
+    <tr><td>BookMyShow</td><td>State (booking), Strategy (price)</td><td>Hold, expire, confirm without double booking</td></tr>
+    <tr><td>Vending machine</td><td>State</td><td>Every state must handle every action</td></tr>
+  </table>
+</section>
+
+<section class="picture">
+  <h2>Class diagram: parking lot</h2>
+  <figure>
+    <svg viewBox="0 0 640 400" role="img" aria-label="Class diagram of a parking lot. ParkingLot is composed of one or more Spots with a filled diamond, has a zero-or-many association to Ticket, which refers to Vehicle, and uses a FeeStrategy interface that HourlyFee realises with a dashed line and hollow triangle">
+      <defs>
+        <marker id="open-m6-5" markerUnits="userSpaceOnUse" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="14" markerHeight="14" orient="auto"><path d="M1,1 L13,7 L1,13" fill="none" stroke="currentColor" stroke-width="2"/></marker>
+        <marker id="tri-m6-5" markerUnits="userSpaceOnUse" viewBox="0 0 16 16" refX="0" refY="8" markerWidth="16" markerHeight="16" orient="auto"><path d="M1,1 L15,8 L1,15 z" fill="none" stroke="currentColor" stroke-width="2"/></marker>
+        <marker id="fdia-m6-5" markerUnits="userSpaceOnUse" viewBox="0 0 14 26" refX="7" refY="0" markerWidth="14" markerHeight="26" orient="auto"><path d="M7,1 L13,13 L7,25 L1,13 z" fill="currentColor" stroke="currentColor" stroke-width="2"/></marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="30" y="20" width="150" height="70" rx="4"/>
+        <rect x="270" y="20" width="150" height="70" rx="4"/>
+        <rect x="490" y="20" width="140" height="70" rx="4"/>
+        <rect x="30" y="180" width="150" height="70" rx="4"/>
+        <rect x="270" y="180" width="150" height="70" rx="4"/>
+        <rect x="270" y="310" width="150" height="60" rx="4"/>
+        <path d="M180 55 H270" marker-end="url(#open-m6-5)"/>
+        <path d="M420 55 H490" marker-end="url(#open-m6-5)"/>
+        <path d="M170 90 L290 180" marker-end="url(#open-m6-5)"/>
+        <path d="M345 310 V266" stroke-dasharray="7 5" marker-end="url(#tri-m6-5)"/>
+      </g>
+      <!-- composition: line from Spot up to ParkingLot, filled diamond at ParkingLot -->
+      <path d="M105 180 V116" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M105 116 L111 103 L105 90 L99 103 z" fill="currentColor" stroke="currentColor" stroke-width="2"/>
+      <g fill="currentColor" font-family="system-ui, sans-serif" font-size="13">
+        <g font-size="14" font-weight="700" text-anchor="middle">
+          <text x="105" y="42">ParkingLot</text>
+          <text x="345" y="42">Ticket</text>
+          <text x="560" y="42">Vehicle</text>
+          <text x="105" y="202">Spot</text>
+          <text x="345" y="220">FeeStrategy</text>
+          <text x="345" y="332">HourlyFee</text>
+        </g>
+        <g text-anchor="middle">
+          <text x="105" y="60">park(vehicle)</text>
+          <text x="105" y="77">unpark(ticketId)</text>
+          <text x="345" y="60">id, plate, spotId</text>
+          <text x="345" y="77">inTime</text>
+          <text x="560" y="60">plate</text>
+          <text x="560" y="77">type: bike | car</text>
+          <text x="105" y="220">id, type</text>
+          <text x="105" y="237">free: boolean</text>
+          <text x="345" y="203">«interface»</text>
+          <text x="345" y="237">fee(hours, type)</text>
+          <text x="345" y="352">fee(hours, type)</text>
+        </g>
+        <text x="225" y="47" text-anchor="middle">0..*</text>
+        <text x="455" y="47" text-anchor="middle">1</text>
+        <text x="113" y="170">1..*</text>
+        <text x="205" y="152" text-anchor="middle">uses</text>
+        <text x="440" y="285">Skeleton uses a rate table;</text>
+        <text x="440" y="302">swap in FeeStrategy when</text>
+        <text x="440" y="319">pricing rules grow.</text>
+      </g>
+    </svg>
+    <figcaption>ParkingLot owns Spots (filled diamond) and creates Tickets. A Ticket refers to a Vehicle. The fee is a swappable strategy: HourlyFee implements the FeeStrategy interface.</figcaption>
+  </figure>
+  <p>Redraw it in <a href="https://excalidraw.com" target="_blank" rel="noopener">Excalidraw</a> and save it as <code>m6-5 parking-lot.excalidraw</code> in your Module 6 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Concept+%26%26+Coding+parking+lot+low+level+design" target="_blank" rel="noopener">YouTube search: "Concept && Coding parking lot low level design"</a>
+      <span class="meta">Watch the requirements and class design parts first, then compare with your own diagram.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Concept+%26%26+Coding+splitwise+low+level+design" target="_blank" rel="noopener">YouTube search: "Concept && Coding splitwise low level design"</a>
+      <span class="meta">Watch how the split types become classes.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=elevator+system+low+level+design+interview" target="_blank" rel="noopener">YouTube search: "elevator system low level design interview"</a>
+      <span class="meta">Pick any video under 30 minutes; focus on the scheduling idea and the states.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer/tree/master/solutions/object_oriented_design" target="_blank" rel="noopener">System Design Primer: object-oriented design solutions</a>
+      <span class="meta">Free worked problems (the code there is Python). Read one problem's notes, not the code.</span></li>
+    <li><a href="https://refactoring.guru/design-patterns/state" target="_blank" rel="noopener">Refactoring.Guru: State pattern</a>
+      <span class="meta">Read "Intent" and "Structure"; it matches the vending machine.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Practice (about 45 minutes)</h2>
+  <h3>A. Run a skeleton and break it on purpose (10 minutes)</h3>
+  <ol class="steps">
+    <li>Open <code>typescriptlang.org/play</code> in Chrome. Click the left editor, press <kbd>Ctrl</kbd> + <kbd>A</kbd>, then <kbd>Delete</kbd>.</li>
+    <li>Click <span class="ui">Copy</span> on the parking-lot code, paste it, and press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> (or click <span class="ui">Run</span>). In the <span class="ui">Logs</span> tab you should see <code>Ticket 1 spot C1</code>, <code>Lot full for car</code> and <code>Fee: 90</code>.</li>
+    <li>Change the first line to <code>type VehicleType = "bike" | "car" | "truck";</code>. A red wavy line appears under <code>RATE_PER_HOUR</code>: the compiler tells you that you forgot the price for trucks. Hover to read it. Add <code>truck: 60</code> to fix it. This is how TypeScript helps you cover every case.</li>
+    <li>Change the time in the last line from <code>2.5 * HOUR</code> to <code>0.2 * HOUR</code> and run. The fee should be <code>30</code> (the minimum charge is one hour).</li>
+  </ol>
+  <h3>B. A timed mock on a new problem (35 minutes)</h3>
+  <p>Pick one problem you have <b>not</b> read in this lesson: a library system, an ATM, a chess game, a food-ordering cart or a tic-tac-toe game.</p>
+  <ol class="steps">
+    <li>Open the Windows Clock: press the <kbd>⊞ Win</kbd> key, type <code>Clock</code>, press <kbd>Enter</kbd>, click <span class="ui">Timer</span>, set 35 minutes and start it.</li>
+    <li><b>Minutes 0 to 5:</b> on a text note, write 5 to 6 clarifying questions and the answers you assume. Write what is out of scope.</li>
+    <li><b>Minutes 5 to 15:</b> list the nouns as classes. In <code>excalidraw.com</code>, draw a box per class with name and two or three members, and the relationships with multiplicities (see <a href="m6-4.html">UML class diagrams</a>).</li>
+    <li><b>Minutes 15 to 30:</b> in the Playground, write the one or two methods that carry the main logic (for example <code>borrow()</code> or <code>makeMove()</code>). Keep the code under 40 lines.</li>
+    <li><b>Minutes 30 to 35:</b> name one pattern you used (or say "none needed", which is a good answer) and list three edge cases. Say which one needs a lock or transaction if two people act at once.</li>
+    <li>Save the drawing as <code>m6-5 mock.excalidraw</code>. Note the one step where you got stuck and redo that step tomorrow.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What are the seven steps of the LLD interview flow?</summary><p>Requirements, entities, relationships, class diagram, key methods, patterns, edge cases.</p></details>
+  <details><summary>Why does the Splitwise skeleton store paise instead of rupees?</summary><p>Whole numbers avoid floating-point errors (0.1 + 0.2 is not 0.3). Odd paise are spread over people so that the total always matches.</p></details>
+  <details><summary>Why is State a better fit for the vending machine than Strategy?</summary><p>The machine changes its own behaviour as it moves between Idle, HasMoney and Dispensing. With Strategy the caller picks the behaviour from outside.</p></details>
+  <details><summary>In the BookMyShow skeleton, why does confirm() check that the hold has not expired?</summary><p>Otherwise someone could pay after their hold ran out and take a seat that was already given to another person.</p></details>
+  <details><summary>The interviewer says "two people try to book the last seat at the same moment". What do you say?</summary><p>In memory this works only inside one process. With many servers I need an atomic step in the database: a transaction with a row lock, or a unique constraint on show and seat so the second insert fails. I also keep a short hold with an expiry so unpaid seats are released. The full design is in the Ticket booking lesson.</p></details>
+  <details><summary>You must add "by percentage" splits to Splitwise. Which class do you change?</summary><p>Ideally none of the existing ones. With a Split strategy interface you add one new class, <code>PercentSplit</code>, and the rest of the code is untouched (Open/Closed).</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>Before I draw anything, let me ask a few questions to fix the scope, and I will note what I am assuming.</blockquote>
+  <blockquote>I will start with the entities, draw the relationships with multiplicities, then write the two or three methods that hold the real logic.</blockquote>
+  <blockquote>I use a pattern only where behaviour varies: Strategy for pricing, State for a machine that changes mode. Otherwise I keep it plain.</blockquote>
+  <p><b>Common follow-up question:</b> "How would you make this thread-safe or work across many servers?"</p>
+  <p>Inside one process I would guard the shared state with a lock or a queue. Across servers a lock in memory is useless, so I move the rule into the database: a transaction with a row lock, or a unique constraint so a duplicate booking fails. Holds get a time limit so seats are not stuck forever.</p>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SOLID principles</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m6-2">
+<main class="lesson">
+
+<section class="story">
+  <h2>The wedding caterer who does everything</h2>
+  <p>Imagine one caterer who cooks, serves, washes the dishes, does the decoration and collects the money. On the wedding day, if he falls ill, <b>everything</b> stops. If the family wants a new sweet, he has to rewrite his whole routine.</p>
+  <p>A smart wedding has many small teams: cooks, servers, decorators. Each has one job. To add a new sweet stall you hire a new team and nobody else changes. They agree on simple rules for handing over plates, so any server can work with any cook.</p>
+  <p>SOLID is five rules that make code behave like the smart wedding: small teams, one job each, easy to add new ones.</p>
+</section>
+
+<section class="explain">
+  <h2>The five rules, each with a before and after</h2>
+  <p>SOLID is a checklist of five habits. They are <b>guides, not laws</b>. They help most when code keeps changing. The goal is simple: when a requirement changes, you edit as little code as possible. Below, every rule has a "before" (the problem) and an "after" (the fix), and every block compiles in TypeScript strict mode.</p>
+
+  <h3>S: Single Responsibility. One class, one reason to change.</h3>
+  <p>If the print layout changes, the database changes and the tax rule changes, and all three force you to edit the same class, that class has three jobs.</p>
+  <pre><code>// BEFORE: one class, three reasons to change
+class InvoiceBefore {
+  constructor(public items: number[]) {}
+  total(): number {
+    return this.items.reduce((a, b) =&gt; a + b, 0);
+  }
+  print(): string {
+    return `Total: Rs ${this.total()}`; // changes when the layout changes
+  }
+  saveToDb(): void {
+    console.log("INSERT INTO invoices ..."); // changes when the database changes
+  }
+}
+console.log(new InvoiceBefore([100, 250]).print());</code></pre>
+  <p>Split it. Now each change touches only one class:</p>
+  <pre><code>// AFTER: one job per class
+class Invoice {
+  constructor(public items: number[]) {}
+  total(): number {
+    return this.items.reduce((a, b) =&gt; a + b, 0);
+  }
+}
+class InvoicePrinter {
+  print(inv: Invoice): string {
+    return `Total: Rs ${inv.total()}`;
+  }
+}
+class InvoiceRepository {
+  save(inv: Invoice): void {
+    console.log(`INSERT INTO invoices ... (${inv.items.length} items)`);
+  }
+}
+
+const inv = new Invoice([100, 250]);
+console.log(new InvoicePrinter().print(inv));
+new InvoiceRepository().save(inv);</code></pre>
+  <pre><code>Total: Rs 350
+INSERT INTO invoices ... (2 items)</code></pre>
+
+  <h3>O: Open/Closed. Open for new behaviour, closed for editing old code.</h3>
+  <p>Before: every new customer type means opening the function and adding another <code>if</code>. Each edit can break the old cases.</p>
+  <pre><code>// BEFORE: every new customer type means editing this function
+function discountBefore(type: string, amount: number): number {
+  if (type === "regular") return amount;
+  if (type === "festival") return amount * 0.9;
+  if (type === "student") return amount * 0.8;
+  throw new Error("Unknown type");
+}
+console.log(discountBefore("festival", 1000));</code></pre>
+  <p>After: each rule is its own class behind one interface. A new rule is a new class, and <code>checkout</code> never changes.</p>
+  <pre><code>// AFTER: add a new class, change nothing that exists
+interface DiscountRule {
+  apply(amount: number): number;
+}
+class NoDiscount implements DiscountRule {
+  apply(amount: number): number { return amount; }
+}
+class FestivalDiscount implements DiscountRule {
+  apply(amount: number): number { return amount * 0.9; }
+}
+class StudentDiscount implements DiscountRule {
+  apply(amount: number): number { return amount * 0.8; }
+}
+
+function checkout(amount: number, rule: DiscountRule): number {
+  return rule.apply(amount);
+}
+console.log(checkout(1000, new FestivalDiscount()));
+console.log(checkout(1000, new StudentDiscount()));</code></pre>
+  <pre><code>900
+800</code></pre>
+
+  <h3>L: Liskov Substitution. A child must work wherever its parent works.</h3>
+  <p>Before: <code>Penguin</code> extends <code>Bird</code> but cannot fly. Code that trusts any Bird to fly crashes. Real output:</p>
+  <pre><code>// BEFORE: a child that breaks the parent's promise
+class BirdBefore {
+  fly(): string { return "flap flap"; }
+}
+class PenguinBefore extends BirdBefore {
+  override fly(): string {
+    throw new Error("Penguins cannot fly");
+  }
+}
+function launch(b: BirdBefore): string {
+  return b.fly();
+}
+console.log(launch(new BirdBefore()));
+try {
+  console.log(launch(new PenguinBefore()));
+} catch (e) {
+  console.log("Crash:", (e as Error).message);
+}</code></pre>
+  <pre><code>flap flap
+Crash: Penguins cannot fly</code></pre>
+  <p>After: only birds that can fly promise <code>fly()</code>. The compiler now stops you from sending a penguin to <code>launch</code>.</p>
+  <pre><code>// AFTER: only birds that can fly promise to fly
+class Bird {
+  walk(): string { return "step step"; }
+}
+class FlyingBird extends Bird {
+  fly(): string { return "flap flap"; }
+}
+class Penguin extends Bird {}
+
+function launch(b: FlyingBird): string {
+  return b.fly();
+}
+console.log(launch(new FlyingBird()));
+console.log(new Penguin().walk());
+// launch(new Penguin());   // compile error: caught before running</code></pre>
+  <pre><code>flap flap
+step step</code></pre>
+
+  <h3>I: Interface Segregation. Many small interfaces beat one fat one.</h3>
+  <p>Before: a robot is forced to implement <code>eat()</code> and can only throw an error.</p>
+  <pre><code>// BEFORE: a fat interface forces useless methods
+interface WorkerBefore {
+  work(): string;
+  eat(): string;
+}
+class RobotBefore implements WorkerBefore {
+  work(): string { return "welding"; }
+  eat(): string {
+    throw new Error("Robots do not eat"); // forced to write this
+  }
+}
+console.log(new RobotBefore().work());</code></pre>
+  <p>After: split the interface. Each class picks only what it really does.</p>
+  <pre><code>// AFTER: small interfaces, take only what you need
+interface Workable { work(): string; }
+interface Eatable { eat(): string; }
+
+class Robot implements Workable {
+  work(): string { return "welding"; }
+}
+class Human implements Workable, Eatable {
+  work(): string { return "typing"; }
+  eat(): string { return "dal chawal"; }
+}
+
+function runShift(w: Workable): string {
+  return w.work();
+}
+console.log(runShift(new Robot()), runShift(new Human()));</code></pre>
+  <pre><code>welding typing</code></pre>
+
+  <h3>D: Dependency Inversion. Depend on an interface, not on a concrete tool.</h3>
+  <p>Before: <code>OrderService</code> builds its own mailer. You cannot swap it, and you cannot test it without sending a real email.</p>
+  <pre><code>// BEFORE: the high-level class builds its own low-level tool
+class SmtpMailer {
+  send(to: string, body: string): void {
+    console.log(`SMTP -&gt; ${to}: ${body}`);
+  }
+}
+class OrderServiceBefore {
+  private mailer = new SmtpMailer(); // glued in: cannot swap, cannot test
+  place(email: string): void {
+    this.mailer.send(email, "Order placed");
+  }
+}
+new OrderServiceBefore().place("a@x.in");</code></pre>
+  <p>After: the service asks for "something that can send" and receives it from outside. This is called <b>dependency injection</b>. In a test you pass a fake.</p>
+  <pre><code>// AFTER: depend on an interface, receive the tool from outside
+interface Mailer {
+  send(to: string, body: string): void;
+}
+class SmtpMailer implements Mailer {
+  send(to: string, body: string): void {
+    console.log(`SMTP -&gt; ${to}: ${body}`);
+  }
+}
+class FakeMailer implements Mailer {
+  sent: string[] = [];
+  send(to: string, body: string): void {
+    this.sent.push(`${to}|${body}`);
+  }
+}
+
+class OrderService {
+  constructor(private mailer: Mailer) {}
+  place(email: string): void {
+    this.mailer.send(email, "Order placed");
+  }
+}
+new OrderService(new SmtpMailer()).place("a@x.in");
+const fake = new FakeMailer();
+new OrderService(fake).place("test@x.in");
+console.log(fake.sent);</code></pre>
+  <pre><code>SMTP -&gt; a@x.in: Order placed
+[ 'test@x.in|Order placed' ]</code></pre>
+
+  <h3>When to use SOLID, and when not to</h3>
+  <table>
+    <tr><th>Use it when</th><th>Be careful when</th></tr>
+    <tr><td>The code changes often and several people touch it</td><td>It is a small script or a one-week prototype: extra interfaces are just noise</td></tr>
+    <tr><td>You see a growing <code>if/else</code> chain on a "type" field (O)</td><td>You create an interface with only one implementation and no reason to have a second</td></tr>
+    <tr><td>You need tests without real email, payments or a database (D)</td><td>You split classes so finely that you cannot follow the flow any more</td></tr>
+  </table>
+  <p class="tip">Rule of thumb: wait until something has changed twice for the same reason, then apply the rule. Do not design for changes that may never come.</p>
+</section>
+
+<section class="picture">
+  <h2>SOLID on one page</h2>
+  <figure>
+    <svg viewBox="0 0 640 330" role="img" aria-label="Five rows, one for each SOLID letter, each with a short sentence describing the rule">
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="20" y="10" width="50" height="50" rx="8"/>
+        <rect x="20" y="75" width="50" height="50" rx="8"/>
+        <rect x="20" y="140" width="50" height="50" rx="8"/>
+        <rect x="20" y="205" width="50" height="50" rx="8"/>
+        <rect x="20" y="270" width="50" height="50" rx="8"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <g font-size="28" font-weight="700" text-anchor="middle">
+          <text x="45" y="46">S</text>
+          <text x="45" y="111">O</text>
+          <text x="45" y="176">L</text>
+          <text x="45" y="241">I</text>
+          <text x="45" y="306">D</text>
+        </g>
+        <g font-size="15">
+          <text x="90" y="30" font-weight="700">Single Responsibility</text>
+          <text x="90" y="50">One class, one job, one reason to change.</text>
+          <text x="90" y="95" font-weight="700">Open/Closed</text>
+          <text x="90" y="115">Add new behaviour by adding code, not editing old code.</text>
+          <text x="90" y="160" font-weight="700">Liskov Substitution</text>
+          <text x="90" y="180">Any child can stand in for its parent without surprises.</text>
+          <text x="90" y="225" font-weight="700">Interface Segregation</text>
+          <text x="90" y="245">Small interfaces; nobody implements what they do not use.</text>
+          <text x="90" y="290" font-weight="700">Dependency Inversion</text>
+          <text x="90" y="310">Depend on an interface; receive the real tool from outside.</text>
+        </g>
+      </g>
+    </svg>
+    <figcaption>The five rules, one line each. Keep this list in your head during the interview.</figcaption>
+  </figure>
+  <p>Redraw it in <a href="https://excalidraw.com" target="_blank" rel="noopener">Excalidraw</a> and save it as <code>m6-2 solid.excalidraw</code> in your Module 6 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Fireship+SOLID+principles+in+100+seconds" target="_blank" rel="noopener">YouTube search: "Fireship SOLID principles"</a>
+      <span class="meta">Short intro. Watch the whole video, then pause and recall each letter.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Concept+%26%26+Coding+SOLID+principles+low+level+design" target="_blank" rel="noopener">YouTube search: "Concept && Coding SOLID principles low level design"</a>
+      <span class="meta">Pick one video under 30 minutes; watch the example for the letter you find hardest.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://en.wikipedia.org/wiki/SOLID" target="_blank" rel="noopener">Wikipedia: SOLID</a>
+      <span class="meta">One short page on all five principles. Read the S and D parts first.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Run it yourself (about 25 minutes)</h2>
+  <h3>A. Set up</h3>
+  <ol class="steps">
+    <li>Open <code>typescriptlang.org/play</code> in Chrome. Click the left editor, press <kbd>Ctrl</kbd> + <kbd>A</kbd> then <kbd>Delete</kbd>.</li>
+    <li>Run any code with <kbd>Ctrl</kbd> + <kbd>Enter</kbd> (or the <span class="ui">Run</span> button) and read the result in the <span class="ui">Logs</span> tab on the right.</li>
+  </ol>
+  <h3>B. Open/Closed: add a rule without editing old code</h3>
+  <ol class="steps">
+    <li>Paste the "after" block from the O section. Run it. You should see <code>900</code> and <code>800</code>.</li>
+    <li>At the bottom of the interface and classes, add: <code>class WeddingDiscount implements DiscountRule { apply(amount: number): number { return amount * 0.5; } }</code></li>
+    <li>Add <code>console.log(checkout(1000, new WeddingDiscount()));</code> at the end and run. You should see <code>500</code>. You did not touch <code>checkout</code>. That is Open/Closed.</li>
+  </ol>
+  <h3>C. Liskov: let the compiler catch the bug</h3>
+  <ol class="steps">
+    <li>Clear the editor and paste the "after" block from the L section.</li>
+    <li>At the very end, delete the <code>//</code> in front of <code>launch(new Penguin());</code>. A red wavy line appears. Hover: it says a Penguin is not assignable to a FlyingBird. The bug is found before running.</li>
+  </ol>
+  <h3>D. Dependency Inversion: test without sending anything</h3>
+  <ol class="steps">
+    <li>Paste the "after" block from the D section and run it. You see one SMTP line, then the array printed by the fake mailer.</li>
+    <li>Explain out loud why the second call needed no real email server.</li>
+  </ol>
+  <h3>E. Spot the violation (paper exercise)</h3>
+  <ol class="steps">
+    <li>Think of a <code>UserController</code> that validates input, hashes the password, writes to Postgres and sends a welcome email.</li>
+    <li>Write down which SOLID letter each of those four jobs breaks (S, and D for the email and database).</li>
+    <li>Sketch the split: <code>UserValidator</code>, <code>PasswordHasher</code>, <code>UserRepository</code>, <code>Mailer</code>.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What does the S in SOLID stand for, and what is its test?</summary><p>Single Responsibility. Ask: "how many different reasons could make me edit this class?" More than one means it is doing too much.</p></details>
+  <details><summary>How does Open/Closed help when a new discount type arrives?</summary><p>You add a new class that implements the discount interface. The existing checkout code is not edited, so old cases cannot break.</p></details>
+  <details><summary>What is wrong with Penguin extends Bird, where Bird has fly()?</summary><p>It breaks Liskov Substitution. Code that works with any Bird crashes for a Penguin. Fix it by moving fly() into a FlyingBird type.</p></details>
+  <details><summary>What is dependency injection, and why does it help testing?</summary><p>The class receives its helpers (through the constructor) instead of creating them. In tests you pass a fake, so no real email, payment or database is used.</p></details>
+  <details><summary>Your team has a 100-line script that runs once a month. Do you split it into interfaces and classes? Why or why not?</summary><p>Probably not. SOLID pays off when code changes often. For a small, stable script, extra layers cost more than they save. Wait until it changes twice for the same reason.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>I give each class one reason to change, so a new requirement touches one place.</blockquote>
+  <blockquote>I depend on interfaces and inject implementations, so I can swap a payment provider or use a fake in tests.</blockquote>
+  <blockquote>When I see a growing if/else on a type, I replace it with one interface and one class per case, which is Open/Closed.</blockquote>
+  <p><b>Common follow-up question:</b> "Can you over-apply SOLID?"</p>
+  <p>Yes. If you add an interface for everything, you get many tiny classes and indirection with no benefit. I apply it where I expect change: payment methods, notification channels, pricing rules. For simple, stable code I keep it plain.</p>
+</section>
+
+</main>
+</body>
+</html>

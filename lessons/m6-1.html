@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OOP refresher</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m6-1">
+<main class="lesson">
+
+<section class="story">
+  <h2>The tiffin box and the dabbawala</h2>
+  <p>A dabbawala picks up your tiffin, and he does not open it. He does not know what is inside. He only knows: "pick up here, drop there." The tiffin is <b>closed</b>. The dabbawala uses it only through its handle and its tag.</p>
+  <p>Now think of a school with many kinds of teachers: maths, science, drawing. The principal says "Everyone, take attendance." Each teacher does it in her own way, but the principal does not care how. She just says one sentence and each teacher does the right thing.</p>
+  <p>Object-oriented programming (OOP) is built from these two ideas: <b>closed boxes with a small handle</b>, and <b>one command that many things answer in their own way</b>.</p>
+</section>
+
+<section class="explain">
+  <h2>The four ideas, in plain words</h2>
+  <p>So far in this course you drew big boxes (servers, databases). <b>Low-level design (LLD)</b> zooms inside one box and asks: "which classes, with which methods, talking to each other how?" Interviewers use it to see if you write code that is easy to change. This lesson refreshes the vocabulary; the next ones build on it.</p>
+
+  <h3>Class and object</h3>
+  <p>A <b>class</b> is a blueprint (the design of a bank account). An <b>object</b> is one real thing made from it (Asha's account). A class holds <b>data</b> (fields) and <b>actions</b> (methods).</p>
+
+  <h3>1. Encapsulation: keep the data safe behind methods</h3>
+  <p>Hide the fields. Let outsiders change them only through methods that check the rules. Then a balance can never become negative by accident, because the only door is <code>deposit()</code>, and the door has a guard.</p>
+  <pre><code>class Account {
+  #balance = 0; // truly private: code outside the class cannot touch it
+
+  constructor(public readonly owner: string) {}
+
+  deposit(amount: number): void {
+    if (amount &lt;= 0) throw new Error("Amount must be positive");
+    this.#balance += amount;
+  }
+
+  get balance(): number {
+    return this.#balance;
+  }
+}
+
+const acc = new Account("Asha");
+acc.deposit(500);
+console.log(acc.owner, acc.balance);
+try {
+  acc.deposit(-5);
+} catch (e) {
+  console.log("Rejected:", (e as Error).message);
+}
+// acc.balance = 1_000_000;   // compile error: balance is read-only</code></pre>
+  <p>Real output:</p>
+  <pre><code>Asha 500
+Rejected: Amount must be positive</code></pre>
+  <p class="tip">In TypeScript, <code>private</code> is only checked while compiling. A <code>#name</code> field is private at run time too. Use <code>#</code> when it really must be hidden.</p>
+
+  <h3>2. Abstraction: say what, not how</h3>
+  <p>An <b>abstract class</b> or <b>interface</b> describes <i>what</i> something can do without saying how. The caller needs only the "what". Like the Start button of a washing machine: you do not need to know about the motor.</p>
+
+  <h3>3. Inheritance: a child class reuses its parent</h3>
+  <p><code>class EmailNotifier extends Notifier</code> means "an EmailNotifier <i>is a</i> Notifier". It gets the parent's code for free and adds or replaces some.</p>
+
+  <h3>4. Polymorphism: one call, many behaviours</h3>
+  <p>Code written against the parent type works with any child. The loop below calls <code>send()</code> on each item and each one does its own thing.</p>
+  <pre><code>abstract class Notifier {
+  constructor(protected readonly to: string) {}
+
+  // Abstraction: say WHAT must happen, not HOW.
+  abstract send(message: string): string;
+
+  // Inheritance: every child gets this for free.
+  describe(): string {
+    return `Notifier for ${this.to}`;
+  }
+}
+
+class EmailNotifier extends Notifier {
+  send(message: string): string {
+    return `EMAIL to ${this.to}: ${message}`;
+  }
+}
+
+class SmsNotifier extends Notifier {
+  send(message: string): string {
+    return `SMS to ${this.to}: ${message}`;
+  }
+}
+
+// Polymorphism: one loop, many behaviours.
+const list: Notifier[] = [new EmailNotifier("a@x.in"), new SmsNotifier("98xxxxxx01")];
+for (const n of list) {
+  console.log(n.send("Your order is out for delivery"));
+}
+console.log(list[0]!.describe());</code></pre>
+  <pre><code>EMAIL to a@x.in: Your order is out for delivery
+SMS to 98xxxxxx01: Your order is out for delivery
+Notifier for a@x.in</code></pre>
+
+  <h3>Composition over inheritance</h3>
+  <p>Inheritance is tempting, but it glues the child to the parent forever. If you write <code>class UserService extends Logger</code> just to reuse <code>log()</code>, you are lying: a user service is not a logger. Changes to Logger can break UserService, and a class can extend only one parent.</p>
+  <p>The usual advice is: <b>prefer "has-a" over "is-a"</b>. Put the helper inside as a field and pass it in. You can swap it later without touching the class.</p>
+  <pre><code>class Logger {
+  log(msg: string): void {
+    console.log("[log]", msg);
+  }
+}
+
+interface Store {
+  save(key: string, value: string): void;
+}
+
+class MemoryStore implements Store {
+  data = new Map&lt;string, string&gt;();
+  save(key: string, value: string): void {
+    this.data.set(key, value);
+  }
+}
+
+// Has-a, not is-a: UserService HAS a logger and a store.
+class UserService {
+  constructor(private logger: Logger, private store: Store) {}
+
+  register(name: string): void {
+    this.store.save(name, "active");
+    this.logger.log(`registered ${name}`);
+  }
+}
+
+const store = new MemoryStore();
+new UserService(new Logger(), store).register("Ravi");
+console.log([...store.data.entries()]);</code></pre>
+  <pre><code>[log] registered Ravi
+[ [ 'Ravi', 'active' ] ]</code></pre>
+
+  <h3>Trade-offs: when to use which</h3>
+  <table>
+    <tr><th></th><th>Inheritance (is-a)</th><th>Composition (has-a)</th></tr>
+    <tr><td>Good for</td><td>A true "kind of" relation, shared behaviour in a small, stable family</td><td>Reusing behaviour, swapping parts, testing with fakes</td></tr>
+    <tr><td>Coupling</td><td>Tight: child depends on parent's inner workings</td><td>Loose: only the small interface is shared</td></tr>
+    <tr><td>Change later</td><td>Hard: the family tree is fixed</td><td>Easy: swap one part</td></tr>
+    <tr><td>Watch out</td><td>Deep trees (3+ levels), children that break the parent's promise</td><td>More small classes and some wiring code</td></tr>
+  </table>
+  <div class="warn">Do not worry about getting OOP "perfect". If an interviewer sees small classes, clear names, private data and an interface where behaviour varies, you are already ahead of most candidates.</div>
+</section>
+
+<section class="picture">
+  <h2>The four ideas in one picture</h2>
+  <figure>
+    <svg viewBox="0 0 640 260" role="img" aria-label="An abstract Notifier box at the top with two child boxes, EmailNotifier and SmsNotifier, joined by inheritance arrows; and on the right a UserService box that holds a Logger and a Store as parts">
+      <defs>
+        <marker id="tri-m6-1" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="10" markerHeight="10" orient="auto"><path d="M1,1 L11,6 L1,11 z" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
+        <marker id="ar-m6-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="40" y="20" width="200" height="60" rx="8"/>
+        <rect x="10" y="170" width="140" height="60" rx="8"/>
+        <rect x="170" y="170" width="140" height="60" rx="8"/>
+        <path d="M80 170 L120 82" marker-end="url(#tri-m6-1)"/>
+        <path d="M240 170 L180 82" marker-end="url(#tri-m6-1)"/>
+        <rect x="390" y="90" width="200" height="60" rx="8"/>
+        <rect x="360" y="190" width="120" height="50" rx="8"/>
+        <rect x="510" y="190" width="120" height="50" rx="8"/>
+        <path d="M450 150 L431 188" marker-end="url(#ar-m6-1)"/>
+        <path d="M530 150 L569 188" marker-end="url(#ar-m6-1)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="140" y="46" font-size="15" font-weight="700">Notifier</text>
+        <text x="140" y="66" font-size="13">(abstract: send())</text>
+        <text x="80" y="196" font-size="14" font-weight="700">EmailNotifier</text>
+        <text x="80" y="216" font-size="13">send()</text>
+        <text x="240" y="196" font-size="14" font-weight="700">SmsNotifier</text>
+        <text x="240" y="216" font-size="13">send()</text>
+        <text x="490" y="126" font-size="15" font-weight="700">UserService</text>
+        <text x="420" y="220" font-size="14">Logger</text>
+        <text x="570" y="220" font-size="14">Store</text>
+        <text x="160" y="146" font-size="13">is-a (inheritance)</text>
+        <text x="500" y="82" font-size="13">has-a (uses parts)</text>
+      </g>
+    </svg>
+    <figcaption>Left: two children inherit from one abstract parent, so one loop can call send() on both (polymorphism). Right: UserService is built from parts it uses (composition). The hollow triangle means "is a"; the plain arrow means "uses".</figcaption>
+  </figure>
+  <p>Redraw it in <a href="https://excalidraw.com" target="_blank" rel="noopener">Excalidraw</a> and save it as <code>m6-1 oop.excalidraw</code> in your Module 6 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Fireship+object+oriented+programming+in+100+seconds" target="_blank" rel="noopener">YouTube search: "Fireship object oriented programming in 100 seconds"</a>
+      <span class="meta">About 2 minutes. Watch the whole thing for the vocabulary.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=composition+over+inheritance+typescript" target="_blank" rel="noopener">YouTube search: "composition over inheritance typescript"</a>
+      <span class="meta">Pick any video under 15 minutes. Watch the part where inheritance goes wrong and composition fixes it.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://www.typescriptlang.org/docs/handbook/2/classes.html" target="_blank" rel="noopener">TypeScript Handbook: Classes</a>
+      <span class="meta">Skim "Member Visibility" (public, protected, private) and "Abstract Classes".</span></li>
+    <li><a href="https://en.wikipedia.org/wiki/Composition_over_inheritance" target="_blank" rel="noopener">Wikipedia: Composition over inheritance</a>
+      <span class="meta">Read the opening and the benefits and drawbacks. They match the table above.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Run it yourself (about 20 minutes)</h2>
+  <h3>A. Open the TypeScript Playground</h3>
+  <ol class="steps">
+    <li>In Chrome press <kbd>Ctrl</kbd> + <kbd>T</kbd>, type <code>typescriptlang.org/play</code> and press <kbd>Enter</kbd>.</li>
+    <li>You see an editor on the left and results on the right. No install and no account needed.</li>
+    <li>Click inside the left editor, press <kbd>Ctrl</kbd> + <kbd>A</kbd> to select the sample text and press <kbd>Delete</kbd>.</li>
+  </ol>
+  <h3>B. Encapsulation</h3>
+  <ol class="steps">
+    <li>In this lesson, click <span class="ui">Copy</span> on the first code block (the <code>Account</code> class) and paste it into the editor with <kbd>Ctrl</kbd> + <kbd>V</kbd>.</li>
+    <li>Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> (or click the <span class="ui">Run</span> button at the top). Open the <span class="ui">Logs</span> tab on the right (it may be labelled slightly differently, or sit beside <span class="ui">.JS</span> and <span class="ui">Errors</span>).</li>
+    <li>You should see <code>Asha 500</code> and <code>Rejected: Amount must be positive</code>.</li>
+    <li>Now delete the two slashes <code>//</code> at the start of the last line. A <b>red wavy line</b> appears under <code>balance</code>. Hover your mouse over it: it says you cannot assign to a read-only property. That is encapsulation protecting you before the code even runs.</li>
+    <li>If you see no red line, click <span class="ui">TS Config</span> in the toolbar and tick <span class="ui">strict</span>.</li>
+  </ol>
+  <h3>C. Polymorphism</h3>
+  <ol class="steps">
+    <li>Clear the editor and paste the <code>Notifier</code> block. Run it. Two different lines appear, from one loop.</li>
+    <li>Add a third class at the bottom: <code>class WhatsAppNotifier extends Notifier</code> with its own <code>send()</code>, then add it to the <code>list</code>. Run again. You added behaviour without changing the loop.</li>
+    <li>Delete the <code>send()</code> method from <code>SmsNotifier</code>. A red line appears: an abstract method must be implemented. Put it back.</li>
+  </ol>
+  <h3>D. Turn inheritance into composition (on paper or in the editor)</h3>
+  <ol class="steps">
+    <li>Paste the <code>UserService</code> block. Run it and read the output.</li>
+    <li>Write a second class <code>FileStore implements Store</code> whose <code>save()</code> just does <code>console.log("file saved", key)</code>.</li>
+    <li>Change the last two lines so UserService uses <code>FileStore</code>. You changed one part and left UserService alone. That is the payoff of composition.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is the difference between a class and an object?</summary><p>A class is the blueprint. An object is one real thing built from it, with its own data.</p></details>
+  <details><summary>What does encapsulation protect against?</summary><p>Outside code putting an object into an invalid state. Data is hidden, and only methods that check the rules can change it.</p></details>
+  <details><summary>What is polymorphism, in one sentence?</summary><p>The same method call behaves differently depending on the actual object behind it, so code written for a parent type works with every child.</p></details>
+  <details><summary>Why is "class UserService extends Logger" a smell?</summary><p>A user service is not a kind of logger. It ties the two together, blocks other parents, and Logger changes can break it. Hold a Logger as a field instead.</p></details>
+  <details><summary>You must model Car, Bike and Truck, all of which can start() and stop(). Would you choose inheritance or composition?</summary><p>An interface (or small abstract class) <code>Vehicle</code> with start/stop is fine here because "a Car is a Vehicle" is a true, stable relation. If the differences grow (different engines, fuel, tyres), pull those out into parts such as <code>Engine</code> and compose them, so you do not end up with a deep tree.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>I keep fields private and expose small methods that enforce the rules, so an object can never be in an invalid state.</blockquote>
+  <blockquote>Where behaviour varies, I code against an interface and inject the implementation, instead of hard-wiring a class.</blockquote>
+  <blockquote>I prefer composition over inheritance: I use inheritance only for a true, stable is-a relation.</blockquote>
+  <p><b>Common follow-up question:</b> "Why not just use inheritance everywhere to reuse code?"</p>
+  <p>Because the child becomes tied to the parent's internals. A change to the parent can break every child, trees get deep and hard to read, and a class can have only one parent. With composition I reuse code by holding a small helper behind an interface, which is easy to swap and easy to fake in a test.</p>
+</section>
+
+</main>
+</body>
+</html>

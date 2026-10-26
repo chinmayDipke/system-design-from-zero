@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UML class diagrams</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m6-4">
+<main class="lesson">
+
+<section class="story">
+  <h2>The family tree of your code</h2>
+  <p>Think of a family tree on the wall at a wedding. Boxes are people. Lines say who is related to whom: "parent of", "married to", "cousin of". You understand the whole family in ten seconds without reading a long story.</p>
+  <p>A <b>class diagram</b> is the family tree of your code. Boxes are classes. Lines say how they relate: "is a kind of", "owns", "uses". In an interview you draw this before writing code, so the interviewer can check your thinking early.</p>
+</section>
+
+<section class="explain">
+  <h2>How to read and draw a class diagram</h2>
+  <p><b>UML</b> (Unified Modeling Language) is a standard way to draw software. You only need one part of it: the <b>class diagram</b>. Learn the box and six kinds of lines.</p>
+
+  <h3>The class box</h3>
+  <p>A class is a rectangle with three parts: the <b>name</b>, the <b>attributes</b> (data) and the <b>methods</b> (actions). A sign in front of each line says who can see it:</p>
+  <table>
+    <tr><th>Sign</th><th>Meaning</th><th>TypeScript</th></tr>
+    <tr><td><code>+</code></td><td>public: anyone can use it</td><td><code>public</code> (the default)</td></tr>
+    <tr><td><code>-</code></td><td>private: only this class</td><td><code>private</code> or <code>#</code></td></tr>
+    <tr><td><code>#</code></td><td>protected: this class and its children</td><td><code>protected</code></td></tr>
+  </table>
+  <p>An <b>interface</b> or abstract class gets a label <code>«interface»</code> (or <code>«abstract»</code>) above its name. Write abstract names in <i>italics</i> if you like; on a whiteboard the label is enough.</p>
+
+  <h3>The six lines</h3>
+  <table>
+    <tr><th>Line</th><th>Name</th><th>Plain meaning</th><th>Looks like this in code</th></tr>
+    <tr><td>Solid line, open arrow</td><td>Association</td><td>"knows about" or "has a reference to"</td><td>A field that points to another class</td></tr>
+    <tr><td>Dashed line, open arrow</td><td>Dependency</td><td>"uses for a moment"</td><td>A method parameter or local variable of that type</td></tr>
+    <tr><td>Hollow diamond at the owner</td><td>Aggregation</td><td>"has a", but the parts can live alone</td><td>Parts are passed in through the constructor</td></tr>
+    <tr><td>Filled diamond at the owner</td><td>Composition</td><td>"is made of"; parts die with the whole</td><td>The class creates its parts with <code>new</code></td></tr>
+    <tr><td>Solid line, hollow triangle at the parent</td><td>Inheritance</td><td>"is a kind of"</td><td><code>extends</code></td></tr>
+    <tr><td>Dashed line, hollow triangle at the interface</td><td>Realisation</td><td>"promises to do what the interface says"</td><td><code>implements</code></td></tr>
+  </table>
+  <p>The same relations in TypeScript. Real output underneath:</p>
+  <pre><code>interface PaymentMethod {                        // «interface»
+  pay(rupees: number): boolean;
+}
+class UpiPayment implements PaymentMethod {      // realisation (dashed + hollow triangle)
+  pay(rupees: number): boolean {
+    console.log(`UPI paid Rs ${rupees}`);
+    return true;
+  }
+}
+
+class OrderItem {
+  constructor(public sku: string, public qty: number) {}
+}
+class Order {
+  // Composition (filled diamond): Order creates its items and owns them.
+  private items: OrderItem[] = [];
+  // Association (plain arrow): Order keeps a reference to a payment method.
+  constructor(public readonly customerId: string, private payment: PaymentMethod) {}
+
+  addItem(sku: string, qty: number): void {
+    this.items.push(new OrderItem(sku, qty));
+  }
+  checkout(rupees: number): boolean {
+    return this.items.length &gt; 0 &amp;&amp; this.payment.pay(rupees);
+  }
+}
+
+class Player {
+  constructor(public name: string) {}
+}
+class Team {
+  // Aggregation (hollow diamond): players are passed in and live on without the team.
+  constructor(private players: Player[]) {}
+  size(): number { return this.players.length; }
+}
+
+const order = new Order("cust-7", new UpiPayment());
+order.addItem("TSHIRT-M", 2);
+console.log(order.checkout(998));
+console.log(new Team([new Player("Asha"), new Player("Ravi")]).size());</code></pre>
+  <pre><code>UPI paid Rs 998
+true
+2</code></pre>
+
+  <h3>Multiplicity: how many?</h3>
+  <p>Write numbers near the ends of a line: <code>1</code> exactly one, <code>0..1</code> zero or one, <code>*</code> or <code>0..*</code> many, <code>1..*</code> one or more. "A customer places 0..* orders; an order belongs to exactly 1 customer."</p>
+
+  <h3>When to draw, and how much</h3>
+  <ul>
+    <li><b>Do:</b> draw it in the interview after you list the entities. Keep only the important fields and methods. Show every relationship that matters, with multiplicity.</li>
+    <li><b>Do not:</b> list every getter, every field, or every tiny helper class. A cluttered diagram hides your thinking.</li>
+    <li><b>Do not</b> agonise over aggregation versus composition. If you are unsure, use a plain association and say "the order owns its items" out loud. Inheritance, interface and association are the lines you need most.</li>
+    <li><b>Trade-off:</b> a diagram is quick to change but does not show behaviour over time (the order of calls). For that, interviewers sometimes ask for a sequence diagram, which is a separate drawing.</li>
+  </ul>
+  <p class="tip">Tip: prefer a short sentence next to a line ("places", "contains") over a clever symbol. Words always win in an interview.</p>
+</section>
+
+<section class="picture">
+  <h2>The box and the six lines</h2>
+  <p>First, the anatomy of one class box:</p>
+  <figure>
+    <svg viewBox="0 0 640 190" role="img" aria-label="A class box named Account with three parts: the name, the attributes with plus and minus signs, and the methods, each labelled on the right">
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="20" y="15" width="260" height="160" rx="4"/>
+        <path d="M20 55 H280"/>
+        <path d="M20 115 H280"/>
+        <path d="M285 35 H320"/>
+        <path d="M285 85 H320"/>
+        <path d="M285 145 H320"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" font-size="14">
+        <text x="150" y="42" text-anchor="middle" font-weight="700" font-size="16">Account</text>
+        <text x="32" y="80">- balance: number</text>
+        <text x="32" y="100">+ owner: string</text>
+        <text x="32" y="140">+ deposit(amount: number): void</text>
+        <text x="32" y="160">+ getBalance(): number</text>
+        <text x="330" y="40">Part 1: the class name</text>
+        <text x="330" y="90">Part 2: attributes (data)</text>
+        <text x="330" y="150">Part 3: methods (actions)</text>
+        <text x="330" y="175" font-size="13">+ public    - private    # protected</text>
+      </g>
+    </svg>
+    <figcaption>One class box. The sign before each line shows who can see it.</figcaption>
+  </figure>
+  <p>Now the six relationship lines, each drawn with its correct end shape:</p>
+  <figure>
+    <svg viewBox="0 0 640 450" role="img" aria-label="Six rows, each with two boxes joined by a different UML line: association with an open arrow and multiplicities, dependency with a dashed open arrow, aggregation with a hollow diamond, composition with a filled diamond, inheritance with a hollow triangle, and realisation with a dashed line and hollow triangle">
+      <defs>
+        <marker id="open-m6-4" markerUnits="userSpaceOnUse" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="14" markerHeight="14" orient="auto"><path d="M1,1 L13,7 L1,13" fill="none" stroke="currentColor" stroke-width="2"/></marker>
+        <marker id="tri-m6-4" markerUnits="userSpaceOnUse" viewBox="0 0 16 16" refX="0" refY="8" markerWidth="16" markerHeight="16" orient="auto"><path d="M1,1 L15,8 L1,15 z" fill="none" stroke="currentColor" stroke-width="2"/></marker>
+        <marker id="dia-m6-4" markerUnits="userSpaceOnUse" viewBox="0 0 26 14" refX="0" refY="7" markerWidth="26" markerHeight="14" orient="auto"><path d="M1,7 L13,1 L25,7 L13,13 z" fill="none" stroke="currentColor" stroke-width="2"/></marker>
+        <marker id="fdia-m6-4" markerUnits="userSpaceOnUse" viewBox="0 0 26 14" refX="0" refY="7" markerWidth="26" markerHeight="14" orient="auto"><path d="M1,7 L13,1 L25,7 L13,13 z" fill="currentColor" stroke="currentColor" stroke-width="2"/></marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <!-- row 1 association -->
+        <rect x="20" y="15" width="110" height="44" rx="4"/><rect x="290" y="15" width="110" height="44" rx="4"/>
+        <path d="M130 37 H290" marker-end="url(#open-m6-4)"/>
+        <!-- row 2 dependency -->
+        <rect x="20" y="90" width="110" height="44" rx="4"/><rect x="290" y="90" width="110" height="44" rx="4"/>
+        <path d="M130 112 H290" stroke-dasharray="7 5" marker-end="url(#open-m6-4)"/>
+        <!-- row 3 aggregation: line from part to whole, diamond at the whole -->
+        <rect x="20" y="165" width="110" height="44" rx="4"/><rect x="290" y="165" width="110" height="44" rx="4"/>
+        <path d="M290 187 H156" marker-end="url(#dia-m6-4)"/>
+        <!-- row 4 composition -->
+        <rect x="20" y="240" width="110" height="44" rx="4"/><rect x="290" y="240" width="110" height="44" rx="4"/>
+        <path d="M290 262 H156" marker-end="url(#fdia-m6-4)"/>
+        <!-- row 5 inheritance -->
+        <rect x="20" y="315" width="110" height="44" rx="4"/><rect x="290" y="315" width="110" height="44" rx="4"/>
+        <path d="M130 337 H274" marker-end="url(#tri-m6-4)"/>
+        <!-- row 6 realisation -->
+        <rect x="20" y="385" width="110" height="52" rx="4"/><rect x="290" y="385" width="110" height="52" rx="4"/>
+        <path d="M130 411 H274" stroke-dasharray="7 5" marker-end="url(#tri-m6-4)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" font-size="14" text-anchor="middle">
+        <text x="75" y="42">Customer</text><text x="345" y="42">Order</text>
+        <text x="75" y="117">OrderService</text><text x="345" y="117">Mailer</text>
+        <text x="75" y="192">Team</text><text x="345" y="192">Player</text>
+        <text x="75" y="267">Order</text><text x="345" y="267">OrderItem</text>
+        <text x="75" y="342">Car</text><text x="345" y="342">Vehicle</text>
+        <text x="75" y="416">UpiPayment</text>
+        <text x="345" y="406" font-size="13">«interface»</text><text x="345" y="426">PaymentMethod</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" font-size="13">
+        <text x="136" y="30">1</text><text x="262" y="30">0..*</text>
+        <text x="420" y="32" font-weight="700">Association</text><text x="420" y="50">Customer places many Orders</text>
+        <text x="420" y="107" font-weight="700">Dependency</text><text x="420" y="125">uses a Mailer for one call</text>
+        <text x="420" y="182" font-weight="700">Aggregation</text><text x="420" y="200">Team has Players (they live on)</text>
+        <text x="420" y="257" font-weight="700">Composition</text><text x="420" y="275">Order owns its OrderItems</text>
+        <text x="420" y="332" font-weight="700">Inheritance</text><text x="420" y="350">Car is a Vehicle</text>
+        <text x="420" y="406" font-weight="700">Realisation</text><text x="420" y="424">UpiPayment implements it</text>
+      </g>
+    </svg>
+    <figcaption>Association: open arrow. Dependency: dashed open arrow. Aggregation: hollow diamond next to the owner. Composition: filled diamond next to the owner. Inheritance: hollow triangle next to the parent. Realisation: dashed line, hollow triangle next to the interface.</figcaption>
+  </figure>
+  <p>You will draw this yourself below. Save it in Excalidraw as <code>m6-4 uml.excalidraw</code> in your Module 6 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=UML+class+diagram+tutorial+association+aggregation+composition" target="_blank" rel="noopener">YouTube search: "UML class diagram tutorial association aggregation composition"</a>
+      <span class="meta">Pick any video under 20 minutes. Watch the part that explains the diamonds and arrows.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Concept+%26%26+Coding+UML+class+diagram+low+level+design" target="_blank" rel="noopener">YouTube search: "Concept && Coding UML class diagram"</a>
+      <span class="meta">Watch one example where a diagram is built from requirements.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://www.uml-diagrams.org/class-diagrams-overview.html" target="_blank" rel="noopener">uml-diagrams.org: Class diagrams overview</a>
+      <span class="meta">Free reference. Look only at the pictures for the six lines and at the visibility section.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Draw it yourself (about 30 minutes)</h2>
+  <p>You will draw a small shopping system: a customer places orders, an order has items, an order is paid by a payment method (UPI or card).</p>
+  <h3>A. Open a fresh page</h3>
+  <ol class="steps">
+    <li>Open <code>excalidraw.com</code> in Chrome. If an old drawing is there, click <span class="ui">☰</span> → <span class="ui">Reset the canvas</span> → <span class="ui">Confirm</span>.</li>
+  </ol>
+  <h3>B. Draw the first class box</h3>
+  <ol class="steps">
+    <li>Press <kbd>R</kbd> and drag a rectangle about 200 pixels wide and 150 pixels tall, like a small card.</li>
+    <li>Press <kbd>T</kbd> (text tool) and click near the top inside the box. Type <code>Order</code>. Press <kbd>Esc</kbd>.</li>
+    <li>Press <kbd>L</kbd> (line tool). Hold <kbd>Shift</kbd> and drag a straight horizontal line under the name, from the left edge of the box to the right edge. Draw a second line a bit lower.</li>
+    <li>Press <kbd>T</kbd>, click in the middle part and type <code>- items: OrderItem[]</code>. Press <kbd>Esc</kbd>. Click in the bottom part and type <code>+ addItem()</code>, <kbd>Enter</kbd>, <code>+ checkout()</code>. Press <kbd>Esc</kbd>.</li>
+    <li>If it feels slow, that is normal. In the interview you can write just the name and two or three important members.</li>
+  </ol>
+  <h3>C. Copy the box for the other classes</h3>
+  <ol class="steps">
+    <li>Press <kbd>V</kbd>. Drag a selection around the whole box (box, lines and texts). Press <kbd>Ctrl</kbd> + <kbd>D</kbd> to duplicate. Drag the copy to a new spot.</li>
+    <li>Double-click each text in the copy and replace it. Make these boxes (one name each, members optional): <code>Customer</code>, <code>OrderItem</code>, <code>Product</code>, <code>«interface» PaymentMethod</code>, <code>UpiPayment</code>, <code>CardPayment</code>.</li>
+    <li>Place them like this: Customer on the left, Order in the middle, OrderItem to its right, Product to the right of OrderItem; PaymentMethod below Order; UpiPayment and CardPayment below PaymentMethod.</li>
+  </ol>
+  <h3>D. Draw the lines</h3>
+  <ol class="steps">
+    <li>Press <kbd>A</kbd> (arrow tool). Drag from the Customer box to the Order box. Add the words <code>places</code> and the multiplicities <code>1</code> (near Customer) and <code>0..*</code> (near Order) using the text tool. This is an <b>association</b>.</li>
+    <li>Draw an arrow from OrderItem to Order. Click it with <kbd>V</kbd>. In the left panel find the arrowhead choices (look for <span class="ui">Arrowheads</span>, one for each end). Set the end at <b>Order</b> to a <b>filled diamond</b> and the other end to nothing. Add <code>1</code> at the Order end and <code>1..*</code> at the OrderItem end. This is <b>composition</b>: an order owns its items.</li>
+    <li>Draw an arrow from OrderItem to Product. Keep the plain arrowhead. Label it <code>refers to</code>. Multiplicity <code>*</code> to <code>1</code>.</li>
+    <li>Draw an arrow from Order to PaymentMethod (plain association). Label it <code>paid by</code>.</li>
+    <li>Draw an arrow from UpiPayment up to PaymentMethod. Select it and set <span class="ui">Stroke style</span> to dashed and the arrowhead to a <b>hollow triangle</b> (it may be called "triangle outline"). Do the same for CardPayment. This is <b>realisation</b>.</li>
+    <li>If your Excalidraw version has no hollow triangle or diamond option, use the closest shape and write the name of the relationship next to the line, for example <code>implements</code>. Interviewers care more about the words than the exact tip.</li>
+  </ol>
+  <h3>E. Check your own diagram</h3>
+  <ol class="steps">
+    <li>Say out loud for each line: "An <i>A</i> ... a <i>B</i>". For example "a Customer places zero or more Orders" and "a UpiPayment is a PaymentMethod". If a sentence sounds wrong, the line is wrong.</li>
+    <li>Save: <span class="ui">☰</span> → <span class="ui">Save to…</span> → <span class="ui">Save to disk</span>, name it <code>m6-4 uml</code>.</li>
+  </ol>
+  <h3>F. Optional: match the code</h3>
+  <ol class="steps">
+    <li>Open <code>typescriptlang.org/play</code>, paste the code block from this lesson and press <kbd>Ctrl</kbd> + <kbd>Enter</kbd>. In the <span class="ui">Logs</span> tab you should see <code>UPI paid Rs 998</code>, <code>true</code> and <code>2</code>.</li>
+    <li>Find the line in the code that matches each of your arrows.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What do the signs +, - and # mean before a member?</summary><p>+ public, - private, # protected.</p></details>
+  <details><summary>What is the difference between aggregation and composition?</summary><p>Both mean "has a". In aggregation (hollow diamond) the parts can exist without the whole, like players without a team. In composition (filled diamond) the parts belong to the whole and die with it, like items in an order.</p></details>
+  <details><summary>Which line means "implements an interface"?</summary><p>Realisation: a dashed line with a hollow triangle pointing at the interface.</p></details>
+  <details><summary>What does "1..*" at the end of a line mean?</summary><p>One or more. For example an order must have at least one item.</p></details>
+  <details><summary>In the interview you have 5 minutes for the diagram. What would you include and what would you leave out?</summary><p>Include the main classes, two or three key fields or methods each, every important relationship with a short word and multiplicity, and any interfaces. Leave out getters, setters, helper classes and the aggregation-versus-composition debate; say the ownership out loud instead.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>Let me list the entities first, then draw the relationships and their multiplicities.</blockquote>
+  <blockquote>An order owns its items, so that is composition. Items do not exist without the order.</blockquote>
+  <blockquote>Payment is an interface with UPI and card implementations, so adding a wallet later needs no change to Order.</blockquote>
+  <p><b>Common follow-up question:</b> "How do you decide between inheritance and an interface in the diagram?"</p>
+  <p>I use an interface when classes share a promise but not code, like PaymentMethod. I use inheritance only when children truly share data and behaviour with a parent and the "is a" relation is stable. When in doubt I choose the interface and put shared code in a helper that classes hold as a part.</p>
+</section>
+
+</main>
+</body>
+</html>
