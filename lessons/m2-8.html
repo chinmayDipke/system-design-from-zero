@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caching 2: CDN and Redis (hands-on)</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-8">
+<main class="lesson">
+
+<section class="story">
+  <h2>The warehouse and the neighbourhood shops</h2>
+  <p>A company makes notebooks in one big warehouse in Delhi. If every customer in India had to order from that warehouse, delivery to Chennai would take days. So the company places a few <b>notebooks in a local shop in every big city</b>. The first customer in Chennai waits for the shop to fetch stock from Delhi. After that, everyone in Chennai buys from the nearby shop in minutes.</p>
+  <p>That local shop is a <b>CDN</b> edge. Inside the warehouse, the packer also keeps today's most-asked items on a <b>table right next to the door</b> instead of walking to the back shelves each time. That table is <b>Redis</b>: a very fast memory shelf for the things you need all the time.</p>
+</section>
+
+<section class="explain">
+  <h2>CDN and Redis</h2>
+
+  <h3>CDN: a cache spread around the world</h3>
+  <p>A <b>CDN (content delivery network)</b> is many servers in many cities, called <b>edge locations</b>. They keep copies of your files, so a user is served from a nearby edge rather than from your faraway <b>origin</b> server. This cuts the round-trip time you saw in Module 1 and takes load off the origin. Examples: Cloudflare, Amazon CloudFront, Akamai, Vercel's network.</p>
+  <ul>
+    <li><b>Pull CDN:</b> the edge fetches a file from your origin the first time someone asks (a miss), then keeps it for next time. Easy: you change nothing. Most common.</li>
+    <li><b>Push CDN:</b> you upload files to the CDN ahead of time. More control, and good for rarely changing big files, but you must manage the uploads.</li>
+    <li><b>Cache key:</b> what the CDN uses to decide "is this the same request?". Usually the URL, sometimes plus chosen headers or query strings. <code>/logo.png?v=2</code> and <code>/logo.png?v=3</code> are different keys, which is a neat trick to force fresh files.</li>
+    <li><b>Purge (invalidate):</b> tell the CDN to drop a file now, when you cannot wait for its TTL. Powerful but slow across the globe and sometimes costs money. Better: put a version or hash in file names (<code>app.3f9a2.js</code>) so a new file is a new key and no purge is needed.</li>
+  </ul>
+  <p>CDNs are great for static files (images, CSS, JS, video) and increasingly for whole pages. They are a poor fit for data that is personal or changes every second.</p>
+
+  <h3>Redis: the in-memory shelf</h3>
+  <p><b>Redis</b> is an <b>in-memory key-value store</b>: a giant dictionary that lives in RAM. It is not just strings; its values can be rich data types:</p>
+  <table>
+    <tr><th>Type</th><th>What it is</th><th>Use it for</th></tr>
+    <tr><td>String</td><td>Text or number</td><td>Cached values, counters</td></tr>
+    <tr><td>Hash</td><td>A small object of fields and values</td><td>A user profile</td></tr>
+    <tr><td>List</td><td>Ordered items, add at either end</td><td>Recent activity, simple queues</td></tr>
+    <tr><td>Set</td><td>Unique items, no order</td><td>Tags, unique visitors</td></tr>
+    <tr><td>Sorted set</td><td>Unique items, each with a score, kept in order</td><td>Leaderboards, rankings</td></tr>
+  </table>
+  <p><b>Why it is fast:</b> data sits in RAM (not on disk), operations are simple, and the structures are built for speed. One Redis can handle very large numbers of operations per second, with answers in well under a millisecond on the same network.</p>
+  <p><b>Persistence in one line:</b> Redis can save snapshots or a write log to disk so data survives a restart, but treat it as a cache first, not your main database.</p>
+
+  <h3>When to use, when not to</h3>
+  <table>
+    <tr><th>Use Redis for</th><th>Do not use it for</th></tr>
+    <tr><td>Caches, sessions, counters, rate limits, leaderboards, short queues</td><td>The only copy of important data, large datasets that exceed RAM, complex queries and joins</td></tr>
+  </table>
+  <ul>
+    <li><b>Trade-off:</b> RAM is fast but costly and limited, so you cache only hot data and set TTLs.</li>
+    <li><b>Trade-off:</b> a separate cache server adds a network hop (tiny compared with a database query) and one more thing to keep running.</li>
+    <li><b>Trade-off:</b> cached data can be stale. Plan invalidation, as the last lesson said.</li>
+  </ul>
+  <p class="tip">Redis is not only a cache. Its counters, sorted sets and expiry make it the standard tool for rate limiting and leaderboards too (you will use it for rate limiting soon).</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 270" role="img" aria-label="First user asks the CDN edge, which misses and asks the faraway origin, then saves the reply; a second user asks the edge and gets an instant hit">
+      <defs><marker id="ar-m2-8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="30" width="110" height="60" rx="8"/>
+        <rect x="10" y="165" width="110" height="60" rx="8"/>
+        <rect x="250" y="30" width="150" height="195" rx="8"/>
+        <rect x="520" y="30" width="110" height="60" rx="8"/>
+        <path d="M123 50 H247" marker-end="url(#ar-m2-8)"/>
+        <path d="M403 50 H517" marker-end="url(#ar-m2-8)"/>
+        <path d="M517 72 H403" marker-end="url(#ar-m2-8)" stroke-dasharray="6 5"/>
+        <path d="M123 185 H247" marker-end="url(#ar-m2-8)"/>
+        <path d="M247 207 H123" marker-end="url(#ar-m2-8)" stroke-dasharray="6 5"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="65" y="55" font-size="15" font-weight="700">User 1</text>
+        <text x="65" y="74" font-size="13">first visitor</text>
+        <text x="65" y="190" font-size="15" font-weight="700">User 2</text>
+        <text x="65" y="209" font-size="13">next visitor</text>
+        <text x="325" y="110" font-size="15" font-weight="700">CDN edge</text>
+        <text x="325" y="130" font-size="13">near the users</text>
+        <text x="325" y="160" font-size="13">keeps a copy</text>
+        <text x="325" y="180" font-size="13">of the file</text>
+        <text x="575" y="55" font-size="15" font-weight="700">Origin</text>
+        <text x="575" y="74" font-size="13">far away</text>
+        <text x="185" y="42" font-size="13">1. request</text>
+        <text x="460" y="42" font-size="13">2. miss</text>
+        <text x="460" y="92" font-size="13">3. reply, saved</text>
+        <text x="185" y="177" font-size="13">4. request</text>
+        <text x="185" y="228" font-size="13">5. hit, instant</text>
+        <text x="320" y="258" font-size="13">The origin is asked once; every later visitor is served by the edge.</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 to 3: the first request is a miss and goes all the way to the origin; the edge saves the reply. Steps 4 and 5: the next request is answered at the edge.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-8 cdn.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+what+is+a+CDN" target="_blank" rel="noopener">YouTube search: "ByteByteGo what is a CDN"</a>
+      <span class="meta">Short. Watch it all.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Fireship+redis+in+100+seconds" target="_blank" rel="noopener">YouTube search: "Fireship Redis in 100 seconds"</a>
+      <span class="meta">About 2 minutes. Watch it all, and note the data types.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.cloudflare.com/learning/cdn/what-is-a-cdn/" target="_blank" rel="noopener">Cloudflare Learning Center: What is a CDN?</a>
+      <span class="meta">Read the first part, on how a CDN reduces distance.</span></li>
+    <li><a href="https://redis.io/docs/latest/develop/data-types/" target="_blank" rel="noopener">Redis docs: Data types</a>
+      <span class="meta">Skim the list of types and open Strings, Hashes, Lists and Sorted sets for one-paragraph descriptions.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes)</h2>
+
+  <h3>A. Create a free Redis database on Upstash</h3>
+  <ol class="steps">
+    <li>Open <code>console.upstash.com</code> and log in.</li>
+    <li>Find the <b>Redis</b> section (a tab or a menu item named <span class="ui">Redis</span>) and click <span class="ui">Create Database</span>.</li>
+    <li>In <b>Name</b>, type <code>sysdesign-practice</code>.</li>
+    <li>For the region (it may be called <span class="ui">Primary Region</span>), pick one near India if offered, for example <span class="ui">Mumbai</span> (ap-south-1) or else Singapore. Near means faster, as in Module 1.</li>
+    <li>Choose the <span class="ui">Free</span> plan. Leave other options as they are, then click <span class="ui">Create</span>.</li>
+    <li>After a few seconds the database page opens. Look for a tab named <span class="ui">CLI</span> and click it. (If your console shows a <span class="ui">Data Browser</span> with a command box instead, that works too. Labels may differ a little.) You will see a text box where you type commands, and results appear below.</li>
+  </ol>
+
+  <h3>B. Strings, expiry and counters</h3>
+  <p>Type each command in the CLI box and press <kbd>Enter</kbd>. After each, compare with what you should see.</p>
+  <ol class="steps">
+    <li><code>SET greeting "hello"</code> shows <code>OK</code>.</li>
+    <li><code>GET greeting</code> shows <code>"hello"</code>.</li>
+    <li><code>EXPIRE greeting 60</code> shows <code>1</code> (it worked: the key will vanish after 60 seconds).</li>
+    <li><code>TTL greeting</code> shows the seconds left, for example <code>57</code>. (<code>-1</code> means no expiry; <code>-2</code> means the key does not exist.)</li>
+    <li>Set a value with an expiry in one go: <code>SET session:42 "asha" EX 30</code>, then <code>TTL session:42</code>.</li>
+    <li>Wait 30 seconds and run <code>GET session:42</code>. It shows <code>(nil)</code> (or an empty value): the key expired by itself. That is TTL, from the last lesson.</li>
+    <li>Counters: <code>INCR visits</code> shows <code>1</code>. Run it three more times: <code>2</code>, <code>3</code>, <code>4</code>. <code>INCR</code> creates the key at 0 if needed and is safe even when many clients call it at once.</li>
+    <li>Remove a key: <code>DEL greeting</code> shows <code>1</code>; <code>GET greeting</code> shows <code>(nil)</code>.</li>
+  </ol>
+
+  <h3>C. Hash, list, sorted set</h3>
+  <ol class="steps">
+    <li>A hash (a small object): <code>HSET user:1 name Asha city Pune</code>, then <code>HGETALL user:1</code>. You see the fields and values: name, Asha, city, Pune.</li>
+    <li>A list (recent items): run these three one at a time: <code>LPUSH recent "page-a"</code>, <code>LPUSH recent "page-b"</code>, <code>LPUSH recent "page-c"</code>. Then <code>LRANGE recent 0 -1</code>. You see them with the newest first: page-c, page-b, page-a. (<code>0 -1</code> means "from the first to the last".)</li>
+    <li>A sorted set (a leaderboard): <code>ZADD leaderboard 100 asha 250 ravi 175 meera</code> shows <code>3</code> (three members added).</li>
+    <li><code>ZRANGE leaderboard 0 -1 WITHSCORES</code> lists lowest score first: asha 100, meera 175, ravi 250.</li>
+    <li>For top scores first, run <code>ZRANGE leaderboard 0 -1 REV WITHSCORES</code>. (If your console complains about <code>REV</code>, use <code>ZREVRANGE leaderboard 0 -1 WITHSCORES</code> instead.) Ravi is first. Redis keeps the order for you; no sorting code needed.</li>
+    <li>Update a score: <code>ZINCRBY leaderboard 100 asha</code>, then list again. Asha is now 200 and moves up.</li>
+  </ol>
+
+  <h3>D. A cache-aside walkthrough, in commands</h3>
+  <p>Pretend the "database" is a slow place that holds the product named "Laptop" with id 7. You play the app.</p>
+  <ol class="steps">
+    <li>Check the cache first: <code>GET product:7</code> shows <code>(nil)</code>. That is a <b>miss</b>.</li>
+    <li>On a miss, the app reads the database (imagine it takes 80 ms) and gets <code>Laptop, Rs 52000</code>.</li>
+    <li>The app saves it in the cache with a 60-second TTL: <code>SET product:7 "Laptop,52000" EX 60</code>.</li>
+    <li>The next request: <code>GET product:7</code> shows <code>"Laptop,52000"</code>. That is a <b>hit</b>, no database needed.</li>
+    <li>Look at how long the copy has left: <code>TTL product:7</code>.</li>
+    <li>The price changes in the database. To stay fresh, the app deletes the cached copy: <code>DEL product:7</code>. The next <code>GET</code> misses and reloads the new value. That is invalidation.</li>
+    <li>Write in your notes: which command did each of these jobs: look up, store with expiry, invalidate. (<code>GET</code>, <code>SET ... EX</code>, <code>DEL</code>.)</li>
+  </ol>
+
+  <h3>E. Clean up</h3>
+  <ol class="steps">
+    <li>Delete the practice keys: <code>DEL visits user:1 recent leaderboard product:7</code>. Or just leave the database for the rate-limiting lesson, which uses it again.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is the difference between a pull CDN and a push CDN?</summary><p>Pull: the edge fetches from your origin on the first request and then caches it. Push: you upload files to the CDN ahead of time.</p></details>
+  <details><summary>How can you update a file on a CDN without purging it?</summary><p>Put a version or content hash in the file name or URL (like <code>app.3f9a2.js</code> or <code>?v=3</code>), so the new file has a new cache key.</p></details>
+  <details><summary>Why is Redis fast?</summary><p>It keeps data in RAM, and its operations and data structures are simple and built for speed. No disk read is needed for most requests.</p></details>
+  <details><summary>Which Redis type would you use for a leaderboard, and which command adds a player?</summary><p>A sorted set; <code>ZADD leaderboard score name</code>.</p></details>
+  <details><summary>Your cached product page shows an old price after an update. What would you change?</summary><p>Delete (or update) the cache key whenever the product is written, and keep a TTL as a safety net. Optionally lower the TTL for price data.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Static files go through a CDN so users are served from a nearby edge, with versioned file names to avoid purges."</blockquote>
+  <blockquote>"For dynamic data I use Redis with cache-aside and a TTL. Sorted sets give leaderboards and INCR gives atomic counters."</blockquote>
+  <p><b>Common follow-up question:</b> What happens if Redis goes down?</p>
+  <p>The app should fall back to the database, slower but correct. Then the database must survive the extra load, so I would protect it with a connection limit, and run Redis with a replica so it fails over quickly.</p>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Load balancers</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-5">
+<main class="lesson">
+
+<section class="story">
+  <h2>The traffic police at the crossing</h2>
+  <p>Picture a busy junction in front of a mall with three entrance gates. If every car goes to Gate 1, a huge queue forms there while Gates 2 and 3 stay empty. So a <b>traffic policeman</b> stands at the junction and waves cars: "You to Gate 2, you to Gate 3." If Gate 3 is closed for repairs, he stops sending cars there.</p>
+  <p>A <b>load balancer</b> is that policeman for web requests. The mall gates are your servers. Users only know the one road; they never see which gate they were sent to.</p>
+  <p>But what if the policeman falls sick? The whole junction jams. So smart cities keep a second policeman standing by.</p>
+</section>
+
+<section class="explain">
+  <h2>What a load balancer does</h2>
+  <p>A <b>load balancer (LB)</b> sits in front of several identical servers. It receives every request and forwards it to one healthy server. Three benefits: <b>more capacity</b> (many servers share the work), <b>availability</b> (a dead server is skipped), and <b>easy changes</b> (add or remove servers without users noticing). It is the piece that makes horizontal scaling from the last lesson work.</p>
+
+  <h3>L4 vs L7</h3>
+  <p>Network traffic has layers. An LB can look at different layers:</p>
+  <table>
+    <tr><th></th><th>L4 (transport)</th><th>L7 (application)</th></tr>
+    <tr><td>Looks at</td><td>IP addresses and ports only</td><td>The HTTP request: URL path, headers, cookies</td></tr>
+    <tr><td>Can do</td><td>Forward raw connections very fast</td><td>Route <code>/api</code> to one group and <code>/images</code> to another, terminate TLS, rewrite headers</td></tr>
+    <tr><td>Speed</td><td>Faster, cheaper</td><td>Slower, smarter</td></tr>
+    <tr><td>Use for</td><td>Non-HTTP traffic, huge throughput</td><td>Most web apps and APIs</td></tr>
+  </table>
+
+  <h3>How it picks a server: the algorithms</h3>
+  <table>
+    <tr><th>Algorithm</th><th>How</th><th>Good when</th><th>Weakness</th></tr>
+    <tr><td>Round robin</td><td>A, B, C, A, B, C, ...</td><td>Servers equal, requests similar</td><td>Ignores how busy a server is</td></tr>
+    <tr><td>Weighted round robin</td><td>Stronger servers get more turns (for example 3:1)</td><td>Servers of different sizes</td><td>Weights are set by hand</td></tr>
+    <tr><td>Least connections</td><td>Pick the server with the fewest active connections</td><td>Requests vary a lot in duration</td><td>Needs the LB to track connections</td></tr>
+    <tr><td>IP hash</td><td>Hash the client's IP to choose the server</td><td>The same client should hit the same server</td><td>Uneven spread; changes when servers are added</td></tr>
+  </table>
+
+  <h3>Health checks</h3>
+  <p>The LB regularly pings each server (for example <code>GET /health</code> every 10 seconds). If a server fails a few checks in a row, the LB marks it <b>unhealthy</b> and stops sending traffic. When it passes again, it comes back. This is how failures stay invisible to users. Make the health endpoint cheap and honest: it should check what the server truly needs (for example it can reach the database), not just return "OK".</p>
+
+  <h3>Sticky sessions, and why to avoid them</h3>
+  <p><b>Sticky sessions</b> (session affinity) make the LB send the same user to the same server every time, usually using a cookie. It is a quick patch for servers that keep session data in memory. Problems: load becomes uneven (a heavy user pins one server), and if that server dies the user loses their session. The better fix is what you learned last lesson: <b>stateless servers</b> with sessions in Redis. Use stickiness only as a short-term crutch, or for things like WebSockets where a connection must stay on one server.</p>
+
+  <h3>The load balancer is itself a single point of failure</h3>
+  <p>If all traffic goes through one LB and it dies, your site is down however many servers you have. The fix is a <b>pair</b>: an <b>active</b> LB and a <b>passive (standby)</b> one that watches the active one with a heartbeat and takes over its address if it stops. Cloud providers do this for you, and large systems also put several LBs behind DNS or a shared IP.</p>
+
+  <h3>Examples you will meet</h3>
+  <ul>
+    <li><b>AWS Application Load Balancer (ALB):</b> a managed L7 balancer. (The AWS Network Load Balancer is its L4 sibling.)</li>
+    <li><b>Nginx</b> (and HAProxy): free software you run yourself, can act as an L7 balancer.</li>
+    <li><b>Cloudflare:</b> a global network that can balance traffic across servers and regions, and also acts as a CDN.</li>
+  </ul>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>An LB adds one extra network hop (a few milliseconds) and one more thing to run and watch.</li>
+    <li>L7 is flexible but costs more CPU than L4.</li>
+    <li>Smarter algorithms need more tracking. Round robin is simple and fine when requests are alike; least connections shines when some requests are long.</li>
+  </ul>
+  <p class="tip">Also say "TLS termination": the LB can handle HTTPS decryption once, so the servers behind it speak plain HTTP on a private network. The next lesson covers this.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 330" role="img" aria-label="Clients send traffic to an active load balancer which has a standby partner, and the active balancer forwards requests to servers A and B but not to server C, which has failed its health check">
+      <defs><marker id="ar-m2-5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="95" width="110" height="60" rx="8"/>
+        <rect x="165" y="75" width="135" height="60" rx="8"/>
+        <rect x="165" y="195" width="135" height="60" rx="8" stroke-dasharray="6 5"/>
+        <rect x="400" y="20" width="170" height="60" rx="8"/>
+        <rect x="400" y="125" width="170" height="60" rx="8"/>
+        <rect x="400" y="230" width="170" height="60" rx="8" stroke-dasharray="6 5"/>
+        <path d="M123 120 L162 108" marker-end="url(#ar-m2-5)"/>
+        <path d="M303 95 L397 55" marker-end="url(#ar-m2-5)"/>
+        <path d="M303 115 L397 152" marker-end="url(#ar-m2-5)"/>
+        <path d="M232 138 V192" stroke-dasharray="5 4" marker-end="url(#ar-m2-5)"/>
+        <path d="M303 125 L397 255" stroke-dasharray="3 6" opacity="0.5"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="65" y="120" font-size="15" font-weight="700" text-anchor="middle">1. Clients</text>
+        <text x="65" y="139" font-size="13" text-anchor="middle">one address</text>
+        <text x="232" y="100" font-size="15" font-weight="700" text-anchor="middle">2. LB active</text>
+        <text x="232" y="119" font-size="13" text-anchor="middle">picks a server</text>
+        <text x="240" y="170" font-size="13">4. heartbeat</text>
+        <text x="232" y="220" font-size="15" font-weight="700" text-anchor="middle">2. LB standby</text>
+        <text x="232" y="239" font-size="13" text-anchor="middle">takes over if needed</text>
+        <text x="485" y="45" font-size="15" font-weight="700" text-anchor="middle">Server A</text>
+        <text x="485" y="64" font-size="13" text-anchor="middle">healthy, gets traffic</text>
+        <text x="485" y="150" font-size="15" font-weight="700" text-anchor="middle">Server B</text>
+        <text x="485" y="169" font-size="13" text-anchor="middle">healthy, gets traffic</text>
+        <text x="485" y="255" font-size="15" font-weight="700" text-anchor="middle">Server C</text>
+        <text x="485" y="274" font-size="13" text-anchor="middle">3. failed health check</text>
+        <text x="320" y="312" font-size="13" text-anchor="middle">The faded line to C means: no requests sent while it is unhealthy.</text>
+      </g>
+    </svg>
+    <figcaption>Step 1: all clients use one address. Step 2: the active load balancer forwards to servers, with a standby partner. Step 3: a server that fails its health check gets no traffic. Step 4: the standby watches the active one with a heartbeat.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-5 load-balancer.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+what+is+a+load+balancer" target="_blank" rel="noopener">YouTube search: "ByteByteGo what is a load balancer"</a>
+      <span class="meta">Short. Watch it all, and listen for the algorithm names.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+load+balancing+system+design" target="_blank" rel="noopener">YouTube search: "Gaurav Sen load balancing system design"</a>
+      <span class="meta">Pick one result. Watch the part about algorithms and what happens when a server dies.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.cloudflare.com/learning/performance/what-is-load-balancing/" target="_blank" rel="noopener">Cloudflare Learning Center: What is load balancing?</a>
+      <span class="meta">Read the algorithm section and compare it with the table above.</span></li>
+    <li><a href="https://aws.amazon.com/what-is/load-balancing/" target="_blank" rel="noopener">AWS: What is load balancing?</a>
+      <span class="meta">Skim the "types" and "how it works" parts.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes)</h2>
+
+  <h3>A. Spot the load balancer clues in a big site's headers</h3>
+  <p>Big sites hide their servers, but response headers leave footprints. Look for headers like <code>server</code>, <code>via</code>, <code>cf-ray</code> and <code>x-cache</code> or similar. What you see differs from site to site and changes over time, so do not expect an exact match.</p>
+  <ol class="steps">
+    <li>Open Chrome and go to <code>https://www.cloudflare.com</code>.</li>
+    <li>Press <kbd>F12</kbd> and click the <span class="ui">Network</span> tab.</li>
+    <li>Press <kbd>Ctrl</kbd> + <kbd>R</kbd> to reload so the requests are recorded.</li>
+    <li>Click the first row in the list (type <code>document</code>, the page itself).</li>
+    <li>In the right pane click the <span class="ui">Headers</span> tab and scroll down to <span class="ui">Response Headers</span>.</li>
+    <li>Look for these names and write down their values:
+      <ul>
+        <li><code>server</code>: often names the software or provider at the front (for example a CDN or web server name).</li>
+        <li><code>cf-ray</code>: an id added by Cloudflare. Its presence means the request passed through Cloudflare's network, and the code at the end usually shows which city handled it.</li>
+        <li><code>via</code>: lists proxies the request passed through.</li>
+        <li><code>x-cache</code> or <code>x-served-by</code>: tells a cache hit from a miss, or which machine answered.</li>
+      </ul>
+      Not every header will be present; that is normal.</li>
+    <li>Repeat with <code>https://www.wikipedia.org</code> and <code>https://github.com</code>. For each site, note: which clue tells you a middle layer exists in front of the real server?</li>
+    <li>Reload the same page 3 times and compare. If you see something like a server or machine id header, does it ever change? If so, different machines answered you: a load balancer in action.</li>
+  </ol>
+
+  <h3>B. Whiteboard: round robin vs least connections</h3>
+  <p>You will act as the load balancer. Use paper or Excalidraw.</p>
+  <ol class="steps">
+    <li>Draw three boxes <code>A</code>, <code>B</code>, <code>C</code> (servers) and a timeline from 0 to 7 seconds along the bottom.</li>
+    <li>Six requests arrive, one each second. Request R1 is <b>heavy</b> (takes 6 seconds); R2 to R6 are <b>light</b> (2 seconds each).
+      <table>
+        <tr><th>Request</th><th>R1</th><th>R2</th><th>R3</th><th>R4</th><th>R5</th><th>R6</th></tr>
+        <tr><td>Arrives at</td><td>0s</td><td>1s</td><td>2s</td><td>3s</td><td>4s</td><td>5s</td></tr>
+        <tr><td>Takes</td><td>6s</td><td>2s</td><td>2s</td><td>2s</td><td>2s</td><td>2s</td></tr>
+      </table>
+      A request is "active" from its arrival until arrival + takes (R2 is active from 1s up to, but not including, 3s).</li>
+    <li><b>Round robin:</b> send R1 to A, R2 to B, R3 to C, R4 to A, R5 to B, R6 to C. Draw each as a bar on the server's row. Look at second 3 to 5: A is serving R1 <i>and</i> R4 at the same time, while the others may be free.</li>
+    <li><b>Least connections:</b> before each request, count active requests on A, B, C and send it to the lowest (if tied, pick the earlier letter). Walk through:
+      <ul>
+        <li>R1 at 0s: all 0, goes to A.</li>
+        <li>R2 at 1s: A has 1, B and C have 0, goes to B.</li>
+        <li>R3 at 2s: A 1, B 1, C 0, goes to C.</li>
+        <li>R4 at 3s: R2 just finished, so A 1, B 0, C 1, goes to B.</li>
+        <li>R5 at 4s: A 1, B 1, C 0 (R3 finished), goes to C.</li>
+        <li>R6 at 5s: A 1, B 0, C 1, goes to B.</li>
+      </ul></li>
+    <li>Compare: with least connections, the busy server A got <b>no extra work</b> while it handled the heavy R1; with round robin, R4 was stuck sharing A with R1. Write one sentence on which you would choose when request durations vary a lot.</li>
+    <li>Extra: add a fourth server D that is twice as powerful. Which algorithm lets you say "D gets double the traffic"? (Weighted round robin.)</li>
+    <li>Save as <code>m2-5 round-robin-vs-least-conn.excalidraw</code>.</li>
+  </ol>
+
+  <h3>C. Draw it with failover</h3>
+  <ol class="steps">
+    <li>Redraw the lesson picture in Excalidraw. Mark Server C with a red cross and write "health check failed".</li>
+    <li>Add an arrow from "LB active" to "LB standby" labelled "heartbeat". Say aloud what happens if the heartbeat stops. (The standby takes over the address and traffic continues.)</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is the difference between an L4 and an L7 load balancer?</summary><p>L4 routes using only IP and port, so it is fast and simple. L7 reads the HTTP request (path, headers, cookies), so it can route by URL and do things like TLS termination, at higher cost.</p></details>
+  <details><summary>When is least connections better than round robin?</summary><p>When requests differ a lot in how long they take. Round robin may keep adding work to a server stuck on a heavy request; least connections avoids it.</p></details>
+  <details><summary>What does a health check do?</summary><p>It periodically tests each server. After failures the LB stops sending traffic to it, and resumes when it recovers, hiding failures from users.</p></details>
+  <details><summary>Why are sticky sessions discouraged?</summary><p>They cause uneven load and lose the session if that server dies. Keeping servers stateless with sessions in Redis is better.</p></details>
+  <details><summary>How do you stop the load balancer being a single point of failure?</summary><p>Run an active and a standby (or several), with a heartbeat so the standby takes over; managed cloud balancers already do this behind the scenes.</p></details>
+  <details><summary>You have two servers: one has 4 CPUs, one has 8. Which algorithm and why?</summary><p>Weighted round robin (weights 1:2), or least connections, so the bigger server receives proportionally more requests.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would put an L7 load balancer in front of stateless app servers, with health checks, using least connections because request times vary."</blockquote>
+  <blockquote>"The load balancer itself must not be a single point of failure, so I would run it as an active-passive pair or use a managed one."</blockquote>
+  <p><b>Common follow-up question:</b> Where does the load balancer sit, and can you have more than one?</p>
+  <p>Yes. Commonly one in front of the web tier, and another internal one in front of a service tier. Global traffic can first be steered by DNS or a CDN to the nearest region, where a regional LB takes over.</p>
+</section>
+
+</main>
+</body>
+</html>

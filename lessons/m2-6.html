@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proxies and API gateways</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-6">
+<main class="lesson">
+
+<section class="story">
+  <h2>The receptionist and the personal assistant</h2>
+  <p>Imagine a big office building. Visitors do not walk to any desk they like. They go to the <b>reception</b>. The receptionist checks who they are, says "Sales is on floor 3, Accounts on floor 5", turns away people without an appointment, and gives them a visitor pass. The staff upstairs never deal with the crowd at the door.</p>
+  <p>Now picture a school student whose <b>teacher passes all her letters</b> to outside people so nobody learns her home address. That is the opposite direction: someone standing in front of the <i>sender</i>.</p>
+  <p>Both are "someone in the middle". They are called <b>proxies</b>.</p>
+</section>
+
+<section class="explain">
+  <h2>Forward proxy, reverse proxy, API gateway</h2>
+  <p>A <b>proxy</b> is a server that passes requests along on behalf of someone else. Which side it stands in front of decides its name.</p>
+
+  <h3>Forward proxy: stands in front of clients</h3>
+  <p>Your laptop talks to the proxy, and the proxy talks to the internet for you. The website sees the proxy's address, not yours. Companies use it to filter sites at the office; people use VPN-like tools to hide their location. <b>The server does not know the real client.</b></p>
+
+  <h3>Reverse proxy: stands in front of servers</h3>
+  <p>Users talk to the reverse proxy, which talks to your real servers. <b>The client does not know the real servers.</b> You already met one: a load balancer is a kind of reverse proxy. A reverse proxy usually does more than forward:</p>
+  <ul>
+    <li><b>TLS termination:</b> it handles HTTPS encryption once, so the servers behind it can speak simple HTTP on a private network and need no certificates.</li>
+    <li><b>Compression:</b> it shrinks responses (gzip or Brotli) before sending them.</li>
+    <li><b>Caching:</b> it keeps copies of common responses and answers them without bothering the app.</li>
+    <li><b>Routing:</b> <code>/api</code> to the API servers, <code>/</code> to the web servers, <code>/images</code> to the file servers.</li>
+    <li><b>Protection:</b> hides internal servers, blocks bad traffic, can serve a friendly error page when the app is down.</li>
+  </ul>
+
+  <h3>API gateway: a reverse proxy for APIs, with extra jobs</h3>
+  <p>When you split a system into many small services (<b>microservices</b>), clients should not need to know about each one. An <b>API gateway</b> is the single front door that adds API-specific features on top of reverse proxying:</p>
+  <ul>
+    <li><b>Authentication and authorization:</b> check the API key or token once, at the door, instead of in every service.</li>
+    <li><b>Rate limiting:</b> stop one client from sending too many requests (covered in a later lesson).</li>
+    <li><b>Routing to microservices:</b> <code>/users/*</code> goes to the users service, <code>/orders/*</code> to the orders service.</li>
+    <li><b>Request shaping:</b> change versions or formats, combine several service answers into one response, add headers.</li>
+    <li><b>Logging and metrics</b> in one place.</li>
+  </ul>
+  <p>Examples: AWS API Gateway, Kong, and Nginx used as a gateway. Many cloud platforms and CDNs also bundle gateway features.</p>
+
+  <h3>Reading a reverse proxy config (reading only, no install)</h3>
+  <p>This is a small Nginx configuration. You do <b>not</b> need to run it. Just read the comments to see how little is needed to build a reverse proxy.</p>
+  <pre><code># Two app servers that sit behind the proxy
+upstream app_servers {
+    server 10.0.0.11:3000;   # app server 1
+    server 10.0.0.12:3000;   # app server 2
+}
+
+server {
+    listen 443 ssl;                       # users connect with HTTPS
+    server_name example.com;
+    ssl_certificate     /etc/certs/example.crt;   # TLS ends here
+    ssl_certificate_key /etc/certs/example.key;
+
+    gzip on;                              # compress responses
+
+    location /api/ {
+        proxy_pass http://app_servers;    # forward to the app servers
+        proxy_set_header Host $host;      # keep the original host name
+    }
+
+    location /static/ {
+        root /var/www;                    # serve files directly
+        expires 7d;                       # tell browsers to cache them
+    }
+}</code></pre>
+  <p>Reading it: HTTPS arrives at the proxy (TLS termination), <code>/api/</code> requests are forwarded to one of two app servers (a tiny load balancer), static files are served directly with caching, and responses are compressed.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>One more hop</b> adds a little latency, and one more thing that can fail (so run it redundantly).</li>
+    <li><b>A gateway is a choke point.</b> If it is slow or down, everything is. If you put too much business logic in it, it becomes a hidden monolith.</li>
+    <li><b>Benefits</b> are central security, simpler clients, and the freedom to change what is behind the door.</li>
+    <li>For a small app, one Nginx or the platform's built-in front door is plenty. A full API gateway pays off with many services or many outside API users.</li>
+  </ul>
+  <p class="tip">A quick memory trick: <b>forward = for the client, reverse = for the server.</b></p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="Top row: a laptop goes through a forward proxy to websites. Bottom row: users go through a reverse proxy or API gateway, which handles TLS, cache and auth, to hidden servers">
+      <defs><marker id="ar-m2-6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="35" width="140" height="65" rx="8"/>
+        <rect x="235" y="35" width="170" height="65" rx="8"/>
+        <rect x="490" y="35" width="140" height="65" rx="8"/>
+        <path d="M153 67 H232" marker-end="url(#ar-m2-6)"/>
+        <path d="M408 67 H487" marker-end="url(#ar-m2-6)"/>
+        <rect x="10" y="180" width="140" height="65" rx="8"/>
+        <rect x="235" y="180" width="170" height="65" rx="8"/>
+        <rect x="490" y="180" width="140" height="65" rx="8"/>
+        <path d="M153 212 H232" marker-end="url(#ar-m2-6)"/>
+        <path d="M408 212 H487" marker-end="url(#ar-m2-6)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="320" y="20" font-size="14" font-weight="700">1. Forward proxy: stands in front of the CLIENT</text>
+        <text x="80" y="62" font-size="15" font-weight="700">Your laptop</text>
+        <text x="80" y="82" font-size="13">server never sees you</text>
+        <text x="320" y="62" font-size="15" font-weight="700">Forward proxy</text>
+        <text x="320" y="82" font-size="13">filter, hide, cache</text>
+        <text x="560" y="62" font-size="15" font-weight="700">Websites</text>
+        <text x="560" y="82" font-size="13">any site</text>
+        <text x="320" y="165" font-size="14" font-weight="700">2. Reverse proxy: stands in front of the SERVERS</text>
+        <text x="80" y="207" font-size="15" font-weight="700">Users</text>
+        <text x="80" y="227" font-size="13">see one address</text>
+        <text x="320" y="207" font-size="15" font-weight="700">3. Gateway</text>
+        <text x="320" y="227" font-size="13">TLS, cache, auth</text>
+        <text x="560" y="207" font-size="15" font-weight="700">Your servers</text>
+        <text x="560" y="227" font-size="13">hidden from users</text>
+        <text x="320" y="278" font-size="13">An API gateway is a reverse proxy plus auth, rate limits and routing to services.</text>
+      </g>
+    </svg>
+    <figcaption>Step 1: a forward proxy hides the client. Step 2: a reverse proxy hides the servers. Step 3: the box in the middle of row 2 does the extra work (TLS, caching, auth, routing).</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-6 proxies.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+forward+proxy+vs+reverse+proxy" target="_blank" rel="noopener">YouTube search: "ByteByteGo forward proxy vs reverse proxy"</a>
+      <span class="meta">Short. Watch it all.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hussein+Nasser+API+gateway+explained" target="_blank" rel="noopener">YouTube search: "Hussein Nasser API gateway explained"</a>
+      <span class="meta">Pick one result. Watch the part that lists what a gateway does.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.cloudflare.com/learning/cdn/glossary/reverse-proxy/" target="_blank" rel="noopener">Cloudflare Learning Center: What is a reverse proxy?</a>
+      <span class="meta">Read the first sections, including the comparison with a forward proxy.</span></li>
+    <li><a href="https://www.redhat.com/en/topics/api/what-does-an-api-gateway-do" target="_blank" rel="noopener">Red Hat: What does an API gateway do?</a>
+      <span class="meta">Focus on the list of what a gateway handles.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 20 minutes)</h2>
+
+  <h3>A. Spot a proxy or CDN from the response headers</h3>
+  <ol class="steps">
+    <li>Open Chrome, go to <code>https://www.wikipedia.org</code>, then press <kbd>F12</kbd> and click <span class="ui">Network</span>.</li>
+    <li>Reload with <kbd>Ctrl</kbd> + <kbd>R</kbd>. Click the first row (type <code>document</code>).</li>
+    <li>Open the <span class="ui">Headers</span> tab and scroll to <span class="ui">Response Headers</span>.</li>
+    <li>Look for clues of a middle layer: <code>server</code> (which software answered), <code>via</code> (proxies passed), <code>x-cache</code> (cache hit or miss), <code>age</code> (how long a cached copy has been held), <code>cf-ray</code> (Cloudflare). Not all will be there; headers differ per site and over time.</li>
+    <li>Write in your notes: "Header ___ shows a proxy/cache sits in front, because ___."</li>
+    <li>Repeat for <code>https://www.cloudflare.com</code> and one more site of your choice (for example a news site). Which one has the most clues?</li>
+    <li>Reload each one twice. Does <code>age</code> or <code>x-cache</code> change? A growing <code>age</code> means you are getting an older, cached copy from the proxy, not a fresh one from the app.</li>
+  </ol>
+
+  <h3>B. Draw a gateway in front of microservices</h3>
+  <ol class="steps">
+    <li>Open <code>excalidraw.com</code> and start a clean page (<span class="ui">☰</span>, <span class="ui">Reset the canvas</span>).</li>
+    <li>Draw an ellipse (<kbd>O</kbd>) labelled <code>Mobile app</code> and another labelled <code>Web app</code> on the left.</li>
+    <li>Draw one rectangle in the middle: <code>API gateway</code>. Under its name, write four short lines with the text tool: <code>TLS</code>, <code>Auth</code>, <code>Rate limit</code>, <code>Routing</code>.</li>
+    <li>On the right, draw three rectangles: <code>Users service</code>, <code>Orders service</code>, <code>Payments service</code>.</li>
+    <li>Draw arrows from both clients to the gateway, and from the gateway to each service. Label the three arrows <code>/users</code>, <code>/orders</code>, <code>/payments</code>.</li>
+    <li>Answer in a text note: "Where is the login token checked?" (At the gateway, once.) "What breaks if the gateway dies?" (Everything: so run several copies behind a load balancer.)</li>
+    <li>Save as <code>m2-6 api-gateway.excalidraw</code>.</li>
+  </ol>
+
+  <h3>C. Read the config</h3>
+  <ol class="steps">
+    <li>Scroll up to the Nginx config. On paper, write what each of its four blocks does: <code>upstream</code>, <code>listen 443 ssl</code>, <code>location /api/</code>, <code>location /static/</code>. Check against the paragraph under it.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Forward proxy or reverse proxy: which one hides the identity of the client?</summary><p>The forward proxy. A reverse proxy hides the servers.</p></details>
+  <details><summary>Name four things a reverse proxy can do.</summary><p>TLS termination, compression, caching, routing by path, hiding internal servers, load balancing.</p></details>
+  <details><summary>What does an API gateway add over a plain reverse proxy?</summary><p>API-specific features: authentication, rate limiting, routing to microservices, request shaping and central logging.</p></details>
+  <details><summary>What is TLS termination and why is it useful?</summary><p>The proxy decrypts HTTPS once, so backend servers handle plain HTTP and do not each need certificates and the CPU cost of encryption.</p></details>
+  <details><summary>You have one small web app on a single server. Do you need an API gateway?</summary><p>No. At most an Nginx reverse proxy (or the hosting platform's built-in one) for HTTPS and static files. A gateway pays off with many services or many external API clients.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"A forward proxy stands in front of clients; a reverse proxy stands in front of servers, handling TLS, caching and routing."</blockquote>
+  <blockquote>"With microservices I would put an API gateway at the edge for authentication, rate limiting and routing, and keep business logic out of it."</blockquote>
+  <p><b>Common follow-up question:</b> Is a load balancer the same as a reverse proxy?</p>
+  <p>A load balancer is a kind of reverse proxy whose main job is spreading traffic across servers. A reverse proxy is the wider idea: it can also terminate TLS, cache, compress and route. In practice one tool such as Nginx often does all of these.</p>
+</section>
+
+</main>
+</body>
+</html>

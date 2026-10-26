@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sharding and consistent hashing</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-10">
+<main class="lesson">
+
+<section class="story">
+  <h2>The school library that outgrew its room</h2>
+  <p>A school library has so many books that one room cannot hold them. So the librarian splits them: books with titles A to H in room 1, I to P in room 2, Q to Z in room 3. Now each room has a smaller load, and three librarians work at once.</p>
+  <p>But new troubles appear. Everybody wants the "Harry Potter" shelf, so room 1 is crowded and room 3 sits empty. A student who wants "all books by one author" has to visit three rooms. And if the school opens a fourth room, the librarian must carry a lot of books around to rebalance.</p>
+  <p>That is <b>sharding</b>: splitting one big database into pieces on different machines. This lesson is about how to split, and how to avoid moving everything when you add a room.</p>
+</section>
+
+<section class="explain">
+  <h2>Splitting data across machines</h2>
+  <p>Replication (last lesson) copies the <b>same</b> data to many machines, which helps reads. It does nothing when the data is too big for one machine, or when there are too many <b>writes</b> for one leader. For that you <b>split</b> the data so each machine holds only a part.</p>
+
+  <h3>Partitioning vs sharding</h3>
+  <p><b>Partitioning</b> means splitting a big table into parts, often inside one database server (for example one partition per month). <b>Sharding</b> means the parts live on <b>different servers</b>, each called a <b>shard</b>. People often use the words loosely. Each shard is usually also replicated for safety.</p>
+
+  <h3>The shard key</h3>
+  <p>The <b>shard key</b> is the column that decides which shard a row goes to (for example <code>user_id</code>). It is the most important choice: it decides which queries are fast and whether the load is even.</p>
+  <table>
+    <tr><th>Strategy</th><th>How</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Range</b></td><td>Shard by value range: ids 1-1M, 1M-2M, ...</td><td>Range queries are easy and fast</td><td>Hot spots: newest ids all land on the last shard</td></tr>
+    <tr><td><b>Hash</b></td><td>shard = hash(key) mod N</td><td>Even spread</td><td>Range queries scatter across shards; changing N moves most keys</td></tr>
+    <tr><td><b>Directory / geo</b></td><td>A lookup table says which shard owns which key; or shard by region</td><td>Flexible; can keep users near their region</td><td>The lookup table is another part to keep fast and available</td></tr>
+  </table>
+
+  <h3>Hot shards: the celebrity problem</h3>
+  <p>Even with a fair hash, some keys are far busier than others. One celebrity with 100 million followers makes their shard a <b>hot shard</b> while others idle. Fixes: split that key's data further (add a random suffix so one celebrity is spread over many shards), cache their data heavily, or give hot keys dedicated machines.</p>
+
+  <h3>The pain of cross-shard work</h3>
+  <ul>
+    <li><b>Cross-shard queries:</b> "top 10 products across everything" needs a question to every shard and a merge of the answers.</li>
+    <li><b>Cross-shard joins</b> are slow and awkward. Designs often denormalize, or keep related rows on the same shard by choosing the key carefully (for example all of a customer's orders share the customer's shard).</li>
+    <li><b>Transactions across shards</b> are hard and slow. Avoid them if you can.</li>
+    <li><b>Resharding</b> (changing the number of shards) means moving large amounts of data while the system is live. It is expensive and risky. That is why you only shard when you truly must, after trying a bigger machine, caching, indexes and replicas.</li>
+  </ul>
+
+  <h3>Why hash mod N hurts</h3>
+  <p>With <code>shard = hash(key) mod N</code>, going from 3 servers to 4 changes the answer for most keys, so almost everything must move (you will count it below). In a cache, that means nearly all cached data suddenly "misses". We need a scheme where adding a server moves only a small share of keys.</p>
+
+  <h3>Consistent hashing</h3>
+  <p>Picture a <b>ring</b> (a circle) of positions from 0 to a huge number. You hash each <b>server</b> to a spot on the ring, and each <b>key</b> to a spot too. A key belongs to the <b>first server you meet walking clockwise</b> from the key's spot. Add a new server: it takes over only the keys between it and the previous server. Everything else stays put. Remove a server: only its keys move to the next server. On average only about <b>1/N</b> of the keys move.</p>
+  <p><b>Virtual nodes:</b> with only a few servers on the ring, the arcs can be very uneven. So each real server appears at <b>many points</b> (say 100-200 virtual nodes, such as <code>A#1, A#2, ...</code>). The load evens out, and when a server leaves, its many small arcs are spread across <b>all</b> the other servers rather than dumped on one neighbour. Consistent hashing is used by Cassandra, DynamoDB-style stores, and many cache clusters and CDNs.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>Sharding gives huge capacity for data and writes, but costs simplicity: no easy joins, harder transactions, more operations work.</li>
+    <li>Choose the key from your <b>access pattern</b>: what do most queries filter by? A bad key causes hot shards or scatter-gather queries on every request.</li>
+    <li>Delay it. Many successful products never shard.</li>
+  </ul>
+  <p class="tip">A good one-line answer: "Shard by user id with consistent hashing, so a user's data is on one shard, and adding servers moves only a small fraction of the data."</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 340" role="img" aria-label="A hash ring with servers A, B and C and a new server D. A key walks clockwise to the first server. Adding D takes over only the keys between A and D">
+      <defs><marker id="ar-m2-10" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="320" cy="170" r="105"/>
+        <circle cx="320" cy="65" r="16"/>
+        <circle cx="411" cy="222" r="16"/>
+        <circle cx="229" cy="222" r="16"/>
+        <circle cx="411" cy="118" r="16" stroke-dasharray="4 3"/>
+        <path d="M356 71 A105 105 0 0 1 400 103" marker-end="url(#ar-m2-10)" stroke-width="3"/>
+      </g>
+      <g fill="currentColor" stroke="none">
+        <circle cx="372" cy="79" r="6"/>
+        <circle cx="425" cy="170" r="6"/>
+        <circle cx="320" cy="275" r="6"/>
+        <circle cx="229" cy="118" r="6"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="320" y="70" font-size="15" font-weight="700" text-anchor="middle">A</text>
+        <text x="411" y="227" font-size="15" font-weight="700" text-anchor="middle">B</text>
+        <text x="229" y="227" font-size="15" font-weight="700" text-anchor="middle">C</text>
+        <text x="411" y="123" font-size="15" font-weight="700" text-anchor="middle">D</text>
+        <text x="362" y="62" font-size="13" text-anchor="middle">k1</text>
+        <text x="440" y="174" font-size="13">k2</text>
+        <text x="335" y="295" font-size="13">k3</text>
+        <text x="205" y="115" font-size="13">k4</text>
+        <text x="10" y="35" font-size="14">1. Servers sit on</text>
+        <text x="10" y="53" font-size="14">a ring (A, B, C)</text>
+        <text x="10" y="115" font-size="14">2. Each key is hashed</text>
+        <text x="10" y="133" font-size="14">to a spot (k1 to k4)</text>
+        <text x="445" y="262" font-size="14">3. Walk clockwise to</text>
+        <text x="445" y="280" font-size="14">the first server: that</text>
+        <text x="445" y="298" font-size="14">server owns the key</text>
+        <text x="320" y="328" font-size="14" text-anchor="middle">4. Add D (dashed): only k1 moves, from B to D. k2, k3, k4 stay.</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 to 3: servers and keys on the ring; each key belongs to the next server clockwise. Step 4: adding D only takes the keys that lie just before it (here k1).</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-10 hash-ring.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+consistent+hashing+explained" target="_blank" rel="noopener">YouTube search: "ByteByteGo consistent hashing explained"</a>
+      <span class="meta">Short. Watch it all and look for the ring and the virtual nodes.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+consistent+hashing" target="_blank" rel="noopener">YouTube search: "Gaurav Sen consistent hashing"</a>
+      <span class="meta">Pick the main result. Watch the part that explains why hash mod N fails when servers change.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#sharding" target="_blank" rel="noopener">System Design Primer: Sharding</a>
+      <span class="meta">Read the sharding section and its disadvantages list.</span></li>
+    <li><a href="https://en.wikipedia.org/wiki/Consistent_hashing" target="_blank" rel="noopener">Wikipedia: Consistent hashing</a>
+      <span class="meta">Read the introduction and the "Basic technique" part; skip the maths.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes, paper or Excalidraw)</h2>
+  <p>No tools needed beyond paper or Excalidraw. We use a small ring from <b>0 to 99</b> and a made-up hash so you can calculate by hand.</p>
+
+  <h3>A. Put 8 users on a hash ring</h3>
+  <ol class="steps">
+    <li>Draw a big circle. Mark 0 at the top and write 25 on the right, 50 at the bottom and 75 on the left (clockwise).</li>
+    <li>Place three servers on the ring: <code>S1</code> at <b>10</b>, <code>S2</code> at <b>40</b>, <code>S3</code> at <b>70</b>. (Real systems hash the server name; we pick spots to keep the maths easy.)</li>
+    <li>The hash of a user is <code>(user_id × 13) mod 100</code>. Calculate for the user ids 1 to 8 and write the results in a table:
+      <table>
+        <tr><th>User</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th></tr>
+        <tr><td>Hash</td><td>13</td><td>26</td><td>39</td><td>52</td><td>65</td><td>78</td><td>91</td><td>4</td></tr>
+      </table>
+      (For user 8: 8 × 13 = 104, and 104 mod 100 = 4.)</li>
+    <li>Mark each user on the ring at its hash spot (for example user 1 at 13, a little clockwise of S1).</li>
+    <li>For each user, walk <b>clockwise</b> to the first server at or after that spot (after 99 you wrap round to 0). Write who owns whom. You should get: S2 owns users 1, 2, 3; S3 owns users 4, 5; S1 owns users 6, 7, 8 (78 and 91 wrap past 99 round to S1 at 10; 4 reaches S1 at 10).</li>
+  </ol>
+
+  <h3>B. Add a server and count the moves</h3>
+  <ol class="steps">
+    <li>Add <code>S4</code> at <b>55</b> on the ring.</li>
+    <li>Redo the walk for all 8 users. Which owners changed? Only user 4 (hash 52): its next server clockwise is now S4 at 55 instead of S3 at 70.</li>
+    <li>Write: <b>1 of 8 keys moved.</b></li>
+  </ol>
+
+  <h3>C. Compare with hash mod N</h3>
+  <ol class="steps">
+    <li>With 3 servers, the shard of a user is <code>hash mod 3</code>. Using the same hashes, fill the row:
+      <table>
+        <tr><th>User</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th></tr>
+        <tr><td>hash mod 3</td><td>1</td><td>2</td><td>0</td><td>1</td><td>2</td><td>0</td><td>1</td><td>1</td></tr>
+        <tr><td>hash mod 4</td><td>1</td><td>2</td><td>3</td><td>0</td><td>1</td><td>2</td><td>3</td><td>0</td></tr>
+      </table>
+      (Work out each number yourself first, then check the table. For example 52 mod 3 = 1, and 52 mod 4 = 0.)</li>
+    <li>Count the users whose shard number changed when going from 3 to 4 servers. You should find <b>6 of 8</b> changed (users 3, 4, 5, 6, 7, 8).</li>
+    <li>Write one sentence: "Consistent hashing moved 1 of 8 keys, hash mod N moved 6 of 8. In a cache, 6 of 8 means a flood of misses hitting the database."</li>
+  </ol>
+  <p class="tip">Eight keys is a tiny sample, but the pattern is real: with N servers, hash mod N moves roughly N/(N+1) of the keys when you add one (3 → 4 servers: about 3 in 4 keys), while consistent hashing moves about 1/(N+1).</p>
+
+  <h3>D. Virtual nodes</h3>
+  <ol class="steps">
+    <li>On a fresh circle, place S1 at 10, 50 and 90, S2 at 25, 65 and 95, S3 at 5, 35 and 80 (three virtual spots each).</li>
+    <li>Notice that the arcs are now shorter and mixed. If S2 disappears, who takes over its keys? Different neighbours for different arcs, so the load spreads, instead of one server taking all of it.</li>
+    <li>Save the drawings as <code>m2-10 hash-ring-exercise.excalidraw</code>.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>How is sharding different from replication?</summary><p>Replication copies the same data to many machines (helps reads and safety). Sharding splits the data so each machine holds a different part (helps data size and write volume).</p></details>
+  <details><summary>Name three shard strategies and one weakness of each.</summary><p>Range (hot spots on the newest range), hash (range queries scatter; resharding moves much data), directory/geo (the lookup table becomes another thing to keep fast and available).</p></details>
+  <details><summary>What is the celebrity problem?</summary><p>One key (like a hugely popular user) gets far more traffic than others, making its shard hot even if the data was split evenly by hash.</p></details>
+  <details><summary>Why is hash mod N bad when you add a server?</summary><p>Changing N changes the result for most keys, so almost all data must move (or most cache entries miss).</p></details>
+  <details><summary>What problem do virtual nodes solve?</summary><p>They even out the load on the ring and, when a server leaves, spread its keys across many servers rather than one neighbour.</p></details>
+  <details><summary>A single Postgres handles your load fine. Should you shard? Why?</summary><p>No. Sharding adds big complexity (cross-shard joins, transactions, resharding). Try indexes, caching, a bigger machine and read replicas first. Shard only when data size or write volume truly exceeds one machine.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Replicas scale reads; to scale writes and storage I would shard, choosing a shard key like user_id that matches the main access pattern, so a user's data lives on one shard."</blockquote>
+  <blockquote>"I would place shards on a consistent-hash ring with virtual nodes, so adding a server moves only about 1/N of the keys."</blockquote>
+  <p><b>Common follow-up question:</b> How do you handle a hot shard?</p>
+  <p>First cache the hot key's data. Then split the hot key across several shards (for example by adding a small random suffix and merging reads), or move it to a dedicated machine. Also review the shard key: a better key may avoid the skew.</p>
+</section>
+
+</main>
+</body>
+</html>

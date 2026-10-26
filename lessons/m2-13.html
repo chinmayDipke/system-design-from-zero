@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blob and object storage</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-13">
+<main class="lesson">
+
+<section class="story">
+  <h2>The godown and the token slip</h2>
+  <p>A shop keeps its small, often-used things (a notebook of prices) on the counter. But the big stuff, like sacks of rice and cartons of TVs, goes to a <b>godown</b> (a warehouse) outside. Putting a TV on the counter would block everything.</p>
+  <p>When you leave a parcel in a godown, you get a <b>token slip</b> with a number. Anyone with the slip can collect that parcel, but nobody can wander in and pick things. And if the owner wants to let a friend collect it only this evening, he gives the friend a slip that <b>stops working after 6 pm</b>.</p>
+  <p>Object storage is the godown for files. The database keeps the notebook, and files live in the godown.</p>
+</section>
+
+<section class="explain">
+  <h2>Where files live</h2>
+
+  <h3>Files, blocks and objects</h3>
+  <table>
+    <tr><th>Type</th><th>What it is</th><th>Example</th><th>Good for</th></tr>
+    <tr><td><b>File storage</b></td><td>Folders and files, like your laptop</td><td>A shared network drive</td><td>Shared documents</td></tr>
+    <tr><td><b>Block storage</b></td><td>Raw fixed-size chunks, like a hard disk attached to a server</td><td>A cloud server's disk</td><td>Databases, operating systems</td></tr>
+    <tr><td><b>Object storage</b></td><td>Whole files stored with a key and some metadata, accessed through an HTTP API</td><td>Amazon S3, Cloudflare R2, Supabase Storage</td><td>Images, videos, backups, user uploads</td></tr>
+  </table>
+
+  <h3>Buckets and keys</h3>
+  <p>In object storage you create a <b>bucket</b>, a top-level container (like <code>user-uploads</code>). Inside, each file (an <b>object</b>) is saved under a <b>key</b>, such as <code>avatars/user-42.png</code>. The slashes look like folders but the store is really flat: the key is just a long name. Each object also carries metadata (size, content type, and so on). You can <b>put</b>, <b>get</b> and <b>delete</b> objects, and normally not edit part of a file in place.</p>
+  <p>Object stores are built to be very <b>durable</b> (copies in several places), practically unlimited in size, and cheap per gigabyte.</p>
+
+  <h3>Why images and videos never go in the database</h3>
+  <ul>
+    <li><b>Size:</b> a 5 MB photo is millions of times larger than a typical row. It bloats tables, backups and replicas.</li>
+    <li><b>Speed:</b> the database is your scarcest, most expensive resource; streaming big files through it slows real queries.</li>
+    <li><b>Cost:</b> database storage costs more per GB than object storage.</li>
+    <li><b>Delivery:</b> object storage plus a CDN is made for serving files.</li>
+  </ul>
+  <p>The pattern: <b>store the file in the bucket, and store only its URL or key in the database</b>, for example <code>users.avatar_key = 'avatars/user-42.png'</code>.</p>
+
+  <h3>Pre-signed (signed) URLs and direct upload</h3>
+  <p>Suppose users upload videos. If the video passes through your app server, that server's bandwidth and memory are tied up. Better: the user's browser sends the file <b>straight to the storage</b>. But the bucket is private, so how is the browser allowed to? With a <b>signed URL</b>:</p>
+  <ol>
+    <li>The browser asks your app: "I want to upload a file."</li>
+    <li>Your app (which holds the secret credentials) checks the user is allowed, and creates a <b>signed URL</b>: a normal link with a cryptographic signature and an <b>expiry time</b> baked in.</li>
+    <li>The browser uploads (or downloads) using that link. After it expires, the link stops working.</li>
+  </ol>
+  <p>This keeps secrets off the browser, saves your servers' bandwidth, and limits damage if a link leaks.</p>
+
+  <h3>CDN in front</h3>
+  <p>For public files, put a CDN in front of the bucket. Popular images are then served from nearby edges (last lessons), cutting latency and storage bandwidth bills.</p>
+
+  <h3>Lifecycle rules</h3>
+  <p><b>Lifecycle rules</b> are automatic housekeeping: "delete temporary uploads after 24 hours", "move files not read for 90 days to cheaper cold storage", "delete old versions". They keep costs from growing silently.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Public vs private buckets:</b> public is simple and cacheable but anyone with the URL can read it. Private needs signed URLs (a bit more code) and is right for personal or paid files.</li>
+    <li>Object storage has <b>higher latency per request</b> than memory or a local disk, and you cannot append to or edit parts of an object cheaply. Great for big whole files, wrong for a database.</li>
+    <li>Your database row and your file can get out of sync (a row with no file, or a file with no row). Plan clean-up for orphan files.</li>
+  </ul>
+  <p class="tip">Check what you store: always validate size and file type on upload, and never trust the file name the user sends.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 320" role="img" aria-label="A browser asks the app for an upload link, the app returns a signed link, the browser uploads the file straight to object storage, and the app saves only the file key in the database">
+      <defs><marker id="ar-m2-13" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="20" width="120" height="240" rx="8"/>
+        <rect x="500" y="20" width="130" height="70" rx="8"/>
+        <rect x="500" y="195" width="130" height="70" rx="8"/>
+        <rect x="300" y="105" width="130" height="60" rx="8"/>
+        <path d="M133 50 H497" marker-end="url(#ar-m2-13)"/>
+        <path d="M497 75 H133" marker-end="url(#ar-m2-13)" stroke-dasharray="6 5"/>
+        <path d="M133 230 H497" marker-end="url(#ar-m2-13)"/>
+        <path d="M565 92 V135 H433" marker-end="url(#ar-m2-13)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="70" y="125" font-size="15" font-weight="700">Browser</text>
+        <text x="70" y="145" font-size="13">the user</text>
+        <text x="565" y="47" font-size="15" font-weight="700">App server</text>
+        <text x="565" y="66" font-size="13">holds the secret</text>
+        <text x="565" y="222" font-size="15" font-weight="700">Object storage</text>
+        <text x="565" y="241" font-size="13">private bucket</text>
+        <text x="365" y="130" font-size="15" font-weight="700">Database</text>
+        <text x="365" y="149" font-size="13">key, not the file</text>
+        <text x="315" y="42" font-size="14">1. may I upload?</text>
+        <text x="315" y="95" font-size="14">2. signed link (expires)</text>
+        <text x="315" y="222" font-size="14">3. upload straight to storage</text>
+        <text x="365" y="188" font-size="14">4. app saves only the key</text>
+        <text x="320" y="300" font-size="13">5. Later reads: the file comes from storage, usually through a CDN.</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 and 2: the browser gets a signed, expiring link from the app. Step 3: the file goes straight to storage, bypassing the app server. Step 4: the database keeps only the key. Step 5: later reads come from storage through a CDN.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-13 object-storage.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+object+storage+vs+block+storage+vs+file+storage" target="_blank" rel="noopener">YouTube search: "ByteByteGo object storage vs block storage vs file storage"</a>
+      <span class="meta">Short. Watch it all.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=presigned+url+s3+upload+explained" target="_blank" rel="noopener">YouTube search: "presigned URL S3 upload explained"</a>
+      <span class="meta">Pick one short result. Watch only the part that shows the app giving the browser a temporary link.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://aws.amazon.com/what-is/object-storage/" target="_blank" rel="noopener">AWS: What is object storage?</a>
+      <span class="meta">Read the comparison with file and block storage.</span></li>
+    <li><a href="https://supabase.com/docs/guides/storage" target="_blank" rel="noopener">Supabase docs: Storage</a>
+      <span class="meta">Read the overview and the part about public and private buckets.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+  <p>You will do this in the Supabase dashboard. The labels may look a little different from what is written here, so look for the closest match.</p>
+
+  <h3>A. A public bucket</h3>
+  <ol class="steps">
+    <li>Open your Supabase project and click <span class="ui">Storage</span> in the left sidebar.</li>
+    <li>Click <span class="ui">New bucket</span> (it may be a <span class="ui">+</span> button or "Create a new bucket").</li>
+    <li>In the name box type <code>public-images</code>. Switch on the option named <span class="ui">Public bucket</span>. Click <span class="ui">Create</span> (or <span class="ui">Save</span>).</li>
+    <li>Click your new bucket to open it. Click <span class="ui">Upload file</span> and choose any small image from your computer (a screenshot is fine; keep it under about 1 MB). Click <span class="ui">Open</span>. The image appears in the list.</li>
+    <li>Click the image's row (or the three dots <span class="ui">⋮</span> beside it) and choose <span class="ui">Get URL</span> or <span class="ui">Copy URL</span>.</li>
+    <li>Open a <b>new Incognito window</b>: <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd>. Paste the link into the address bar with <kbd>Ctrl</kbd> + <kbd>V</kbd> and press <kbd>Enter</kbd>. Your image shows even though you are not logged in. That is a public bucket: anyone with the URL can see it.</li>
+    <li>Look at the URL. Find the parts: your project address, the word <code>public</code>, the bucket name <code>public-images</code> and then the file name (the <b>key</b>).</li>
+    <li>Open <kbd>F12</kbd> in that Incognito tab, click <span class="ui">Network</span>, reload with <kbd>Ctrl</kbd> + <kbd>R</kbd>, click the image row and look at the response headers for <code>cache-control</code> and anything that shows a CDN in front. (Headers vary; note what you find.)</li>
+  </ol>
+
+  <h3>B. A private bucket and a signed URL that expires</h3>
+  <ol class="steps">
+    <li>Back in <span class="ui">Storage</span>, click <span class="ui">New bucket</span> again. Name it <code>private-files</code>. Leave <span class="ui">Public bucket</span> <b>switched off</b>. Click <span class="ui">Create</span>.</li>
+    <li>Open <code>private-files</code> and upload an image the same way.</li>
+    <li>Click the file's row or its <span class="ui">⋮</span> menu. Choose <span class="ui">Get URL</span> and see what it offers. For a private file you should get a choice like <span class="ui">Create signed URL</span> with a box for how long it should last.</li>
+    <li>Set the expiry to a short time. If you can type a number, enter <code>60</code> (seconds). If there are only preset choices, pick the shortest one. Click <span class="ui">Create URL</span> or <span class="ui">Get URL</span>, then copy the link.</li>
+    <li>Paste it into an Incognito tab and press <kbd>Enter</kbd>. The image shows. Look at the end of the link: a long <code>token=...</code> part. That is the signature, and it also carries the expiry time.</li>
+    <li>Wait past the expiry time, then reload the same tab with <kbd>Ctrl</kbd> + <kbd>R</kbd>. You should now see an error message (JSON text mentioning the link being invalid or expired) instead of the image.</li>
+    <li>Now try the plain, unsigned address of that private file. Edit the signed link: change the word after <code>storage/v1/object/</code> from <code>sign</code> to <code>public</code> and remove everything from <code>?token=</code> onwards. Press <kbd>Enter</kbd>. It should be refused (not found), because the bucket is private.</li>
+    <li>Write in your notes: "Signed URL = a normal link plus a signature plus an expiry. My app server creates it; the browser uses it."</li>
+  </ol>
+
+  <h3>C. Clean up and think</h3>
+  <ol class="steps">
+    <li>Delete the test files: open each bucket, tick the file's checkbox, and click <span class="ui">Delete</span>. Then delete the buckets (use the <span class="ui">⋮</span> menu next to the bucket name, then <span class="ui">Delete bucket</span>). The free tier has a storage limit, so tidy up.</li>
+    <li>On paper, write the database table you would create for user profile pictures. Suggested: <code>users(id, name, avatar_key)</code>, where <code>avatar_key</code> is something like <code>avatars/42.png</code>, not the image itself.</li>
+    <li>Write one lifecycle rule you would set for this app, for example "delete files in <code>tmp/</code> after 1 day".</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What are the three kinds of storage, in one line each?</summary><p>File: folders and files. Block: raw disk chunks for databases and operating systems. Object: whole files stored by key through an HTTP API, ideal for images, video and backups.</p></details>
+  <details><summary>Why not store images in the database?</summary><p>They are large, bloat tables, backups and replicas, slow the database that serves real queries, and cost more per GB. Store the file in object storage and keep only its key or URL.</p></details>
+  <details><summary>What is a signed URL and why is it useful?</summary><p>A link with a signature and an expiry that grants temporary access to a private object. It lets browsers upload or download directly without exposing secrets or passing the file through your server.</p></details>
+  <details><summary>What does a CDN in front of a bucket give you?</summary><p>Faster loading from a nearby edge and less traffic to the storage itself.</p></details>
+  <details><summary>Users upload 200 MB videos. Do you accept them through your API server? What would you do?</summary><p>No. Give the browser a signed upload URL so the video goes straight to object storage, then store the key in the database. That keeps the app servers free.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I keep large files in object storage like S3, store only the key in the database, and serve public files through a CDN."</blockquote>
+  <blockquote>"For uploads, the app issues a short-lived signed URL so the client uploads directly to storage and the app servers never carry the bytes."</blockquote>
+  <p><b>Common follow-up question:</b> How do you handle a failed upload that leaves an orphan file?</p>
+  <p>Upload into a temporary prefix, only save the key in the database when the upload is confirmed, and use a lifecycle rule that deletes anything left in the temporary prefix after a day. A periodic job can also find files with no database row.</p>
+</section>
+
+</main>
+</body>
+</html>

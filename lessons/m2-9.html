@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Replication and read replicas</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-9">
+<main class="lesson">
+
+<section class="story">
+  <h2>The class monitor and the photocopies</h2>
+  <p>In a class, the teacher writes the day's homework on the board. Students copy it into their notebooks. Only the <b>teacher</b> writes on the board; <b>everyone</b> can read from their own copy. If the board is wiped, the notebooks still have the homework.</p>
+  <p>Now suppose the teacher adds a new line, "also page 40". Some students copy it quickly; a slow student still has the old version for a minute. If you ask that slow student, he will honestly tell you the older homework.</p>
+  <p>This is database replication: one <b>leader</b> takes all the changes, and <b>followers</b> keep copies. Copies protect you if one machine breaks, and many readers can share the reading work. The price is that copies can briefly be behind.</p>
+</section>
+
+<section class="explain">
+  <h2>Copies of the same data</h2>
+
+  <h3>Why replicate</h3>
+  <ul>
+    <li><b>Availability:</b> if the main database dies, a copy can take over.</li>
+    <li><b>Read scaling:</b> most apps read far more than they write. Send reads to copies and the main database gets breathing room.</li>
+    <li><b>Closer to users:</b> keep a copy in another region for faster reads.</li>
+  </ul>
+
+  <h3>Leader-follower (primary-replica)</h3>
+  <p>One server is the <b>leader</b> (also called primary or master). All <b>writes</b> go to it. It records each change in a log and sends that log to <b>followers</b> (replicas, read replicas), which apply the same changes in the same order. <b>Reads</b> can go to any follower. This is the most common setup.</p>
+
+  <h3>Synchronous vs asynchronous</h3>
+  <table>
+    <tr><th></th><th>Synchronous</th><th>Asynchronous</th></tr>
+    <tr><td>Write is "done" when</td><td>The follower has confirmed it too</td><td>The leader has saved it; followers catch up later</td></tr>
+    <tr><td>Data loss if leader dies</td><td>None for confirmed writes</td><td>Possible: recent writes not yet copied</td></tr>
+    <tr><td>Write speed</td><td>Slower (waits for the follower)</td><td>Fast</td></tr>
+    <tr><td>If a follower is down</td><td>Writes may stall</td><td>Writes carry on</td></tr>
+  </table>
+  <p>A common compromise: one synchronous follower for safety, the rest asynchronous for speed.</p>
+
+  <h3>Replication lag and "I posted but can't see my post"</h3>
+  <p>With asynchronous replication, a follower can be milliseconds (sometimes seconds) behind. <b>Replication lag</b> causes odd experiences. You post a comment (it goes to the leader), the page reloads and reads from a follower that has not received it yet, and your comment seems to have vanished. You post again, and now there are two.</p>
+  <p>The guarantee we want is <b>read-your-writes</b>: after you write something, <i>you</i> must see it. Common fixes:</p>
+  <ul>
+    <li>Read from the <b>leader</b> for a short time after the user writes (say 10 seconds), or for the user's own data.</li>
+    <li>Remember the position of the user's last write and only read from a follower that has caught up to it.</li>
+    <li>Show the new item on screen immediately from the client's own memory (optimistic UI).</li>
+  </ul>
+
+  <h3>Failover</h3>
+  <p>If the leader dies, a follower is <b>promoted</b> to be the new leader. This can be manual or automatic (a monitor notices missing heartbeats and promotes the most up-to-date follower). Risks: with async replication, writes the old leader had not yet sent are lost; and if the old leader comes back believing it is still leader you get <b>split brain</b> (two leaders) unless it is fenced off. Failover is the thing that must be tested, not assumed.</p>
+
+  <h3>Multi-leader and leaderless, in a paragraph each</h3>
+  <p><b>Multi-leader:</b> several nodes accept writes (for example one per region), and they sync with each other. Writes are fast everywhere and survive a region outage, but two leaders can change the same row at the same time, so you need <b>conflict resolution</b> (last write wins, or merge). Complex; use it only when you truly need writes in many regions.</p>
+  <p><b>Leaderless:</b> any node can take a write. The client sends it to several nodes and counts it done when enough of them (a <b>quorum</b>) confirm; reads ask several nodes and take the newest. Used by Dynamo-style stores such as Cassandra. Very available, but you must accept eventual consistency and handle conflicts.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>Replicas scale <b>reads</b>, not writes. All writes still go to one leader. (Splitting writes is sharding, the next lesson.)</li>
+    <li>Async: fast but may lose recent writes and serve stale reads. Sync: safer but slower.</li>
+    <li>More replicas means more cost and more things to monitor.</li>
+  </ul>
+  <div class="warn">Supabase offers read replicas on paid plans only, so this lesson is not hands-on. We draw it and think it through instead.</div>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 330" role="img" aria-label="An app writes to a leader database; the leader copies changes to two followers; the app reads from the followers; followers can lag slightly behind">
+      <defs><marker id="ar-m2-9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="125" width="110" height="65" rx="8"/>
+        <rect x="250" y="15" width="150" height="65" rx="8"/>
+        <rect x="250" y="130" width="150" height="60" rx="8"/>
+        <rect x="250" y="240" width="150" height="60" rx="8"/>
+        <path d="M123 140 L247 70" marker-end="url(#ar-m2-9)"/>
+        <path d="M325 83 V127" marker-end="url(#ar-m2-9)" stroke-dasharray="6 5"/>
+        <path d="M403 60 H470 V270 H403" marker-end="url(#ar-m2-9)" stroke-dasharray="6 5"/>
+        <path d="M247 165 L123 165" marker-end="url(#ar-m2-9)"/>
+        <path d="M247 270 L110 193" marker-end="url(#ar-m2-9)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="65" y="152" font-size="15" font-weight="700" text-anchor="middle">App</text>
+        <text x="65" y="172" font-size="13" text-anchor="middle">your servers</text>
+        <text x="325" y="42" font-size="15" font-weight="700" text-anchor="middle">Leader</text>
+        <text x="325" y="62" font-size="13" text-anchor="middle">takes all writes</text>
+        <text x="325" y="155" font-size="15" font-weight="700" text-anchor="middle">Follower 1</text>
+        <text x="325" y="175" font-size="13" text-anchor="middle">read copy</text>
+        <text x="325" y="265" font-size="15" font-weight="700" text-anchor="middle">Follower 2</text>
+        <text x="325" y="285" font-size="13" text-anchor="middle">read copy</text>
+        <text x="150" y="95" font-size="14">1. write</text>
+        <text x="335" y="110" font-size="14">2. copy</text>
+        <text x="480" y="170" font-size="14">2. copy changes</text>
+        <text x="145" y="157" font-size="14">3. read</text>
+        <text x="120" y="255" font-size="14">3. read</text>
+        <text x="320" y="322" font-size="14" text-anchor="middle">4. Followers may be a moment behind: that is replication lag.</text>
+      </g>
+    </svg>
+    <figcaption>Step 1: writes go to the leader. Step 2: the leader copies its changes to the followers (dashed). Step 3: reads are served by followers. Step 4: a follower can be slightly behind.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-9 replication.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+database+replication+explained" target="_blank" rel="noopener">YouTube search: "ByteByteGo database replication explained"</a>
+      <span class="meta">Short. Watch it all, and spot leader and follower.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+database+replication+leader+follower+consistency" target="_blank" rel="noopener">YouTube search: "Gaurav Sen database replication leader follower consistency"</a>
+      <span class="meta">Pick one result. Watch the part about synchronous vs asynchronous and lag.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#master-slave-replication" target="_blank" rel="noopener">System Design Primer: Master-slave replication</a>
+      <span class="meta">Read it with the words leader/follower in mind, and the "disadvantages" list.</span></li>
+    <li><a href="https://supabase.com/docs/guides/platform/read-replicas" target="_blank" rel="noopener">Supabase docs: Read replicas</a>
+      <span class="meta">Skim how a managed product exposes replicas (paid plans), just to see the idea in a real product.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 20 minutes, on paper)</h2>
+  <p>Supabase read replicas are a paid feature, so no hands-on here. Do these two exercises in Excalidraw and in your head.</p>
+
+  <h3>A. Draw the replication setup</h3>
+  <ol class="steps">
+    <li>Open <code>excalidraw.com</code> and press <kbd>R</kbd>. Draw one box labelled <code>Leader (writes)</code> on top and two boxes below it labelled <code>Follower 1 (reads)</code> and <code>Follower 2 (reads)</code>.</li>
+    <li>Draw a box on the left labelled <code>App</code>. Press <kbd>A</kbd> and draw an arrow from App to the Leader. Label it <code>write</code>.</li>
+    <li>Draw arrows from the Leader to each follower. Label them <code>copy changes</code>. Make them dashed: select the arrow (<kbd>V</kbd>, click it) and choose the dashed <span class="ui">Stroke style</span> in the left panel.</li>
+    <li>Draw arrows from each follower back to the App, labelled <code>read</code>.</li>
+    <li>Add a small box <code>Monitor</code> with an arrow to the Leader labelled <code>heartbeat</code>, and a note: <code>if no heartbeat, promote a follower</code>.</li>
+    <li>Save as <code>m2-9 replication.excalidraw</code>: <span class="ui">☰</span>, <span class="ui">Save to…</span>, <span class="ui">Save to disk</span>.</li>
+  </ol>
+
+  <h3>B. A lag thought experiment</h3>
+  <ol class="steps">
+    <li>Draw a timeline on paper, from 0 to 300 milliseconds. Mark three lanes: <code>App</code>, <code>Leader</code>, <code>Follower</code>.</li>
+    <li>At <b>0 ms</b>, the user posts "Hello". Draw an arrow App to Leader. The leader saves it at <b>10 ms</b> and replies "done".</li>
+    <li>The leader sends the change to the follower. Say the copy takes <b>200 ms</b> to arrive and apply, so the follower has "Hello" only at <b>210 ms</b>.</li>
+    <li>At <b>50 ms</b> the page reloads and reads the post list from the follower. What does the user see? (No "Hello": it has not arrived yet.) Write the symptom: "I posted but I cannot see my post."</li>
+    <li>Now read the same list from the leader instead. What does the user see? (Hello.) What is the cost? (The leader carries read load again.)</li>
+    <li>Write down two fixes in your own words. Suggested: read from the leader for 10 seconds after a write; or show the new post immediately on screen from the client's memory.</li>
+    <li>Extra: the leader crashes at <b>100 ms</b> with asynchronous replication, before sending "Hello". A follower is promoted. Is "Hello" lost? (Yes.) With a synchronous follower it would have been safe. Write which you would choose for a bank, and which for a "likes" counter.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>In leader-follower replication, which node takes writes and which take reads?</summary><p>All writes go to the leader. Reads can go to any follower (and the leader).</p></details>
+  <details><summary>What is the trade-off between synchronous and asynchronous replication?</summary><p>Synchronous waits for the follower, so it is safer (no loss of confirmed writes) but slower. Asynchronous is faster but followers lag and recent writes can be lost if the leader dies.</p></details>
+  <details><summary>What is replication lag and what bug does it cause?</summary><p>Followers can be a little behind the leader. A user may write, then read from a lagging follower and not see their own change.</p></details>
+  <details><summary>What is read-your-writes consistency and how can you provide it?</summary><p>After a user writes, that user always sees the write. Read their data from the leader for a short time, or from a follower known to have caught up, or show it immediately in the UI.</p></details>
+  <details><summary>Do read replicas help a write-heavy workload?</summary><p>No. They only spread reads; every write still goes to the single leader. For writes you need sharding or a different design.</p></details>
+  <details><summary>You run a social app that is 95% reads. Which replication and why?</summary><p>Leader plus several asynchronous followers for the reads, with read-your-writes handling. Reads are the bottleneck, and slightly stale data in a feed is acceptable.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would use a leader with asynchronous read replicas: writes go to the leader and the read-heavy traffic is spread over the followers."</blockquote>
+  <blockquote>"To avoid users not seeing their own writes, I would read from the leader right after a write, and I would plan automatic failover with a promoted follower."</blockquote>
+  <p><b>Common follow-up question:</b> What happens when the leader fails?</p>
+  <p>A monitor detects it, picks the most up-to-date follower and promotes it, then repoints the app. With async replication a few recent writes may be lost, and the old leader must be fenced off when it returns to avoid two leaders. I would also test failover regularly.</p>
+</section>
+
+</main>
+</body>
+</html>

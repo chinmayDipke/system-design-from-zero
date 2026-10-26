@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Message queues and pub/sub</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-11">
+<main class="lesson">
+
+<section class="story">
+  <h2>The tiffin pick-up and the notice board</h2>
+  <p>A restaurant kitchen gets 200 orders in the lunch rush. The cook cannot cook 200 dishes at once, and the waiter cannot stand and wait for each dish. So orders are <b>pinned on a rail</b>: the waiter drops a slip and goes back to work, and cooks take slips one by one. The rail is a <b>queue</b>. If a cook is sick, the slips just wait; nothing is lost.</p>
+  <p>Now picture the school <b>notice board</b>: "Sports day on Friday". The principal pins it once, and every class that follows the board reads its own copy. That is <b>pub/sub</b>: one announcement, many listeners.</p>
+</section>
+
+<section class="explain">
+  <h2>Doing work later, and telling many</h2>
+
+  <h3>Why asynchronous?</h3>
+  <p>Without a queue, a request does everything while the user waits: save the order, send the email, make the invoice PDF, update analytics. If the email service is slow, the user waits too, and if it is down, the whole request fails. With a <b>message queue</b>, the request saves the order, drops a message "send email for order 7" in a queue, and replies at once. A separate worker does the email later. Benefits:</p>
+  <ul>
+    <li><b>Decoupling:</b> sender and receiver need not be up at the same time or even know each other.</li>
+    <li><b>Buffering spikes:</b> 10,000 messages in a minute are stored and handled at the workers' own pace. The database is not flooded.</li>
+    <li><b>Retries:</b> if a worker fails, the message goes back to be tried again.</li>
+  </ul>
+
+  <h3>Producer and consumer</h3>
+  <p>A <b>producer</b> puts messages in. A <b>consumer</b> (worker) takes messages out and processes them. You can run many consumers on one queue to work faster; each message goes to <b>one</b> of them.</p>
+
+  <h3>Queue vs pub/sub</h3>
+  <table>
+    <tr><th></th><th>Queue</th><th>Pub/sub (topic)</th></tr>
+    <tr><td>Each message goes to</td><td>One consumer</td><td>Every subscriber (fan-out)</td></tr>
+    <tr><td>Use for</td><td>Jobs to do once: send this email, resize this image</td><td>Events many parts care about: "order placed" tells billing, email, analytics</td></tr>
+    <tr><td>Think</td><td>Work rail in a kitchen</td><td>Notice board</td></tr>
+  </table>
+  <p>Many systems combine them: a topic fans out into one queue per subscribing service, and each service's workers share that queue.</p>
+
+  <h3>Delivery guarantees</h3>
+  <table>
+    <tr><th>Guarantee</th><th>Meaning</th><th>Risk</th></tr>
+    <tr><td><b>At-most-once</b></td><td>Delivered zero or one times; never retried</td><td>May lose a message</td></tr>
+    <tr><td><b>At-least-once</b></td><td>Delivered one or more times; retried until acknowledged</td><td>May deliver duplicates</td></tr>
+    <tr><td><b>Exactly-once</b></td><td>Processed exactly one time</td><td>Very hard in reality; usually built from at-least-once plus idempotent handling</td></tr>
+  </table>
+  <p>The practical rule: assume <b>at-least-once</b> and make consumers <b>idempotent</b> (doing it twice has the same effect as once, for example by storing a message id and skipping ids you have already handled).</p>
+
+  <h3>Ordering, dead letters, backpressure</h3>
+  <ul>
+    <li><b>Ordering:</b> one queue is mostly first-in, first-out, but with many consumers or retries, messages can finish out of order. If order matters per customer, route all of a customer's messages to the same consumer or partition.</li>
+    <li><b>Dead-letter queue (DLQ):</b> a message that fails again and again (a "poison message") is moved to a separate queue after N attempts, so it does not block everything. Humans or tools look at it later.</li>
+    <li><b>Backpressure:</b> if producers are faster than consumers, the queue grows without end. Watch the queue length, add consumers, slow producers, or reject new work when it is too full.</li>
+  </ul>
+
+  <h3>Kafka vs RabbitMQ vs SQS</h3>
+  <table>
+    <tr><th></th><th>Kafka</th><th>RabbitMQ</th><th>AWS SQS</th></tr>
+    <tr><td>Model</td><td>A distributed, replayable log split in partitions</td><td>A broker with exchanges and queues, flexible routing</td><td>A fully managed simple queue</td></tr>
+    <tr><td>Strength</td><td>Huge throughput, replay old events, many readers</td><td>Rich routing, classic work queues</td><td>No servers to run, easy to start</td></tr>
+    <tr><td>Weakness</td><td>More to operate and learn</td><td>Not built for replaying history at huge scale</td><td>Fewer features; AWS only</td></tr>
+    <tr><td>Pick when</td><td>Event streaming, analytics pipelines</td><td>Background jobs with routing rules</td><td>You are on AWS and want simple jobs</td></tr>
+  </table>
+
+  <h3>A Postgres table as a simple queue</h3>
+  <p>You do not always need a new product. A table plus the clause <code>FOR UPDATE SKIP LOCKED</code> makes a decent queue. Each worker grabs the next unclaimed row and locks it; other workers <b>skip</b> locked rows instead of waiting:</p>
+  <pre><code>-- one worker claims one job
+update jobs set status = 'processing'
+where id = (
+  select id from jobs
+  where status = 'pending'
+  order by id
+  for update skip locked
+  limit 1
+)
+returning *;</code></pre>
+  <p>Good for modest volumes with no extra infrastructure; at very high volume a dedicated broker is better.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>Queues add <b>complexity</b> (another thing to run, monitor, and debug) and make results <b>eventual</b>: the user is told "we are processing", not "done".</li>
+    <li>You must design for duplicates, retries, poison messages and a growing backlog.</li>
+    <li>Do not use a queue when the user needs the answer in the same response, for example a login check.</li>
+  </ul>
+  <p class="tip">The best interview line: "I would move the slow, non-urgent work to a queue, so the user gets a fast response and spikes are absorbed."</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 330" role="img" aria-label="Top: a producer sends messages into a queue and each message goes to one of two consumers. Bottom: a publisher sends to a topic and every one of three subscribers gets a copy">
+      <defs><marker id="ar-m2-11" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="28" width="110" height="55" rx="8"/>
+        <rect x="200" y="28" width="180" height="55" rx="8"/>
+        <rect x="500" y="15" width="130" height="40" rx="8"/>
+        <rect x="500" y="65" width="130" height="40" rx="8"/>
+        <path d="M123 55 H197" marker-end="url(#ar-m2-11)"/>
+        <path d="M383 45 L497 35" marker-end="url(#ar-m2-11)"/>
+        <path d="M383 65 L497 85" marker-end="url(#ar-m2-11)"/>
+        <rect x="10" y="205" width="110" height="55" rx="8"/>
+        <rect x="200" y="205" width="180" height="55" rx="8"/>
+        <rect x="500" y="165" width="130" height="40" rx="8"/>
+        <rect x="500" y="215" width="130" height="40" rx="8"/>
+        <rect x="500" y="265" width="130" height="40" rx="8"/>
+        <path d="M123 232 H197" marker-end="url(#ar-m2-11)"/>
+        <path d="M383 218 L497 185" marker-end="url(#ar-m2-11)"/>
+        <path d="M383 232 L497 235" marker-end="url(#ar-m2-11)"/>
+        <path d="M383 246 L497 285" marker-end="url(#ar-m2-11)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="65" y="52" font-size="15" font-weight="700">Producer</text>
+        <text x="65" y="70" font-size="13">1. send</text>
+        <text x="290" y="52" font-size="15" font-weight="700">Queue</text>
+        <text x="290" y="70" font-size="13">m1  m2  m3  m4</text>
+        <text x="565" y="40" font-size="14">Consumer A</text>
+        <text x="565" y="90" font-size="14">Consumer B</text>
+        <text x="320" y="135" font-size="14">2. Each message goes to ONE consumer</text>
+        <text x="65" y="229" font-size="15" font-weight="700">Publisher</text>
+        <text x="65" y="247" font-size="13">3. publish</text>
+        <text x="290" y="229" font-size="15" font-weight="700">Topic</text>
+        <text x="290" y="247" font-size="13">"order placed"</text>
+        <text x="565" y="190" font-size="14">Email service</text>
+        <text x="565" y="240" font-size="14">Analytics</text>
+        <text x="565" y="290" font-size="14">Search index</text>
+        <text x="290" y="175" font-size="14">4. EVERY subscriber gets a copy</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 and 2: a queue shares jobs, one consumer per message. Steps 3 and 4: a topic fans out, so each subscriber gets its own copy.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-11 queue-pubsub.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+message+queues+explained" target="_blank" rel="noopener">YouTube search: "ByteByteGo message queues explained"</a>
+      <span class="meta">Short. Watch it all.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hussein+Nasser+kafka+vs+rabbitmq+pub+sub" target="_blank" rel="noopener">YouTube search: "Hussein Nasser kafka vs rabbitmq pub sub"</a>
+      <span class="meta">Pick one result. Watch the part that explains the difference between a queue and a log.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://aws.amazon.com/message-queue/" target="_blank" rel="noopener">AWS: What is a message queue?</a>
+      <span class="meta">Read the benefits and the "how it works" parts.</span></li>
+    <li><a href="https://supabase.com/docs/guides/queues" target="_blank" rel="noopener">Supabase docs: Queues</a>
+      <span class="meta">Read the overview. It is the pgmq feature you will use below.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+  <p>You will use <b>pgmq</b>, a queue that lives inside Postgres, offered by Supabase as "Queues". Use your practice project from the SQL lessons.</p>
+
+  <h3>A. Enable the queue extension</h3>
+  <ol class="steps">
+    <li>Open your project in the Supabase dashboard.</li>
+    <li>Easiest way: click <span class="ui">SQL Editor</span>, <span class="ui">New query</span>, paste the line below, and click <span class="ui">Run</span>:
+      <pre><code>create extension if not exists pgmq;</code></pre>
+      You should see "Success. No rows returned". If you get an error that the extension is not available or you lack permission, enable it from the dashboard instead: look for <span class="ui">Integrations</span> (older dashboards: <span class="ui">Database</span>, then <span class="ui">Extensions</span>), find <span class="ui">Queues</span> (the module for <code>pgmq</code>), and switch it on. The dashboard menus change over time, so look around if names differ.</li>
+  </ol>
+
+  <h3>B. Create a queue and send messages</h3>
+  <ol class="steps">
+    <li>In a new query, run:
+      <pre><code>select pgmq.create('jobs');</code></pre>
+      This makes a queue named <code>jobs</code>. (Keep queue names to lowercase letters, hyphens and underscores.) You should see a success result with an empty cell.</li>
+    <li>Be the producer. Send a message (it is JSON):
+      <pre><code>select pgmq.send('jobs', '{"email":"a@b.com"}');</code></pre>
+      The result shows a number: the <b>message id</b>, for example <code>1</code>. Write it down.</li>
+    <li>Send two more, one at a time, changing the email each time (for example <code>c@d.com</code> and <code>e@f.com</code>).</li>
+  </ol>
+
+  <h3>C. Be the consumer: read, visibility timeout, delete</h3>
+  <ol class="steps">
+    <li>Read one message:
+      <pre><code>select * from pgmq.read('jobs', 30, 1);</code></pre>
+      The three arguments are the queue name, the <b>visibility timeout in seconds</b> (30) and how many messages to fetch (1). You get a row with <code>msg_id</code>, <code>read_ct</code> (how many times it has been read, now 1), <code>vt</code> (the time until which the message is hidden) and your <code>message</code> JSON.</li>
+    <li><b>The visibility timeout:</b> the message is not deleted. It is just <b>hidden for 30 seconds</b> so other workers do not grab the same job. If your worker crashes and never deletes it, the message <b>reappears</b> after 30 seconds and another worker retries. That is how at-least-once delivery works.</li>
+    <li>Prove it. Run the same <code>select * from pgmq.read('jobs', 30, 1);</code> again right away. You get the <i>next</i> message, not the first one, because the first is hidden.</li>
+    <li>Wait over 30 seconds and read with a bigger count: <code>select * from pgmq.read('jobs', 30, 10);</code>. The first message is back, and its <code>read_ct</code> is now 2: it was delivered a second time.</li>
+    <li>Now finish a job. Replace <code>1</code> with a real <code>msg_id</code> from your results:
+      <pre><code>select pgmq.delete('jobs', 1);</code></pre>
+      It returns <code>true</code>. That message is gone for good. Doing the work and then deleting it is the "acknowledge" step.</li>
+    <li>Read again with a count of 10: the deleted message no longer appears.</li>
+  </ol>
+
+  <h3>D. Clean up</h3>
+  <ol class="steps">
+    <li>Remove the practice queue:
+      <pre><code>select pgmq.drop_queue('jobs');</code></pre>
+      It returns <code>true</code>. (If a function name or result looks different in your version, check the Supabase Queues docs linked above; the ideas stay the same.)</li>
+  </ol>
+
+  <h3>E. Think</h3>
+  <ol class="steps">
+    <li>Write on paper: what would happen if the visibility timeout was 2 seconds and the job takes 10 seconds? (The message reappears while still being worked on, so a second worker does it again: a duplicate. So the timeout must be longer than the job, and the job should be idempotent.)</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Give three reasons to use a queue.</summary><p>Decoupling producer and consumer, absorbing traffic spikes, and retrying failed work without making the user wait.</p></details>
+  <details><summary>What is the difference between a queue and pub/sub?</summary><p>In a queue each message is handled by one consumer. In pub/sub every subscriber to the topic gets a copy.</p></details>
+  <details><summary>Why make consumers idempotent?</summary><p>Most systems deliver at-least-once, so the same message may arrive twice. An idempotent consumer gives the same result for duplicates.</p></details>
+  <details><summary>What is a dead-letter queue?</summary><p>A separate queue for messages that keep failing after several tries, so they do not block the main queue and can be inspected later.</p></details>
+  <details><summary>What does the visibility timeout in <code>pgmq.read</code> do?</summary><p>It hides the message from other consumers for that many seconds. If it is not deleted by then, it becomes visible again and is retried.</p></details>
+  <details><summary>You need to run background jobs on a small app already using Postgres. What do you pick?</summary><p>A Postgres-based queue (a jobs table with <code>FOR UPDATE SKIP LOCKED</code>, or pgmq). No new infrastructure; move to Kafka, RabbitMQ or SQS only when the volume or features demand it.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would put slow, non-critical work like emails behind a queue, so the API replies fast and traffic spikes are buffered."</blockquote>
+  <blockquote>"I assume at-least-once delivery, so consumers are idempotent, and failing messages go to a dead-letter queue after a few retries."</blockquote>
+  <p><b>Common follow-up question:</b> How do you pick between Kafka and SQS?</p>
+  <p>SQS if I want a simple managed job queue on AWS with little to operate. Kafka if I need very high throughput, several independent consumers reading the same events, or the ability to replay history, and I can afford its operational cost.</p>
+</section>
+
+</main>
+</body>
+</html>

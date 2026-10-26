@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Databases 2: indexes, transactions, ACID</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-3">
+<main class="lesson">
+
+<section class="story">
+  <h2>Finding a topic in a 500-page book</h2>
+  <p>You want to read about "photosynthesis" in a thick science book. You could flip every page from the start until you spot it. Or you open the <b>index at the back</b>: it lists topics in alphabetical order with page numbers. You find "photosynthesis, page 212", and you jump straight there.</p>
+  <p>The index costs something: it takes extra pages, and when the author adds a new chapter, the index must be updated too. But reading becomes hugely faster.</p>
+  <p>Now think about sending money on UPI. Your account is debited and your friend's account is credited. If the power goes out in the middle, you cannot have money vanish. Both steps must happen, or neither. Databases promise this too. This lesson covers both ideas.</p>
+</section>
+
+<section class="explain">
+  <h2>Indexes, transactions and ACID</h2>
+
+  <h3>Indexes: the book index of a database</h3>
+  <p>Without an index, a query like <code>WHERE customer_id = 4242</code> makes the database read <b>every row</b> (a <b>sequential scan</b>). With 200,000 rows that is slow, with 200 million it is a disaster. An <b>index</b> is a separate, sorted structure that lets the database jump straight to matching rows.</p>
+  <p>Most databases use a <b>B-tree</b>: a shallow tree. The top node says which range to go to, the next node narrows it, and the bottom "leaf" holds the value and the location of the row. Three or four hops can find one row among millions, because each hop discards most of the remaining data.</p>
+
+  <h3>The cost of indexes</h3>
+  <ul>
+    <li><b>Writes get slower.</b> Every <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> must also update every index on the table.</li>
+    <li><b>Storage grows.</b> Each index is a copy of some columns plus pointers.</li>
+    <li>So do <b>not</b> index everything. Index the columns you filter, join or sort on often. Primary keys are indexed automatically.</li>
+  </ul>
+
+  <h3>Composite indexes: the left-to-right rule</h3>
+  <p>An index can cover several columns, like <code>(city, created_at)</code>. It is sorted by city first, then by date inside each city, like a phone book sorted by surname then first name. So it helps queries on <code>city</code>, or on <code>city AND created_at</code>. It does <b>not</b> help a query on only <code>created_at</code>, just as a phone book does not help you find everyone named "Ravi". Order the columns with the most common filter first.</p>
+
+  <h3>Transactions</h3>
+  <p>A <b>transaction</b> groups several steps into one unit: <code>BEGIN</code>, do the steps, then <code>COMMIT</code> (make it permanent) or <code>ROLLBACK</code> (undo everything). It is "all or nothing".</p>
+
+  <h3>ACID in one line each (UPI example)</h3>
+  <table>
+    <tr><th>Letter</th><th>Meaning</th><th>In a UPI transfer of Rs 500</th></tr>
+    <tr><td><b>A</b>tomicity</td><td>All steps or none</td><td>Debit and credit both happen, or neither</td></tr>
+    <tr><td><b>C</b>onsistency</td><td>Rules always hold</td><td>Balance never goes below zero; total money stays the same</td></tr>
+    <tr><td><b>I</b>solation</td><td>Parallel transactions do not see each other's half-done work</td><td>Two payments at once from the same account do not overspend it</td></tr>
+    <tr><td><b>D</b>urability</td><td>Once committed, it survives a crash</td><td>"Payment successful" stays true even if the server restarts</td></tr>
+  </table>
+
+  <h3>Isolation levels and the problems they prevent</h3>
+  <p>Perfect isolation is slow, so databases offer levels. Each level blocks more weird behaviour:</p>
+  <table>
+    <tr><th>Problem</th><th>What happens</th></tr>
+    <tr><td><b>Dirty read</b></td><td>You read data another transaction has not committed yet, and it may be rolled back. You saw something that never really existed.</td></tr>
+    <tr><td><b>Non-repeatable read</b></td><td>You read a row twice in your transaction and get different values, because someone committed a change in between.</td></tr>
+    <tr><td><b>Phantom</b></td><td>You run the same query twice and the second time new rows appear (or vanish), because someone inserted or deleted matching rows.</td></tr>
+  </table>
+  <p>The standard levels, from loosest to strictest: <b>Read Uncommitted</b>, <b>Read Committed</b> (Postgres default: no dirty reads), <b>Repeatable Read</b> (also no non-repeatable reads), <b>Serializable</b> (behaves as if transactions ran one at a time). Stricter means safer but slower and more likely to make one transaction retry. Default is fine for most apps; choose Serializable for things like seat booking or ledgers where a race would be costly.</p>
+
+  <h3>The N+1 query problem</h3>
+  <p>You load 50 orders (1 query), then for each order you fetch its customer (50 more queries). That is <b>N+1</b> queries: 51 round trips instead of 1 or 2. It is the most common hidden slowness in apps that use an ORM. Fix: use a <b>join</b>, or fetch all needed customers in one query with <code>WHERE id IN (...)</code>, or use your ORM's "include/eager load" option.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Indexes</b> speed reads and slow writes. Add the ones your real queries need, and check with <code>EXPLAIN</code>.</li>
+    <li><b>Transactions and high isolation</b> give safety but reduce parallelism. Keep transactions short; never wait for a user or call a slow API inside one.</li>
+    <li>Many NoSQL stores relax ACID to scale out (the next lessons explain why).</li>
+  </ul>
+  <p class="tip">Mention <code>EXPLAIN ANALYZE</code> in interviews. "I would not guess; I would look at the query plan" is exactly what interviewers want to hear.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 350" role="img" aria-label="A B-tree index: a root node narrows to the right branch, then to a leaf holding the key 4242, which points to the table row">
+      <defs><marker id="ar-m2-3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="190" y="10" width="260" height="55" rx="8"/>
+        <rect x="20" y="115" width="180" height="55" rx="8" stroke-dasharray="5 4"/>
+        <rect x="230" y="115" width="180" height="55" rx="8"/>
+        <rect x="440" y="115" width="180" height="55" rx="8" stroke-dasharray="5 4"/>
+        <rect x="230" y="215" width="180" height="55" rx="8"/>
+        <rect x="170" y="290" width="300" height="50" rx="8"/>
+        <path d="M320 68 V112" marker-end="url(#ar-m2-3)"/>
+        <path d="M260 68 L120 112" stroke-dasharray="5 4"/>
+        <path d="M380 68 L520 112" stroke-dasharray="5 4"/>
+        <path d="M320 173 V212" marker-end="url(#ar-m2-3)"/>
+        <path d="M320 273 V287" marker-end="url(#ar-m2-3)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="320" y="33" font-size="15" font-weight="700">1. Root: which range?</text>
+        <text x="320" y="53" font-size="13">4242 is in 3001-6000</text>
+        <text x="110" y="148" font-size="13">Branch 1-3000</text>
+        <text x="110" y="164" font-size="13">(skipped)</text>
+        <text x="320" y="138" font-size="15" font-weight="700">2. Branch 3001-6000</text>
+        <text x="320" y="158" font-size="13">narrows to a leaf</text>
+        <text x="530" y="148" font-size="13">Branch 6001-9000</text>
+        <text x="530" y="164" font-size="13">(skipped)</text>
+        <text x="320" y="238" font-size="15" font-weight="700">3. Leaf: key 4242</text>
+        <text x="320" y="258" font-size="13">holds the row's address</text>
+        <text x="320" y="312" font-size="15" font-weight="700">4. Table row found</text>
+        <text x="320" y="330" font-size="13">no need to read 200,000 rows</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 to 4: each hop throws away most of the data. Dashed boxes are branches the database never visits.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-3 btree-index.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+database+indexing+explained+B-tree" target="_blank" rel="noopener">YouTube search: "ByteByteGo database indexing explained B-tree"</a>
+      <span class="meta">Short. Watch it all, focusing on why a tree is faster than scanning.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hussein+Nasser+ACID+database+transactions+isolation" target="_blank" rel="noopener">YouTube search: "Hussein Nasser ACID database transactions isolation"</a>
+      <span class="meta">Pick one result. Watch the part that explains isolation with an example.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.postgresql.org/docs/current/using-explain.html" target="_blank" rel="noopener">PostgreSQL docs: Using EXPLAIN</a>
+      <span class="meta">Read the first two sections only, to learn the words "Seq Scan", "Index Scan" and "cost".</span></li>
+    <li><a href="https://github.com/donnemartin/system-design-primer#relational-database-management-system-rdbms" target="_blank" rel="noopener">System Design Primer: RDBMS (ACID is in this part)</a>
+      <span class="meta">Compare its wording with the table above.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes)</h2>
+  <div class="warn"><b>Stay inside the free tier.</b> The free Supabase database has a limited size (500 MB at the time of writing). The 200,000-row table below is only a few MB. Do not raise the number, and run the clean-up step at the end.</div>
+
+  <h3>A. See a slow query, then fix it with an index</h3>
+  <ol class="steps">
+    <li>Open your Supabase project (from the last lesson) and click <span class="ui">SQL Editor</span>, then <span class="ui">New query</span>.</li>
+    <li>Create a table with 200,000 fake rows, then click <span class="ui">Run</span> (<kbd>Ctrl</kbd> + <kbd>Enter</kbd>). It may take a few seconds. If a popup asks about Row Level Security, you can run without it for this practice table.
+      <pre><code>create table demo_orders as
+select
+  g as id,
+  (random() * 10000)::int as customer_id,
+  (random() * 1000)::int as amount
+from generate_series(1, 200000) g;
+
+analyze demo_orders;</code></pre>
+      <code>generate_series(1, 200000)</code> makes the numbers 1 to 200000, one per row.</li>
+    <li>Confirm the count: new query, run <code>select count(*) from demo_orders;</code>. You should see 200000.</li>
+    <li>Now ask the database to explain how it runs a filter. <code>EXPLAIN ANALYZE</code> actually runs the query and reports the plan and the real time:
+      <pre><code>explain analyze
+select * from demo_orders where customer_id = 4242;</code></pre></li>
+    <li>Read the result lines. You should see <b>Seq Scan on demo_orders</b> with a <code>Filter: (customer_id = 4242)</code> line, and at the bottom <b>Execution Time</b> in milliseconds. <b>Write that time down.</b> (It will vary on your machine and project; a few to a few dozen ms is typical.)</li>
+    <li>Add an index on that column and refresh the table statistics:
+      <pre><code>create index idx_demo_orders_customer on demo_orders (customer_id);
+analyze demo_orders;</code></pre></li>
+    <li>Run the same <code>explain analyze select ...</code> again. Now the first line should say <b>Index Scan</b> or <b>Bitmap Index Scan</b> (both use the index) instead of Seq Scan, and <b>Execution Time</b> should be much smaller. Write it down next to the first number.</li>
+    <li>Compare the two times in your notes, and write one sentence: "An index made this query about ___ times faster, but every insert now also updates the index." (At just 200,000 rows the gap is modest; imagine 200 million.)</li>
+    <li>Try the left-to-right rule: create a composite index and test two queries.
+      <pre><code>create index idx_demo_orders_cust_amount on demo_orders (customer_id, amount);
+analyze demo_orders;
+
+explain analyze select * from demo_orders where customer_id = 4242 and amount = 500;
+explain analyze select * from demo_orders where amount = 500;</code></pre>
+      The grid shows the result of the last statement, so run the two <code>explain</code> lines one at a time. The first should use an index; the second filters on only the second column, so it will likely scan the whole table (the planner may also choose a full index scan; either way it cannot jump straight to the answer).</li>
+  </ol>
+
+  <h3>B. A transaction you can undo</h3>
+  <ol class="steps">
+    <li>Create a tiny "bank" and run it:
+      <pre><code>create table demo_accounts (
+  id int primary key,
+  name text,
+  balance int
+);
+insert into demo_accounts values (1, 'Asha', 1000), (2, 'Ravi', 500);</code></pre></li>
+    <li>Open a new query and run this whole block at once. It moves Rs 200 and then undoes it:
+      <pre><code>begin;
+update demo_accounts set balance = balance - 200 where id = 1;
+update demo_accounts set balance = balance + 200 where id = 2;
+rollback;</code></pre></li>
+    <li>Check the balances in a separate query: <code>select * from demo_accounts order by id;</code>. You should see Asha 1000 and Ravi 500: nothing changed, because you rolled back. <b>Atomicity</b> at work.</li>
+    <li>Run the block again but replace the last word with <code>commit;</code>. Check again: Asha 800, Ravi 700. Committed changes stay.</li>
+    <li>Think: if the server crashed between the two <code>update</code> lines and there was no transaction, what would be wrong? (200 rupees would disappear from Asha but never reach Ravi.)</li>
+  </ol>
+
+  <h3>C. Clean up</h3>
+  <ol class="steps">
+    <li>Remove the practice tables so they do not use up space:
+      <pre><code>drop table demo_orders;
+drop table demo_accounts;</code></pre></li>
+    <li>Click <span class="ui">Run</span>. In <span class="ui">Table Editor</span>, confirm they are gone. Keep <code>customers</code> and <code>orders</code> from the last lesson if you want to reuse them.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why do indexes make reads fast but writes slower?</summary><p>An index lets the database jump to rows instead of scanning all of them. But each insert, update or delete must also update every index on that table.</p></details>
+  <details><summary>You have an index on <code>(city, created_at)</code>. Which queries can use it well?</summary><p>Filters on <code>city</code>, or on <code>city</code> and <code>created_at</code> together. Not a filter on <code>created_at</code> alone, because the index is sorted by city first (left-to-right rule).</p></details>
+  <details><summary>Explain ACID with a UPI transfer in one sentence per letter.</summary><p>Atomicity: debit and credit both happen or neither. Consistency: rules like "balance not negative" always hold. Isolation: simultaneous payments do not see each other's half-finished state. Durability: once confirmed, it survives a crash.</p></details>
+  <details><summary>What is a phantom read?</summary><p>Running the same query twice in one transaction and getting extra (or missing) rows the second time because another transaction inserted or deleted matching rows in between.</p></details>
+  <details><summary>A page makes 1 query for 30 posts, then 30 queries for authors. What is wrong and how do you fix it?</summary><p>It is the N+1 problem. Fix it with a join, one batched <code>WHERE id IN (...)</code> query, or the ORM's eager loading, giving 1 or 2 queries instead of 31.</p></details>
+  <details><summary>A table gets 10,000 inserts a second and is rarely read. Would you add many indexes? Why?</summary><p>No. Each index slows every insert. With a write-heavy, rarely-read table I would keep indexes minimal (maybe only the primary key).</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would index the columns used in WHERE, JOIN and ORDER BY, check the plan with EXPLAIN, and remember every index slows writes."</blockquote>
+  <blockquote>"For the payment I would use a transaction so debit and credit are atomic, and a suitable isolation level to prevent double spending."</blockquote>
+  <p><b>Common follow-up question:</b> A query is slow. What do you do?</p>
+  <p>Run EXPLAIN ANALYZE to see the plan. If it does a sequential scan on a big table, add an index matching the filter and sort. Check for N+1 patterns, select only needed columns, and consider caching if the same result is read often.</p>
+</section>
+
+</main>
+</body>
+</html>

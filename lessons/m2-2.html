@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Databases 1: SQL vs NoSQL</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-2">
+<main class="lesson">
+
+<section class="story">
+  <h2>The kirana shop's two notebooks</h2>
+  <p>A kirana shop owner keeps a <b>customer notebook</b>: name, phone, address, one line per customer. She keeps a separate <b>sales notebook</b>: date, item, price, and the customer's name beside it.</p>
+  <p>She does not rewrite the customer's address next to every sale. If Asha moves house, she changes <i>one</i> line in the customer notebook. When she wants to know "where do I deliver this sale?", she looks up Asha's name in the first notebook. That is a database with tables, and the "look up" is a <b>join</b>.</p>
+  <p>Another shopkeeper keeps one big loose page per customer, with everything about that customer stapled together. Faster to read in one go, but changing one fact may mean fixing many pages. That is the other family: NoSQL.</p>
+</section>
+
+<section class="explain">
+  <h2>Tables, keys, and the NoSQL families</h2>
+
+  <h3>The relational (SQL) world</h3>
+  <p>A <b>table</b> is a grid. Each <b>row</b> is one thing (one customer). Each <b>column</b> is one fact about it (name, city). You talk to it with <b>SQL</b>. Examples: PostgreSQL, MySQL.</p>
+  <ul>
+    <li><b>Primary key (PK):</b> a column that is unique for every row, like an Aadhaar number. Usually <code>id</code>.</li>
+    <li><b>Foreign key (FK):</b> a column that holds <i>another table's</i> primary key. <code>orders.customer_id</code> points at <code>customers.id</code>. The database refuses an order for a customer that does not exist.</li>
+    <li><b>Join:</b> combine rows from two tables by matching the key. "Give me each order with the customer's name."</li>
+  </ul>
+
+  <h3>Normalization in plain words</h3>
+  <p><b>Normalization</b> means "store each fact in exactly one place". Three steps:</p>
+  <ul>
+    <li><b>1NF:</b> one value per cell, no lists crammed into a column. Not <code>phones = "999, 888"</code>; make a row per phone.</li>
+    <li><b>2NF:</b> every column must depend on the <i>whole</i> key. If the key is (order, product), the product's name belongs in a products table, not in each order line.</li>
+    <li><b>3NF:</b> columns must depend on the key and nothing else. Do not store both <code>pincode</code> and <code>city</code> in the customer row if the pincode already decides the city; that is a separate fact.</li>
+  </ul>
+  <p>Payoff: change a fact once, and it is right everywhere. No contradictions.</p>
+  <p><b>When to denormalize:</b> joins cost time. For a read-heavy page (a product listing viewed a million times) you may <b>copy</b> data on purpose, for example storing the customer name inside each order. Reads get faster; writes get more work and the copies can drift apart. Do it only after you measure a real problem.</p>
+
+  <h3>The NoSQL families</h3>
+  <p><b>NoSQL</b> means "not only SQL": databases that choose different trade-offs, often to scale across many machines more easily or to fit a different data shape.</p>
+  <table>
+    <tr><th>Family</th><th>Shape</th><th>Example product</th><th>Good for</th></tr>
+    <tr><td>Key-value</td><td>A giant dictionary: key to value</td><td>Redis, DynamoDB</td><td>Sessions, caches, counters</td></tr>
+    <tr><td>Document</td><td>JSON-like documents, each self-contained</td><td>MongoDB</td><td>Catalogues, profiles with flexible fields</td></tr>
+    <tr><td>Wide-column</td><td>Rows with many sparse columns, spread across machines</td><td>Cassandra</td><td>Huge write volume, time series, logs</td></tr>
+    <tr><td>Graph</td><td>Nodes and relationships</td><td>Neo4j</td><td>Friends of friends, recommendations, fraud rings</td></tr>
+  </table>
+
+  <h3>How to choose</h3>
+  <table>
+    <tr><th>Question</th><th>Lean SQL</th><th>Lean NoSQL</th></tr>
+    <tr><td>Data has clear relations (users, orders, payments)</td><td>Yes</td><td>Awkward</td></tr>
+    <tr><td>Need transactions across several rows (money!)</td><td>Yes</td><td>Often limited</td></tr>
+    <tr><td>Shape changes a lot, fields vary per item</td><td>Possible (JSON columns)</td><td>Yes (document)</td></tr>
+    <tr><td>Enormous write volume across many machines</td><td>Harder</td><td>Yes (wide-column, key-value)</td></tr>
+    <tr><td>Ad hoc questions ("sales by city last month")</td><td>Yes, SQL is great at this</td><td>Harder</td></tr>
+    <tr><td>Simple lookups by one key, very fast</td><td>OK</td><td>Yes (key-value)</td></tr>
+  </table>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>SQL:</b> strong rules, joins, transactions, flexible questions. Scaling one huge database across machines is harder (later lessons: replication, sharding).</li>
+    <li><b>NoSQL:</b> scales out easily and fits some shapes well, but you often give up joins and multi-row transactions, and you must design around the queries you will run.</li>
+    <li>Real systems often use <b>both</b>: Postgres for the money and the users, Redis for caching, a search engine for search.</li>
+  </ul>
+  <p class="tip">Safe interview default: "I would start with PostgreSQL. It handles relations and transactions, and one well-indexed Postgres goes a very long way. I would add NoSQL only for a specific need."</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 330" role="img" aria-label="Two tables, customers and orders, joined by a foreign key arrow, and below them the joined result showing customer name next to the item">
+      <defs><marker id="ar-m2-2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="15" width="240" height="120" rx="8"/>
+        <rect x="385" y="15" width="240" height="120" rx="8"/>
+        <path d="M382 95 H258" marker-end="url(#ar-m2-2)"/>
+        <path d="M15 45 H255"/>
+        <path d="M385 45 H625"/>
+        <path d="M320 140 V185" marker-end="url(#ar-m2-2)"/>
+        <rect x="95" y="190" width="450" height="125" rx="8"/>
+        <path d="M95 220 H545"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="135" y="36" font-size="15" font-weight="700" text-anchor="middle">customers</text>
+        <text x="30" y="68" font-size="14">id (PK)   name</text>
+        <text x="30" y="92" font-size="14">1             Asha</text>
+        <text x="30" y="116" font-size="14">2             Ravi</text>
+        <text x="505" y="36" font-size="15" font-weight="700" text-anchor="middle">orders</text>
+        <text x="398" y="68" font-size="14">id   customer_id (FK)   item</text>
+        <text x="398" y="92" font-size="14">10  1                           Laptop</text>
+        <text x="398" y="116" font-size="14">11  1                           Mouse</text>
+        <text x="320" y="85" font-size="13" text-anchor="middle">1. FK points</text>
+        <text x="333" y="168" font-size="13">2. JOIN matches the keys</text>
+        <text x="320" y="211" font-size="15" font-weight="700" text-anchor="middle">Result of the JOIN</text>
+        <text x="115" y="244" font-size="14">name        item</text>
+        <text x="115" y="268" font-size="14">Asha        Laptop</text>
+        <text x="115" y="292" font-size="14">Asha        Mouse   (Ravi has no orders, so he is not here)</text>
+      </g>
+    </svg>
+    <figcaption>Step 1: the foreign key in orders holds a customer's id. Step 2: the JOIN follows that key and glues the matching rows together.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-2 sql-join.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+SQL+vs+NoSQL+database+how+to+choose" target="_blank" rel="noopener">YouTube search: "ByteByteGo SQL vs NoSQL database how to choose"</a>
+      <span class="meta">Short. Watch the part that lists the NoSQL types.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+SQL+vs+NoSQL+which+database+to+use" target="_blank" rel="noopener">YouTube search: "Gaurav Sen SQL vs NoSQL which database to use"</a>
+      <span class="meta">Pick one result. Watch the part about transactions and scaling.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#sql-or-nosql" target="_blank" rel="noopener">System Design Primer: SQL or NoSQL</a>
+      <span class="meta">Read the "Reasons for SQL" and "Reasons for NoSQL" lists.</span></li>
+    <li><a href="https://supabase.com/docs/guides/database/overview" target="_blank" rel="noopener">Supabase docs: Database overview</a>
+      <span class="meta">Skim to see that Supabase is just Postgres underneath.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes)</h2>
+  <h3>A. Create a free Supabase project</h3>
+  <p>If you already made a practice project, you can reuse it and skip to B. Otherwise:</p>
+  <ol class="steps">
+    <li>Open <code>supabase.com/dashboard</code> and log in.</li>
+    <li>Click <span class="ui">New project</span>. If it asks which organization, pick your personal one.</li>
+    <li>In <b>Name</b>, type <code>sysdesign-practice</code>.</li>
+    <li>In <b>Database password</b>, type a strong password (or use the generate button) and <b>save it in your password manager or notes now</b>. You usually cannot read it again later.</li>
+    <li>For <b>Region</b>, choose the one closest to India, for example <span class="ui">Mumbai</span> (Asia South) if it is offered, otherwise Singapore. Closer means lower latency, as you learned in Module 1.</li>
+    <li>Pick the <b>Free</b> plan if asked, and click <span class="ui">Create new project</span>.</li>
+    <li>Wait 1 to 2 minutes while it says "Setting up your project". When the dashboard appears, you are ready. (The labels may look slightly different from this lesson; the idea is the same.)</li>
+  </ol>
+
+  <h3>B. Create two tables with a foreign key</h3>
+  <ol class="steps">
+    <li>In the left sidebar click <span class="ui">SQL Editor</span>, then <span class="ui">New query</span> (or the <span class="ui">+</span> button).</li>
+    <li>Paste this into the big editor box:
+      <pre><code>create table customers (
+  id bigint generated always as identity primary key,
+  name text not null,
+  city text
+);
+
+create table orders (
+  id bigint generated always as identity primary key,
+  customer_id bigint not null references customers(id),
+  item text not null,
+  amount_inr int not null,
+  created_at timestamptz default now()
+);</code></pre></li>
+    <li>Click <span class="ui">Run</span> (or press <kbd>Ctrl</kbd> + <kbd>Enter</kbd>). A popup may ask about <b>Row Level Security</b> for the new tables. For this practice project you can choose to run the query without it. You should see "Success. No rows returned".</li>
+    <li>Click <span class="ui">Table Editor</span> in the sidebar. Both tables are listed, both empty.</li>
+  </ol>
+
+  <h3>C. Insert rows</h3>
+  <ol class="steps">
+    <li>Back in <span class="ui">SQL Editor</span>, open a new query and paste:
+      <pre><code>insert into customers (name, city) values
+  ('Asha', 'Pune'),
+  ('Ravi', 'Chennai'),
+  ('Meera', 'Delhi');
+
+insert into orders (customer_id, item, amount_inr) values
+  (1, 'Laptop', 52000),
+  (1, 'Mouse', 700),
+  (2, 'Keyboard', 1500);</code></pre></li>
+    <li>Click <span class="ui">Run</span>. Open the tables in <span class="ui">Table Editor</span> and check you see 3 customers and 3 orders. Note that <code>id</code> filled itself in: 1, 2, 3.</li>
+  </ol>
+
+  <h3>D. Join them, and test the foreign key</h3>
+  <ol class="steps">
+    <li>New query, paste, run:
+      <pre><code>select c.name, o.item, o.amount_inr
+from orders o
+join customers c on c.id = o.customer_id
+order by c.name;</code></pre>
+      The results grid should show 3 rows: Asha Laptop, Asha Mouse, Ravi Keyboard. Meera is missing because she has no orders (a plain <code>join</code> only keeps matches).</li>
+    <li>Now keep Meera too. Run:
+      <pre><code>select c.name, o.item
+from customers c
+left join orders o on o.customer_id = c.id;</code></pre>
+      Meera appears with an empty (<code>null</code>) item. That is a <b>LEFT JOIN</b>: "all customers, with orders if any".</li>
+    <li>Try to break the rule:
+      <pre><code>insert into orders (customer_id, item, amount_inr) values (999, 'Ghost', 1);</code></pre>
+      You should get an error mentioning a <b>foreign key constraint</b>. The database refused an order for a customer that does not exist.</li>
+  </ol>
+  <p class="tip">Keep these tables. The next lesson builds on the same project.</p>
+
+  <h3>E. Think</h3>
+  <ol class="steps">
+    <li>On paper, write how one <b>MongoDB-style document</b> for Asha would look with her orders nested inside it (a JSON object with an <code>orders</code> array). Then write one advantage (one read gets everything) and one disadvantage (an order is also needed in a "all orders today" view, so you must copy or query across documents).</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is the difference between a primary key and a foreign key?</summary><p>A primary key uniquely identifies a row in its own table. A foreign key is a column that stores another table's primary key, linking the two.</p></details>
+  <details><summary>What does normalization achieve?</summary><p>Each fact is stored in one place, so updates happen once and cannot contradict each other.</p></details>
+  <details><summary>Why would you ever denormalize?</summary><p>To avoid costly joins on a very read-heavy path. You trade extra write work and the risk of copies drifting apart for faster reads.</p></details>
+  <details><summary>Name the four NoSQL families with one product each.</summary><p>Key-value (Redis), document (MongoDB), wide-column (Cassandra), graph (Neo4j).</p></details>
+  <details><summary>You are building a payments ledger. SQL or NoSQL, and why?</summary><p>SQL (such as PostgreSQL). Money needs transactions across rows, strict constraints and flexible reporting queries, which relational databases do best.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would start with PostgreSQL because the data is relational and I need transactions. I would normalize the schema, then denormalize only specific hot read paths after measuring."</blockquote>
+  <blockquote>"NoSQL is a family, not one thing. I pick key-value for sessions and counters, document for flexible shapes, wide-column for massive writes, graph for relationship queries."</blockquote>
+  <p><b>Common follow-up question:</b> Does NoSQL scale better than SQL?</p>
+  <p>Many NoSQL systems were designed to spread data across machines from day one, so scaling out is easier. But they gain that by dropping joins or cross-row transactions. SQL can scale too, with read replicas, caching and sharding, just with more work. It depends on the access pattern, not on the label.</p>
+</section>
+
+</main>
+</body>
+</html>

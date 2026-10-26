@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caching 1: the ideas</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-7">
+<main class="lesson">
+
+<section class="story">
+  <h2>The water bottle on your desk</h2>
+  <p>When you are thirsty you could walk to the water cooler at the end of the corridor every time. Or you can keep a <b>bottle on your desk</b>. Grabbing from the bottle takes one second; the cooler takes two minutes. The bottle holds less, and it may go stale or run out, but most sips come from it.</p>
+  <p>A <b>cache</b> is a bottle on the desk: a small, fast place that keeps copies of things you recently needed, so you do not repeat a slow trip. Computers have many bottles at many distances.</p>
+  <p>The hard part: if the cooler's water is changed (the original changes), your bottle may still hold the old water. Knowing when to throw yours away is the famous tricky bit.</p>
+</section>
+
+<section class="explain">
+  <h2>Where caches live, and how they behave</h2>
+  <p>Remember the latency numbers from Module 1: memory is thousands of times faster than a disk or a network trip. Caching trades a bit of <b>memory</b> and some <b>freshness</b> for a lot of <b>speed</b> and a lot less load on the database.</p>
+
+  <h3>Where caches live</h3>
+  <table>
+    <tr><th>Layer</th><th>Where</th><th>Holds</th></tr>
+    <tr><td>Browser cache</td><td>On the user's device</td><td>Images, CSS, JS, some API responses</td></tr>
+    <tr><td>CDN</td><td>Servers near the user</td><td>Static files, sometimes whole pages</td></tr>
+    <tr><td>App memory</td><td>Inside one app server's process</td><td>Small hot data; lost on restart, not shared</td></tr>
+    <tr><td>Redis / Memcached</td><td>A separate shared cache server</td><td>Query results, sessions, counters</td></tr>
+    <tr><td>Database buffer cache</td><td>Inside the database</td><td>Recently used disk pages (automatic)</td></tr>
+  </table>
+  <p>A request walks outward from the user. At each layer, a <b>hit</b> (the copy is there) ends the trip. A <b>miss</b> goes on to the next layer, and the answer is saved on the way back.</p>
+
+  <h3>Caching strategies</h3>
+  <table>
+    <tr><th>Strategy</th><th>How it works</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Cache-aside</b> (lazy loading)</td><td>App checks the cache; on a miss it reads the DB, then stores the result in the cache</td><td>Simple; only caches what is used; cache failure is survivable</td><td>First request is slow; data can go stale</td></tr>
+    <tr><td><b>Read-through</b></td><td>The cache itself loads from the DB on a miss; the app only talks to the cache</td><td>App code is simpler</td><td>Needs a cache layer that supports it; first request slow</td></tr>
+    <tr><td><b>Write-through</b></td><td>Writes go to cache and DB together, and succeed when both are done</td><td>Cache always fresh</td><td>Every write is slower; may cache data never read</td></tr>
+    <tr><td><b>Write-behind</b> (write-back)</td><td>Write to cache first, save to the DB later in the background</td><td>Very fast writes</td><td>If the cache dies before saving, data is lost</td></tr>
+  </table>
+  <p>Cache-aside is the one to know best. It is what most apps do.</p>
+
+  <h3>TTL: a freshness timer</h3>
+  <p><b>TTL (time to live)</b> is how long a cached item lives before it is thrown away, such as 60 seconds. It is the simplest protection against stale data: even if you forget to clean up, the copy expires by itself. Short TTL = fresher but more misses. Long TTL = faster but staler.</p>
+
+  <h3>Eviction: what to throw out when the cache is full</h3>
+  <table>
+    <tr><th>Policy</th><th>Removes</th><th>Good for</th></tr>
+    <tr><td><b>LRU</b> (least recently used)</td><td>The item not touched for the longest time</td><td>Most general uses</td></tr>
+    <tr><td><b>LFU</b> (least frequently used)</td><td>The item used the fewest times</td><td>Stable popular items</td></tr>
+    <tr><td><b>FIFO</b> (first in, first out)</td><td>The oldest item added</td><td>Very simple cases</td></tr>
+  </table>
+
+  <h3>Cache invalidation</h3>
+  <p>There is an old joke that the two hard problems in computer science are <b>cache invalidation</b> and naming things. Invalidation means removing or updating a cached copy when the original changes. Common approaches: let the TTL expire; delete the cache key whenever you update the database row; or put a version in the key (<code>user:7:v3</code>). No approach is perfect; each one trades freshness against effort.</p>
+
+  <h3>Cache stampede (thundering herd)</h3>
+  <p>A very popular item expires. In that instant, 5,000 requests all miss together and all hit the database to rebuild it. The database buckles. Fixes:</p>
+  <ul>
+    <li><b>Locking:</b> only one request rebuilds the value while the others wait or use the old copy.</li>
+    <li><b>Jitter:</b> add a random few seconds to each TTL so items do not all expire together.</li>
+    <li><b>Refresh early:</b> refresh a hot item in the background before it expires.</li>
+  </ul>
+
+  <h3>Hit ratio</h3>
+  <p><b>Hit ratio</b> = hits divided by total requests. At 95% only 1 in 20 requests reaches the database. It is the number that says whether your cache is worth it. A low ratio means you cache the wrong things, the TTL is too short, or the cache is too small.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>Caching gives speed and protects the database, but you accept <b>stale data</b>, extra complexity and one more component to run.</li>
+    <li>Do not cache data that changes constantly or must always be exact (an account balance), or data that is rarely read twice.</li>
+    <li>Design for the cache being empty or down: the system should still work, just slower.</li>
+  </ul>
+  <p class="tip">Interviewers love "what do you cache, with what key, for how long, and how does it get invalidated?" Have a one-line answer for each.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 260" role="img" aria-label="A chain of five places a request can be answered, from the browser, CDN, app memory, Redis to the database, with farther meaning slower">
+      <defs><marker id="ar-m2-7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="8" y="40" width="112" height="70" rx="8"/>
+        <rect x="136" y="40" width="112" height="70" rx="8"/>
+        <rect x="264" y="40" width="112" height="70" rx="8"/>
+        <rect x="392" y="40" width="112" height="70" rx="8"/>
+        <rect x="520" y="40" width="112" height="70" rx="8"/>
+        <path d="M121 75 H134" marker-end="url(#ar-m2-7)"/>
+        <path d="M249 75 H262" marker-end="url(#ar-m2-7)"/>
+        <path d="M377 75 H390" marker-end="url(#ar-m2-7)"/>
+        <path d="M505 75 H518" marker-end="url(#ar-m2-7)"/>
+        <path d="M10 150 H630" marker-end="url(#ar-m2-7)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="64" y="68" font-size="15" font-weight="700">1. Browser</text>
+        <text x="64" y="88" font-size="13">own cache</text>
+        <text x="192" y="68" font-size="15" font-weight="700">2. CDN</text>
+        <text x="192" y="88" font-size="13">near the user</text>
+        <text x="320" y="68" font-size="15" font-weight="700">3. App</text>
+        <text x="320" y="88" font-size="13">in-process</text>
+        <text x="448" y="68" font-size="15" font-weight="700">4. Redis</text>
+        <text x="448" y="88" font-size="13">shared cache</text>
+        <text x="576" y="68" font-size="15" font-weight="700">5. Database</text>
+        <text x="576" y="88" font-size="13">the original</text>
+        <text x="320" y="30" font-size="14">Request walks this way until something has the answer</text>
+        <text x="320" y="172" font-size="14">Farther right = slower, but bigger and more up to date</text>
+        <text x="320" y="210" font-size="13">Hit: answer here and stop.  Miss: ask the next one, then keep a copy on the way back.</text>
+        <text x="320" y="232" font-size="13">Most requests should end at steps 1 to 4, so step 5 stays calm.</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 to 5: five places that may already hold the answer. The farther the trip, the slower it is.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-7 cache-layers.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+caching+strategies+cache+aside+write+through" target="_blank" rel="noopener">YouTube search: "ByteByteGo caching strategies cache aside write through"</a>
+      <span class="meta">Short. Watch it all, and match each strategy to the table above.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+caching+system+design+cache+eviction" target="_blank" rel="noopener">YouTube search: "Gaurav Sen caching system design cache eviction"</a>
+      <span class="meta">Pick one result. Watch the parts about eviction and write policies.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#cache" target="_blank" rel="noopener">System Design Primer: Cache</a>
+      <span class="meta">Read the cache-aside, write-through and write-behind parts and their disadvantages.</span></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching" target="_blank" rel="noopener">MDN: HTTP caching</a>
+      <span class="meta">Read about the <code>Cache-Control</code> header and "max-age", which you will see in the exercise.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+
+  <h3>A. See cache headers on a real page</h3>
+  <ol class="steps">
+    <li>Open Chrome, go to <code>https://www.wikipedia.org</code>. Press <kbd>F12</kbd> and click the <span class="ui">Network</span> tab.</li>
+    <li>Make sure the <span class="ui">Disable cache</span> checkbox (near the top of the Network panel) is <b>not</b> ticked.</li>
+    <li>Reload with <kbd>Ctrl</kbd> + <kbd>R</kbd>. Click any row of type <code>png</code>, <code>svg</code>, <code>css</code> or <code>js</code> (use the filter buttons <span class="ui">Img</span>, <span class="ui">CSS</span> or <span class="ui">JS</span> to find one).</li>
+    <li>Open the <span class="ui">Headers</span> tab. Under <span class="ui">Response Headers</span> find <code>cache-control</code>. It may say something like <code>max-age=...</code> (seconds the copy stays fresh) or <code>no-cache</code> / <code>no-store</code> (do not reuse blindly or do not keep). Also look for <code>etag</code> and <code>last-modified</code>, which let the browser ask "has it changed?" cheaply.</li>
+    <li>Write in your notes: the file, its <code>cache-control</code> value, and how many days or hours <code>max-age</code> means.</li>
+  </ol>
+
+  <h3>B. Catch the browser cache in the act</h3>
+  <ol class="steps">
+    <li>Keep the Network panel open. Reload the page again with <kbd>F5</kbd> (a normal reload).</li>
+    <li>Look at the <b>Size</b> column. Some rows now say <code>(memory cache)</code> or <code>(disk cache)</code> instead of a size in kB. That means the browser did <b>not</b> go to the network: it used its own saved copy. The <b>Time</b> column shows about 0 ms for those rows. (The labels can differ a little by Chrome version.)</li>
+    <li>Count how many rows came from cache and how many from the network. Write the two numbers down.</li>
+    <li>Now tick the <span class="ui">Disable cache</span> checkbox at the top of the Network panel. (DevTools must stay open for it to work.)</li>
+    <li>Reload with <kbd>F5</kbd> again. The Size column now shows real sizes for almost everything, and the total transferred at the bottom of the panel is bigger. Count again: cached rows should be (almost) zero.</li>
+    <li>Untick <span class="ui">Disable cache</span>, reload twice, and see the cache come back.</li>
+    <li>Look at the status bar at the bottom of the Network panel: it shows "x requests, y kB transferred". Compare the transferred size with cache on and off. This is the <b>speed and bandwidth</b> that caching saves.</li>
+  </ol>
+  <p class="tip">Developers tick <span class="ui">Disable cache</span> while testing so they always see their newest code. If a page looks "stuck on the old version", a stale cache is a classic reason: try <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd> (hard reload).</p>
+
+  <h3>C. Design a cache on paper</h3>
+  <ol class="steps">
+    <li>Scenario: a product page shows details for 100,000 products. 90% of views go to 1,000 popular products. The database is slow under load.</li>
+    <li>Write answers to: Which layer would you add first? (Redis cache-aside, plus CDN for images.) What is the key? (<code>product:{id}</code>.) What TTL? (Maybe 5 minutes; prices may need less.) How do you invalidate when the price changes? (Delete the key on update.) What if one hot product expires under load? (Use a lock or jittered TTL against a stampede.)</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Explain cache-aside in three steps.</summary><p>The app checks the cache. On a hit it returns the value. On a miss it reads the database, stores the result in the cache with a TTL, and returns it.</p></details>
+  <details><summary>What risk does write-behind have?</summary><p>Data is only in the cache until the background save happens. If the cache crashes first, those writes are lost.</p></details>
+  <details><summary>What is a cache stampede and how do you reduce it?</summary><p>A hot item expires and many requests rebuild it at once, hammering the database. Use a lock so only one rebuilds, add random jitter to TTLs, or refresh before expiry.</p></details>
+  <details><summary>Your hit ratio is 30%. What could be wrong?</summary><p>Maybe the TTL is too short, the cache is too small and evicts items too soon, or you cache items that are rarely requested twice.</p></details>
+  <details><summary>Would you cache a user's bank balance for 10 minutes? Why or why not?</summary><p>No. It must be accurate, and stale values could mislead or allow overspending. Cache data that tolerates staleness, like product descriptions.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would use cache-aside with Redis: check the cache, on a miss read the database and store it with a TTL. I would invalidate by deleting the key on writes."</blockquote>
+  <blockquote>"To avoid a stampede on hot keys I would add jitter to the TTL and use a lock so only one request rebuilds the value."</blockquote>
+  <p><b>Common follow-up question:</b> How do you keep the cache consistent with the database?</p>
+  <p>Perfect consistency is costly. Usually I accept a short staleness bounded by a TTL, and on writes I update the database first and then delete the cache key so the next read reloads fresh data. For data that must be exact, I skip the cache or read from the primary.</p>
+</section>
+
+</main>
+</body>
+</html>

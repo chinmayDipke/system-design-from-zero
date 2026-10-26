@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scaling: vertical vs horizontal</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-4">
+<main class="lesson">
+
+<section class="story">
+  <h2>One chai stall, then many</h2>
+  <p>Rajan runs a chai stall. Business booms and the queue grows. Option one: buy a <b>bigger stove</b> and hire one super-fast helper. That works until the stove cannot get any bigger. Option two: open <b>three more stalls</b> and let customers go to any of them.</p>
+  <p>The second option has a catch. If Rajan remembers every regular's order in his own head ("Meena likes less sugar"), then Meena must always go back to <i>his</i> stall. The fix is to write regular customers' notes in a <b>shared register</b> that all the stalls can read. Then any stall can serve anyone.</p>
+</section>
+
+<section class="explain">
+  <h2>Scale up or scale out</h2>
+
+  <h3>Vertical scaling (scale up)</h3>
+  <p>Give the <b>same machine</b> more power: more CPU, RAM, a faster disk. Easy: no code change. But it has limits: the biggest machine is expensive and finite, upgrading often needs downtime, and it is still <b>one machine</b>: if it dies, everything dies.</p>
+
+  <h3>Horizontal scaling (scale out)</h3>
+  <p>Add <b>more machines</b> and spread the work. In theory the ceiling is very high, it is usually cheaper (many small machines), and if one dies the others carry on. The cost is complexity: you need something to split the traffic (a load balancer, next lesson), and your servers must be built the right way.</p>
+  <table>
+    <tr><th></th><th>Vertical (up)</th><th>Horizontal (out)</th></tr>
+    <tr><td>How</td><td>Bigger machine</td><td>More machines</td></tr>
+    <tr><td>Code changes</td><td>Usually none</td><td>Servers must be stateless</td></tr>
+    <tr><td>Limit</td><td>Hard ceiling, cost climbs steeply</td><td>Very high</td></tr>
+    <tr><td>If one machine fails</td><td>Everything is down</td><td>Others keep serving</td></tr>
+    <tr><td>Good first move?</td><td>Yes, simplest</td><td>When you hit limits or need availability</td></tr>
+  </table>
+
+  <h3>Why stateless servers matter</h3>
+  <p><b>State</b> is anything a server remembers between requests: who is logged in, what is in your cart, a half-uploaded file. A <b>stateless</b> server keeps <b>nothing</b> about the user between requests; each request carries or looks up everything it needs.</p>
+  <p>Why it matters: with three servers behind a load balancer, your first request may hit server A and your second hit server B. If your login lived only in A's memory, B says "who are you?" and logs you out. If servers are stateless, <b>any server can handle any request</b>, so adding or removing servers is easy.</p>
+
+  <h3>Where does the state go?</h3>
+  <ul>
+    <li><b>Database:</b> permanent data such as users, orders, carts you want to keep.</li>
+    <li><b>Shared cache (Redis):</b> fast, temporary data such as sessions, rate-limit counters.</li>
+    <li><b>Sessions:</b> either a <b>session id</b> in a cookie that points to data stored in Redis or the database, or a <b>JWT</b> (a signed token the client carries, so the server stores nothing). JWT is easy to scale, but you cannot easily revoke one before it expires.</li>
+    <li><b>Files:</b> uploads go to object storage (a later lesson), never to one server's local disk.</li>
+  </ul>
+
+  <h3>Autoscaling</h3>
+  <p><b>Autoscaling</b> adds or removes servers automatically based on a signal, such as CPU above 70% or requests per second. You save money at night and survive a sudden spike (a sale, an IPL final). It needs stateless servers and takes a minute or two to start new ones, so a very sharp spike can still hurt; keep some spare capacity.</p>
+
+  <h3>The database is usually the real bottleneck</h3>
+  <p>App servers are easy to clone because they hold no state. The database holds the truth, so it is <b>hard</b> to clone. When traffic grows, the app tier scales out happily and then all those servers hammer one database. That is why the next lessons are about caching, replication and sharding: ways of taking pressure off the database.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>Scale <b>up first</b> if the system is small: it is the cheapest in effort. Scale <b>out</b> for availability and growth.</li>
+    <li>Stateless design costs extra lookups (Redis or database on each request), a small price for flexibility.</li>
+    <li>More machines means more things to monitor, deploy and debug.</li>
+  </ul>
+  <p class="tip">In an interview, never just say "we scale horizontally". Say what makes it possible: "the app tier is stateless, sessions are in Redis, and the database is the part we handle with replicas and caching."</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 330" role="img" aria-label="Users send requests to a load balancer, which spreads them over three stateless app servers, which all share one database and one Redis">
+      <defs><marker id="ar-m2-4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="135" width="105" height="60" rx="8"/>
+        <rect x="160" y="135" width="115" height="60" rx="8"/>
+        <rect x="325" y="30" width="130" height="55" rx="8"/>
+        <rect x="325" y="137" width="130" height="55" rx="8"/>
+        <rect x="325" y="245" width="130" height="55" rx="8"/>
+        <rect x="505" y="55" width="125" height="60" rx="8"/>
+        <rect x="505" y="215" width="125" height="60" rx="8"/>
+        <path d="M118 165 H157" marker-end="url(#ar-m2-4)"/>
+        <path d="M278 155 L322 63" marker-end="url(#ar-m2-4)"/>
+        <path d="M278 165 H322" marker-end="url(#ar-m2-4)"/>
+        <path d="M278 175 L322 267" marker-end="url(#ar-m2-4)"/>
+        <path d="M458 57 L502 80" marker-end="url(#ar-m2-4)"/>
+        <path d="M458 165 L502 100" marker-end="url(#ar-m2-4)"/>
+        <path d="M458 170 L502 235" marker-end="url(#ar-m2-4)"/>
+        <path d="M458 273 L502 258" marker-end="url(#ar-m2-4)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="62" y="160" font-size="15" font-weight="700">1. Users</text>
+        <text x="62" y="179" font-size="13">many phones</text>
+        <text x="217" y="158" font-size="15" font-weight="700">2. Load</text>
+        <text x="217" y="177" font-size="15" font-weight="700">balancer</text>
+        <text x="390" y="54" font-size="15" font-weight="700">3. App server A</text>
+        <text x="390" y="73" font-size="13">stateless</text>
+        <text x="390" y="161" font-size="15" font-weight="700">3. App server B</text>
+        <text x="390" y="180" font-size="13">stateless</text>
+        <text x="390" y="269" font-size="15" font-weight="700">3. App server C</text>
+        <text x="390" y="288" font-size="13">stateless</text>
+        <text x="567" y="80" font-size="15" font-weight="700">4. Database</text>
+        <text x="567" y="99" font-size="13">shared truth</text>
+        <text x="567" y="240" font-size="15" font-weight="700">4. Redis</text>
+        <text x="567" y="259" font-size="13">sessions, cache</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 to 4: users hit a load balancer (step 2), which picks any of the identical app servers (step 3). All state lives in the shared stores (step 4), so any server can answer any request.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-4 scale-out.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+vertical+vs+horizontal+scaling" target="_blank" rel="noopener">YouTube search: "ByteByteGo vertical vs horizontal scaling"</a>
+      <span class="meta">Short. Watch it all.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+scalability+system+design+stateless+servers" target="_blank" rel="noopener">YouTube search: "Gaurav Sen scalability system design stateless servers"</a>
+      <span class="meta">Pick one result. Watch the part that explains why servers should be stateless.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#horizontal-scaling" target="_blank" rel="noopener">System Design Primer: horizontal scaling</a>
+      <span class="meta">Read the horizontal scaling section and its "disadvantages" list.</span></li>
+    <li><a href="https://aws.amazon.com/autoscaling/" target="_blank" rel="noopener">AWS: Application Auto Scaling</a>
+      <span class="meta">Skim the top of the page: a rule watches a metric and adds or removes servers.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+
+  <h3>A. Draw: one server grows into many</h3>
+  <ol class="steps">
+    <li>Open <code>excalidraw.com</code>. If an old drawing is there, clear it: <span class="ui">☰</span> menu, <span class="ui">Reset the canvas</span>, <span class="ui">Confirm</span>.</li>
+    <li><b>Draw v1 (top of the page).</b> Press <kbd>R</kbd> and draw three boxes in a row, labelled <code>Users</code>, <code>One server</code> and <code>Database</code>. Press <kbd>A</kbd> and draw an arrow from Users to the server and from the server to the database.</li>
+    <li>Write under it, with the text tool <kbd>T</kbd>: <code>Problem: one server = limit + single point of failure</code>.</li>
+    <li><b>Draw v2 (below).</b> Copy your Users box (<kbd>V</kbd>, click it, <kbd>Ctrl</kbd> + <kbd>D</kbd>), then add a box <code>Load balancer</code>, three boxes <code>App server 1</code>, <code>App server 2</code>, <code>App server 3</code>, one <code>Database</code> and one <code>Redis (sessions)</code>.</li>
+    <li>Draw arrows: Users to Load balancer; Load balancer to each of the three servers; each server to Database; each server to Redis. Hold <kbd>Shift</kbd> for straight lines.</li>
+    <li>Add a note: <code>Servers are stateless. State lives in DB + Redis.</code></li>
+    <li>Save as <code>m2-4 scale-out.excalidraw</code>: <span class="ui">☰</span>, <span class="ui">Save to…</span>, <span class="ui">Save to disk</span>.</li>
+    <li>Cover the lesson and explain your drawing out loud in 1 minute: what happens if server 2 dies? (The load balancer stops sending it traffic; users do not notice.)</li>
+  </ol>
+
+  <h3>B. Spot the state</h3>
+  <p>For each item, decide: <b>can the app server keep it in its own memory or disk safely when there are 3 servers?</b> Write "yes" or "no, move it to ___".</p>
+  <ol class="steps">
+    <li>A logged-in user's session. (No: use Redis, the database, or a JWT.)</li>
+    <li>A profile picture the user just uploaded, saved to the server's <code>/uploads</code> folder. (No: object storage; another server will not have that file.)</li>
+    <li>A cached copy of the product list that expires in 60 seconds. (Mostly yes, if a stale copy is fine and each server may differ slightly. For exact shared consistency, use Redis.)</li>
+    <li>The shopping cart of a logged-in user. (No: database or Redis, so it is the same on every server and survives restarts.)</li>
+    <li>A counter of "requests per minute for this user" used for rate limiting. (No: if each server counts separately, a user gets three times the limit; use Redis.)</li>
+    <li>The compiled application code and config. (Yes: every server has the same copy; that is how they are deployed.)</li>
+  </ol>
+  <p class="tip">Check your answers against the "Where does the state go?" list above.</p>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is the difference between scaling up and scaling out?</summary><p>Up: a bigger single machine. Out: more machines sharing the load.</p></details>
+  <details><summary>Why must servers be stateless to scale out?</summary><p>Because the load balancer may send any request to any server. If a server keeps user data in its own memory, other servers do not have it and the user's experience breaks.</p></details>
+  <details><summary>Where do sessions live in a scaled-out system?</summary><p>In a shared store such as Redis or the database (session id in a cookie), or inside a signed JWT that the client carries.</p></details>
+  <details><summary>Why is the database usually the bottleneck?</summary><p>App servers are easy to clone but they all depend on the one database, which holds the shared truth and is harder to copy or split.</p></details>
+  <details><summary>A startup with 500 users asks whether to build a 10-server cluster. What do you advise?</summary><p>No. Start with one reasonably sized server (scale up) and a managed database. Keep the code stateless so scaling out is easy later. Do not pay the complexity cost before you need it.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would keep the app servers stateless, put sessions in Redis, and scale them horizontally behind a load balancer, with autoscaling on CPU or request rate."</blockquote>
+  <blockquote>"The database is the harder part to scale, so I would add caching and read replicas first, and shard only if I must."</blockquote>
+  <p><b>Common follow-up question:</b> When would you scale vertically instead?</p>
+  <p>When the system is small or the bottleneck is a single stateful component like the primary database. A bigger machine is the quickest fix with no code change. I would still plan for horizontal growth because a single machine is a single point of failure.</p>
+</section>
+
+</main>
+</body>
+</html>

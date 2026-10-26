@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rate limiting</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-12">
+<main class="lesson">
+
+<section class="story">
+  <h2>The Tatkal counter and the one-sweet rule</h2>
+  <p>At a railway reservation counter, one person cannot book 50 tickets in a row while 100 others wait. The clerk says: "Four tickets per person, then go to the back of the line." Everyone gets a fair turn, and the clerk does not collapse.</p>
+  <p>At a wedding buffet, the caterer tells the kids: "One sweet each for now. Come back in ten minutes for more." Nobody is starved, and the sweets do not run out in the first five minutes.</p>
+  <p>A <b>rate limiter</b> is that clerk. It says "you may make this many requests in this much time", and politely refuses the extra ones.</p>
+</section>
+
+<section class="explain">
+  <h2>Saying "slow down" to clients</h2>
+
+  <h3>Why limit</h3>
+  <ul>
+    <li><b>Abuse:</b> stop bots that guess passwords or scrape your whole site; blunt simple denial-of-service floods.</li>
+    <li><b>Fairness:</b> one heavy user should not slow everyone else.</li>
+    <li><b>Cost and safety:</b> each call may cost money (an AI model, an SMS) or load (a database). A limit protects both.</li>
+  </ul>
+
+  <h3>The algorithms</h3>
+  <table>
+    <tr><th>Algorithm</th><th>How it works</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Fixed window</b></td><td>Count requests in each clock window (say each minute). Over the limit, block until the next window.</td><td>Very simple, tiny memory</td><td>Burst at the edge: 100 at 10:00:59 and 100 at 10:01:00 gives 200 in 2 seconds</td></tr>
+    <tr><td><b>Sliding window log</b></td><td>Keep a timestamp for every request; count those in the last 60 seconds</td><td>Exact</td><td>Memory heavy: one entry per request</td></tr>
+    <tr><td><b>Sliding window counter</b></td><td>Combine the current and previous fixed window counts, weighted by how far you are into the current one</td><td>Smooth and cheap, a close estimate</td><td>Approximate</td></tr>
+    <tr><td><b>Token bucket</b></td><td>A bucket holds up to N tokens and refills at a steady rate; each request takes a token. No tokens, no entry.</td><td>Allows short bursts but keeps the average rate; widely used</td><td>Two numbers to tune (size, refill rate)</td></tr>
+    <tr><td><b>Leaky bucket</b></td><td>Requests enter a queue that drains at a constant rate; if the bucket is full, new ones are dropped</td><td>Smooth, steady output</td><td>Bursts wait or are dropped; recent requests can be delayed</td></tr>
+  </table>
+
+  <h3>Where to put it</h3>
+  <ul>
+    <li><b>At the gateway or edge</b> (API gateway, reverse proxy, CDN): cheap to enforce, protects everything behind it, one place for rules. Best for blunt per-IP or per-API-key limits.</li>
+    <li><b>In the app:</b> when the rule needs business knowledge, such as "5 password attempts per account per hour" or "free users get 10 AI requests a day".</li>
+    <li>Often <b>both</b>: coarse at the edge, specific in the app.</li>
+  </ul>
+
+  <h3>What the client sees: 429 and Retry-After</h3>
+  <p>When blocked, reply <code>429 Too Many Requests</code>. Add a <code>Retry-After</code> header saying how many seconds to wait, and many APIs also send headers showing the limit and what remains. A good client backs off and retries after that time instead of hammering.</p>
+
+  <h3>Distributed counters in Redis</h3>
+  <p>With many app servers, a per-server counter is wrong: three servers would each allow the full limit. The counter must be <b>shared</b>, and Redis is the usual place, because it is fast and <code>INCR</code> is <b>atomic</b> (two servers incrementing at the same moment never lose a count). A fixed-window limiter is just two commands: <code>INCR</code> a key that includes the window, and <code>EXPIRE</code> it so old windows clean themselves up. For more exact algorithms people use small Lua scripts so check-and-update happens in one step.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Strict vs smooth:</b> fixed window is simplest but bursty at the edges; token bucket is friendlier to real traffic.</li>
+    <li><b>Extra hop:</b> each request now needs a Redis call. Keep it fast, and decide what happens if Redis is down: <b>fail open</b> (allow, risking abuse) or <b>fail closed</b> (block, risking an outage).</li>
+    <li><b>Who is "a user":</b> IP addresses are shared (offices, mobile networks) and easy to change; an API key or account id is fairer.</li>
+  </ul>
+  <p class="tip">Always name the key you limit on (user id, API key, IP), the limit (for example 100 per minute), and the response (429 with Retry-After).</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="A client request reaches a rate limiter that increments a counter in Redis; if under the limit the request passes to the app, otherwise the client gets a 429 reply">
+      <defs><marker id="ar-m2-12" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="105" width="110" height="60" rx="8"/>
+        <rect x="200" y="105" width="160" height="60" rx="8"/>
+        <rect x="200" y="225" width="160" height="55" rx="8"/>
+        <rect x="520" y="35" width="110" height="60" rx="8"/>
+        <rect x="520" y="180" width="110" height="60" rx="8"/>
+        <path d="M123 135 H197" marker-end="url(#ar-m2-12)"/>
+        <path d="M280 168 V222" marker-start="url(#ar-m2-12)" marker-end="url(#ar-m2-12)"/>
+        <path d="M363 120 L517 70" marker-end="url(#ar-m2-12)"/>
+        <path d="M363 150 L517 205" marker-end="url(#ar-m2-12)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="65" y="130" font-size="15" font-weight="700">Client</text>
+        <text x="65" y="149" font-size="13">1. request</text>
+        <text x="280" y="130" font-size="15" font-weight="700">Rate limiter</text>
+        <text x="280" y="149" font-size="13">gateway or app</text>
+        <text x="280" y="250" font-size="15" font-weight="700">Redis</text>
+        <text x="280" y="269" font-size="13">rl:user1:minute = 3</text>
+        <text x="335" y="200" font-size="13" text-anchor="start">2. INCR the counter</text>
+        <text x="575" y="60" font-size="15" font-weight="700">App</text>
+        <text x="575" y="79" font-size="13">handles it</text>
+        <text x="575" y="205" font-size="15" font-weight="700">Client gets</text>
+        <text x="575" y="224" font-size="13">429 + Retry-After</text>
+        <text x="440" y="58" font-size="13">3. under limit: pass</text>
+        <text x="445" y="232" font-size="13">4. over: block</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 and 2: each request bumps a shared counter in Redis. Step 3: under the limit it goes through. Step 4: over the limit the client gets a 429 and is told when to retry.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-12 rate-limiter.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+rate+limiting+algorithms+explained" target="_blank" rel="noopener">YouTube search: "ByteByteGo rate limiting algorithms explained"</a>
+      <span class="meta">Short. Watch it all and match each algorithm to the table.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+design+a+rate+limiter" target="_blank" rel="noopener">YouTube search: "Gaurav Sen design a rate limiter"</a>
+      <span class="meta">Pick one result. Watch the part about token bucket and the distributed counter.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429" target="_blank" rel="noopener">MDN: 429 Too Many Requests</a>
+      <span class="meta">Read it all; it is short. Note the <code>Retry-After</code> header.</span></li>
+    <li><a href="https://upstash.com/docs/redis/sdks/ratelimit-ts/overview" target="_blank" rel="noopener">Upstash docs: Ratelimit overview</a>
+      <span class="meta">See how a ready-made library offers fixed window, sliding window and token bucket. You are building the simplest one by hand below.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 20 minutes)</h2>
+  <p>You will act as a rate limiter that allows <b>5 requests per minute</b> for <code>user1</code>, using the Upstash Redis database from the CDN and Redis lesson. (If you do not have one, create it with the steps in that lesson first.)</p>
+
+  <h3>A. Open the CLI</h3>
+  <ol class="steps">
+    <li>Open <code>console.upstash.com</code>, click your Redis database, and open its <span class="ui">CLI</span> tab (or the command box in the <span class="ui">Data Browser</span>).</li>
+    <li>Look at the clock on your screen and note the current time as hours and minutes. We use it in the key so each minute gets its own counter. For example, if it is 10:15, the key is <code>rl:user1:1015</code>. Use your own number in all commands below.</li>
+  </ol>
+
+  <h3>B. Count requests</h3>
+  <ol class="steps">
+    <li>Request 1 arrives. Type <code>INCR rl:user1:1015</code>. The result is <code>1</code>.</li>
+    <li>This is the first request of the window, so set the key to expire after 60 seconds: <code>EXPIRE rl:user1:1015 60</code>. The result is <code>1</code>. (Normally you set the expiry only when <code>INCR</code> returns 1.)</li>
+    <li>Request 2: <code>INCR rl:user1:1015</code> gives <code>2</code>. Do not set EXPIRE again.</li>
+    <li>Do the same for requests 3, 4 and 5. You get <code>3</code>, <code>4</code>, <code>5</code>. The rule is "allow if the number is 5 or less", so all five were allowed.</li>
+    <li>Request 6: <code>INCR rl:user1:1015</code> gives <code>6</code>. That is over the limit, so the limiter would answer <b>429 Too Many Requests</b>. Try a 7th: <code>7</code>, blocked again.</li>
+    <li>Check how long the block lasts: <code>TTL rl:user1:1015</code>. It shows the seconds left, for example <code>31</code>. That is your <code>Retry-After</code>.</li>
+  </ol>
+
+  <h3>C. Watch it reset</h3>
+  <ol class="steps">
+    <li>Wait until the TTL reaches 0 (re-run <code>TTL rl:user1:1015</code> now and then). When the key expires, <code>TTL</code> returns <code>-2</code> (no such key).</li>
+    <li>Run <code>GET rl:user1:1015</code>. The result is <code>(nil)</code>: the counter vanished by itself.</li>
+    <li>Run <code>INCR rl:user1:1015</code> again. It is back to <code>1</code>, and the user is allowed again. The window has reset.</li>
+  </ol>
+  <p class="tip">A real limiter puts the minute in the key automatically. That is why we typed the time into the key: a new minute means a new key and a fresh counter, and the old one disappears through <code>EXPIRE</code>.</p>
+
+  <h3>D. Find the weakness</h3>
+  <ol class="steps">
+    <li>Imagine the window changes at 10:16:00. A user sends 5 requests at 10:15:59 and 5 more at 10:16:00. Is each window within its limit? (Yes, 5 and 5.) How many requests arrived in those 2 seconds? (10, twice the limit.) This is the fixed window <b>edge burst</b>.</li>
+    <li>Write which algorithm from the table fixes it (sliding window counter, sliding window log or token bucket) and its price (more memory or more logic).</li>
+    <li>Think: what if the app crashed right after <code>INCR</code> and before <code>EXPIRE</code>? (The key would never expire, and the user would be blocked forever. Real code does both steps in one atomic step, for example with a small script, or checks that the TTL is set.)</li>
+  </ol>
+
+  <h3>E. Clean up</h3>
+  <ol class="steps">
+    <li>Delete the test key: <code>DEL rl:user1:1015</code>.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Give two reasons to rate limit.</summary><p>Protect against abuse and bots, ensure fairness between users, and control cost or load on expensive resources.</p></details>
+  <details><summary>What is the weakness of the fixed window algorithm?</summary><p>A burst at the boundary of two windows can let through up to twice the limit within a short time.</p></details>
+  <details><summary>How does token bucket differ from leaky bucket?</summary><p>Token bucket allows bursts up to the bucket size while keeping an average rate. Leaky bucket releases requests at a constant steady rate, smoothing bursts, and drops overflow.</p></details>
+  <details><summary>What should the server return when a client is limited?</summary><p><code>429 Too Many Requests</code>, with a <code>Retry-After</code> header telling how long to wait.</p></details>
+  <details><summary>Why do you need Redis for rate limiting with several app servers?</summary><p>The counter must be shared. Per-server counters would each allow the full limit. Redis is fast and <code>INCR</code> is atomic.</p></details>
+  <details><summary>Where would you enforce "100 requests per minute per IP", and where "5 password attempts per account"?</summary><p>The IP limit at the gateway or edge (cheap, blunt, protects everything). The password limit in the app, because it needs account knowledge.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would rate limit per API key at the gateway with a token bucket kept in Redis, and return 429 with Retry-After."</blockquote>
+  <blockquote>"For sensitive actions like login I add a stricter, per-account limit inside the app."</blockquote>
+  <p><b>Common follow-up question:</b> What if Redis is down?</p>
+  <p>Decide per endpoint. For abuse-prone ones such as login, fail closed (block) or fall back to a small local limit. For normal reads, fail open so users are not locked out. Either way, alert on it, and run Redis with a replica.</p>
+</section>
+
+</main>
+</body>
+</html>

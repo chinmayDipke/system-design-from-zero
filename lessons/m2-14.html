@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search and inverted indexes</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-14">
+<main class="lesson">
+
+<section class="story">
+  <h2>The index at the back of the book, again</h2>
+  <p>You are looking for every page that mentions "monsoon" in a 400-page cookbook. Reading every page takes an hour. Instead you open the <b>index at the back</b>: it is sorted by <b>word</b>, and next to each word it lists the pages: "monsoon: 12, 87, 203". Done in ten seconds.</p>
+  <p>The normal order of a book is page to words. The index flips it: <b>word to pages</b>. That flip is the heart of how search engines work. A good index also treats "pakora" and "pakoras" as the same entry, and lists the most useful pages first.</p>
+</section>
+
+<section class="explain">
+  <h2>Why LIKE is slow, and what replaces it</h2>
+
+  <h3>The problem with <code>LIKE '%word%'</code></h3>
+  <p>A query such as <code>WHERE body LIKE '%monsoon%'</code> has to look inside <b>every row's text</b>, because the word could be anywhere. A normal B-tree index cannot help when the pattern starts with <code>%</code>. On a million articles it reads a million texts. It also has no idea of <b>relevance</b> (which result is best), and it does not know that "run", "runs" and "running" are the same word.</p>
+
+  <h3>The inverted index</h3>
+  <p>A search engine does the work <b>once, when a document is saved</b>, so that searching is cheap. It builds an <b>inverted index</b>: a dictionary of words, each pointing to the list of documents that contain it (a <b>posting list</b>).</p>
+  <ul>
+    <li><b>Tokenizing:</b> split the text into words: "Fast bowling, again!" becomes fast, bowling, again.</li>
+    <li><b>Normalizing:</b> lowercase everything, remove punctuation, drop very common <b>stop words</b> (the, a, is).</li>
+    <li><b>Stemming:</b> chop words to a root so "running", "runs" and "run" match: bowling becomes bowl. It is rough: "runners" may become "runner", not "run".</li>
+    <li><b>Lookup:</b> to search "fast bowl", find the lists for each word and <b>intersect</b> them: the documents that contain both.</li>
+  </ul>
+
+  <h3>Ranking</h3>
+  <p>Many documents may match, so the engine sorts them by relevance. <b>TF-IDF</b> scores a document higher if the search word appears often in it (term frequency) and the word is rare across all documents (inverse document frequency). <b>BM25</b> is the modern refinement of that idea and is the default in most engines. In one line: <i>frequent in this document, rare in general, and not just because the document is very long</i>.</p>
+
+  <h3>Elasticsearch and OpenSearch as a concept</h3>
+  <p><b>Elasticsearch</b> (and its fork <b>OpenSearch</b>) is a server built around inverted indexes, spread over many machines (using ideas from the sharding and replication lessons). It gives full-text search, typo tolerance, filters, highlighting, and "facets" (counts by category) over an HTTP API. You usually do not make it your main database: you keep the truth in your main database and copy data into the search engine. Smaller options exist (Meilisearch, Typesense), and Postgres has built-in full-text search that is enough for many apps.</p>
+
+  <h3>Keeping search in sync with the main database</h3>
+  <p>Now there are two copies of the data, so they can disagree. Two approaches:</p>
+  <table>
+    <tr><th>Approach</th><th>How</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Dual writes</b></td><td>The app writes to the database <i>and</i> the search engine in the same code path</td><td>Simple to start</td><td>If one write fails, they drift apart; no transaction spans both; race conditions</td></tr>
+    <tr><td><b>Change data capture (CDC)</b></td><td>The database's change log is read by a tool and streamed (often through a queue like Kafka) into the search index</td><td>One source of truth; reliable; replayable</td><td>More moving parts; the index is slightly behind (eventually consistent)</td></tr>
+  </table>
+  <p>A simpler middle road: write to the database only, push an "updated" message to a queue, and have a worker update the index (with retries), plus an occasional full re-index to repair drift.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Speed vs freshness:</b> a search index is quick to read but updated slightly after the main data, so a new item may appear in search a moment late.</li>
+    <li><b>Extra system:</b> a search cluster costs money and time to operate. Start with the database's own full-text search; move to Elasticsearch/OpenSearch when you need scale, typo tolerance or rich ranking.</li>
+    <li><b>Storage:</b> the index is extra data on top of the original.</li>
+  </ul>
+  <p class="tip">Do not say "just use Elasticsearch" first. Say "Postgres full-text search for now; a dedicated engine when search becomes a core feature or outgrows the database", then explain how you would keep it in sync.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 280" role="img" aria-label="Four documents are tokenized into an inverted index that maps each word to document ids. A search for fast bowl looks up both words and intersects the lists to give documents D1 and D4">
+      <defs><marker id="ar-m2-14" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="30" width="200" height="170" rx="8"/>
+        <rect x="270" y="30" width="170" height="170" rx="8"/>
+        <rect x="510" y="30" width="120" height="60" rx="8"/>
+        <rect x="510" y="140" width="120" height="60" rx="8"/>
+        <path d="M213 115 H267" marker-end="url(#ar-m2-14)"/>
+        <path d="M507 60 H443" marker-end="url(#ar-m2-14)"/>
+        <path d="M443 170 H507" marker-end="url(#ar-m2-14)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="110" y="52" font-size="15" font-weight="700" text-anchor="middle">Documents</text>
+        <text x="25" y="82" font-size="14">D1  fast bowling spell</text>
+        <text x="25" y="110" font-size="14">D2  running shoes guide</text>
+        <text x="25" y="138" font-size="14">D3  monsoon chai recipe</text>
+        <text x="25" y="166" font-size="14">D4  fast bowlers train</text>
+        <text x="355" y="52" font-size="15" font-weight="700" text-anchor="middle">Inverted index</text>
+        <text x="285" y="82" font-size="14">bowl  : D1, D4</text>
+        <text x="285" y="108" font-size="14">fast  : D1, D4</text>
+        <text x="285" y="134" font-size="14">run   : D2</text>
+        <text x="285" y="160" font-size="14">chai  : D3</text>
+        <text x="285" y="186" font-size="14">shoe  : D2</text>
+        <text x="240" y="106" font-size="13" text-anchor="middle">1. build</text>
+        <text x="570" y="55" font-size="15" font-weight="700" text-anchor="middle">Search</text>
+        <text x="570" y="75" font-size="13" text-anchor="middle">"fast bowl"</text>
+        <text x="475" y="52" font-size="13" text-anchor="middle">2. ask</text>
+        <text x="570" y="165" font-size="15" font-weight="700" text-anchor="middle">Result</text>
+        <text x="570" y="185" font-size="13" text-anchor="middle">D1, D4</text>
+        <text x="475" y="162" font-size="13" text-anchor="middle">3. answer</text>
+        <text x="320" y="235" font-size="14" text-anchor="middle">4. Both words give D1, D4; keep the documents in both lists, then rank them.</text>
+        <text x="320" y="258" font-size="13" text-anchor="middle">Step 1 happens when a document is saved, so step 2 is fast.</text>
+      </g>
+    </svg>
+    <figcaption>Step 1: when documents are saved, their words are chopped to roots and put in the index. Steps 2 and 3: a query looks up its words in the index. Step 4: the lists are intersected and ranked.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-14 inverted-index.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+how+does+elasticsearch+work+inverted+index" target="_blank" rel="noopener">YouTube search: "ByteByteGo how does elasticsearch work inverted index"</a>
+      <span class="meta">Short. Watch the part that builds the inverted index.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hussein+Nasser+full+text+search+postgres+tsvector" target="_blank" rel="noopener">YouTube search: "Hussein Nasser full text search postgres tsvector"</a>
+      <span class="meta">Pick one result. Watch the part that explains tsvector and the GIN index.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.postgresql.org/docs/current/textsearch-intro.html" target="_blank" rel="noopener">PostgreSQL docs: Full text search introduction</a>
+      <span class="meta">Read the first two sections on what a document is and why "LIKE" is not enough.</span></li>
+    <li><a href="https://supabase.com/docs/guides/database/full-text-search" target="_blank" rel="noopener">Supabase docs: Full text search</a>
+      <span class="meta">Skim the examples of <code>to_tsvector</code> and <code>to_tsquery</code>.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+  <p>You will use Postgres's built-in full-text search in the Supabase SQL Editor. Open your practice project, click <span class="ui">SQL Editor</span> and <span class="ui">New query</span> for each step. (If a popup asks about Row Level Security, running without it is fine for this practice table.)</p>
+
+  <h3>A. Make a small table</h3>
+  <ol class="steps">
+    <li>Paste and run:
+      <pre><code>create table articles (
+  id bigint generated always as identity primary key,
+  title text,
+  body text
+);
+
+insert into articles (title, body) values
+ ('Cricket match report', 'India won the match by five wickets after a fast bowling spell'),
+ ('Running shoes guide', 'Best running shoes for beginners who run every morning'),
+ ('Monsoon recipes', 'Hot pakoras and chai are perfect when the rain keeps falling'),
+ ('Fast bowling tips', 'How fast bowlers train to bowl quickly and stay fit'),
+ ('Morning routine', 'Runners wake early to run before the city wakes up');</code></pre>
+      You should see "Success. No rows returned".</li>
+  </ol>
+
+  <h3>B. The slow way, and its limits</h3>
+  <ol class="steps">
+    <li>Run:
+      <pre><code>select title from articles where body ilike '%run%';</code></pre>
+      (<code>ilike</code> is a case-insensitive LIKE.) It matches the "Running shoes", "Morning routine" rows, but also anything containing the letters "run" inside another word. It checks every row's text, and it has no ranking.</li>
+  </ol>
+
+  <h3>C. See what tokenizing and stemming do</h3>
+  <ol class="steps">
+    <li>Run:
+      <pre><code>select to_tsvector('english', 'The runners were running quickly');</code></pre>
+      You should get something like <code>'quick':5 'run':4 'runner':2</code>. Notice: "the" and "were" (stop words) are gone, "quickly" became <code>quick</code>, "running" became <code>run</code>, and each word has a position number. This is what goes into the inverted index. "runners" became <code>runner</code>, not <code>run</code>: stemming is rough.</li>
+    <li>Run:
+      <pre><code>select to_tsquery('english', 'running');</code></pre>
+      The query word is stemmed the same way and shows as <code>'run'</code>. That is why it can match "run" in a document.</li>
+  </ol>
+
+  <h3>D. Search with a tsvector column and a GIN index</h3>
+  <ol class="steps">
+    <li>Add a search column that is filled automatically, and index it. <b>GIN</b> is the index type made for inverted-index style lookups:
+      <pre><code>alter table articles add column search tsvector
+  generated always as (
+    to_tsvector('english', coalesce(title, '') || ' ' || coalesce(body, ''))
+  ) stored;
+
+create index articles_search_idx on articles using gin (search);</code></pre>
+      Run it. Then open <span class="ui">Table Editor</span>, open <code>articles</code>, and look at the new <code>search</code> column: each row has its words and positions.</li>
+    <li>Search for two words that must both appear. The <code>&amp;</code> means AND :
+      <pre><code>select id, title
+from articles
+where search @@ to_tsquery('english', 'fast &amp; bowl');</code></pre>
+      You should get "Cricket match report" and "Fast bowling tips". The operator <code>@@</code> means "this document matches this query".</li>
+    <li>Search for "run":
+      <pre><code>select id, title
+from articles
+where search @@ to_tsquery('english', 'run');</code></pre>
+      "Running shoes guide" and "Morning routine" match (they contain run or running). "Runners" on its own would not, since it stems to "runner". That is how stemming can surprise you.</li>
+  </ol>
+
+  <h3>E. Rank the results</h3>
+  <ol class="steps">
+    <li>Run:
+      <pre><code>select title,
+       ts_rank(search, query) as rank
+from articles,
+     to_tsquery('english', 'fast | bowl') as query
+where search @@ query
+order by rank desc;</code></pre>
+      The <code>|</code> means OR. Rows that contain more of the words, or more often, get a higher <code>rank</code> and come first. Look at the numbers: the "Fast bowling tips" article should rank at or near the top. (Exact numbers may differ; the order is what matters.) <code>ts_rank</code> is Postgres's relevance score, in the spirit of TF-IDF and BM25.</li>
+    <li>Try a friendlier query style that handles plain text typed by users:
+      <pre><code>select title
+from articles
+where search @@ websearch_to_tsquery('english', 'fast bowling');</code></pre></li>
+  </ol>
+  <p class="tip">With only 5 rows Postgres will not bother with the index, since scanning is cheaper. The GIN index pays off with thousands or millions of rows. Use <code>explain</code> on a big table to see it.</p>
+
+  <h3>F. Clean up</h3>
+  <ol class="steps">
+    <li>Run <code>drop table articles;</code> to remove the practice table.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why is <code>LIKE '%word%'</code> slow on a big table?</summary><p>A leading wildcard stops a normal index from being used, so the database scans and reads the text of every row. It also gives no relevance ranking.</p></details>
+  <details><summary>What is an inverted index?</summary><p>A map from each word to the list of documents that contain it, built when documents are saved, like the index at the back of a book.</p></details>
+  <details><summary>What do tokenizing and stemming do?</summary><p>Tokenizing splits text into words. Stemming reduces words to a root (running to run) so different forms of a word match.</p></details>
+  <details><summary>What is BM25 in one line?</summary><p>A relevance score favouring documents where the word appears often, the word is rare across all documents, and length does not unfairly help. A refinement of TF-IDF.</p></details>
+  <details><summary>Compare dual writes with change data capture for syncing a search index.</summary><p>Dual writes are simple but can drift apart if one write fails. CDC reads the database's change log and streams it to the index, so the database stays the single source of truth, at the cost of more infrastructure and a small delay.</p></details>
+  <details><summary>You run a small blog with 5,000 posts on Postgres. Elasticsearch or Postgres full-text search?</summary><p>Postgres full-text search with a GIN index. It is enough, adds no extra system to operate and stays automatically in sync. Move to a dedicated engine if search becomes central or needs typo tolerance and heavy ranking.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"LIKE with a leading wildcard scans every row. I would use an inverted index, either Postgres full-text search with a GIN index or Elasticsearch, with BM25 ranking."</blockquote>
+  <blockquote>"The database stays the source of truth; I would feed the search index with change data capture or a queue and accept that it is eventually consistent."</blockquote>
+  <p><b>Common follow-up question:</b> A new product does not show up in search for a few seconds. Is that a bug?</p>
+  <p>No. The index is updated after the main write, so it is eventually consistent. I would keep the delay small and monitored, show the product by direct link immediately, and rebuild the index periodically to fix any drift.</p>
+</section>
+
+</main>
+</body>
+</html>

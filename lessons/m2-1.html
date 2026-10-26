@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APIs: REST, GraphQL, gRPC, WebSockets, webhooks</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m2-1">
+<main class="lesson">
+
+<section class="story">
+  <h2>The restaurant menu and the waiter</h2>
+  <p>In a restaurant you never walk into the kitchen. You read a <b>menu</b>, tell the <b>waiter</b> what you want, and the waiter brings the food. The menu lists what you are allowed to ask for, and the waiter carries your request to the kitchen and the answer back.</p>
+  <p>An <b>API</b> is that menu and waiter for programs. One program (your app) asks, another program (a server) answers, and both follow agreed rules, so neither needs to know how the other works inside.</p>
+  <p>But there are different kinds of restaurants. Some give a fixed thali. Some let you pick each item. Some call you when your table is ready. APIs have the same styles.</p>
+</section>
+
+<section class="explain">
+  <h2>Six ways programs talk</h2>
+  <p>In <a href="m1-3.html">Module 1</a> you saw that a client sends an HTTP request and the server sends a response. All the styles below sit on top of that idea, except where noted. Learn what each one is, and more importantly <b>when to pick it</b>.</p>
+
+  <h3>REST: resources and verbs</h3>
+  <p><b>REST</b> is the most common style. You think in <b>resources</b> (things with a name): users, posts, orders. Each has a URL, and the HTTP <b>verb</b> says what to do:</p>
+  <table>
+    <tr><th>Verb</th><th>Example</th><th>Meaning</th></tr>
+    <tr><td><code>GET</code></td><td><code>/posts/1</code></td><td>Read post 1</td></tr>
+    <tr><td><code>POST</code></td><td><code>/posts</code></td><td>Create a new post</td></tr>
+    <tr><td><code>PUT</code> / <code>PATCH</code></td><td><code>/posts/1</code></td><td>Replace / change part of post 1</td></tr>
+    <tr><td><code>DELETE</code></td><td><code>/posts/1</code></td><td>Delete post 1</td></tr>
+  </table>
+  <p><b>Status codes</b> tell the result: <code>200</code> OK, <code>201</code> created, <code>400</code> you sent something wrong, <code>401</code> not logged in, <code>403</code> not allowed, <code>404</code> not found, <code>429</code> too many requests, <code>500</code> the server broke. Data usually travels as <b>JSON</b>.</p>
+  <p><b>Pagination:</b> never return a million rows. Return a page, such as <code>/posts?page=2&amp;limit=20</code>, or better for big data a <b>cursor</b> (<code>?after=id123</code>) that means "continue after this item". Cursors stay correct even when new rows arrive.</p>
+  <p><b>Versioning:</b> once apps depend on your API you cannot change it freely. Put a version in the URL (<code>/v1/posts</code>) or a header, so old apps keep working while new ones use <code>/v2</code>.</p>
+
+  <h3>GraphQL: one endpoint, you pick the fields</h3>
+  <p>REST has many URLs. <b>GraphQL</b> has <b>one</b> endpoint, and the client sends a query describing exactly the fields it wants. This fixes two REST pains: <b>over-fetching</b> (the server sends 30 fields, your screen needs 3) and <b>under-fetching</b> (one screen needs 4 REST calls to assemble). The cost: caching is harder (every request is a POST to the same URL), and a careless query can be very expensive for the server.</p>
+
+  <h3>gRPC: fast and binary, for service to service</h3>
+  <p><b>gRPC</b> sends compact <b>binary</b> messages (using <b>protobuf</b>, a schema file that both sides share) over HTTP/2. It is smaller and faster than JSON, and it generates client code for you. Browsers do not speak it natively, so it is mostly used <b>between backend services</b>, not from a web page.</p>
+
+  <h3>WebSockets: a phone call instead of letters</h3>
+  <p>HTTP is letters: ask, then answer. A <b>WebSocket</b> is a <b>phone call</b>: one connection stays open and <b>either side can speak at any time</b>. Good for chat, live cricket scores, multiplayer games, live dashboards. The cost: every open connection uses server memory, so a million users means a million open connections to manage.</p>
+
+  <h3>Long polling and Server-Sent Events (SSE)</h3>
+  <p><b>Polling</b> is asking "anything new?" every few seconds. Wasteful. <b>Long polling</b> improves it: the server holds your request open until there is news (or a timeout), answers, and you immediately ask again. <b>SSE</b> keeps one HTTP connection open and the server <b>pushes</b> a stream of events, one way only (server to client). It is simpler than WebSockets when you only need updates flowing down, like notifications or a live log.</p>
+
+  <h3>Webhooks: they call you</h3>
+  <p>A <b>webhook</b> turns it around: <b>the server calls your URL</b> when something happens. Example: a payment provider calls <code>https://yourapp.com/payment-done</code> after the customer pays. You do not keep asking "did it pay yet?". Rules: check the signature (so nobody fakes the call), answer fast with <code>200</code>, and expect <b>retries</b>, so handle the same event twice safely.</p>
+
+  <h3>Which one when</h3>
+  <table>
+    <tr><th>Need</th><th>Pick</th><th>Why</th></tr>
+    <tr><td>Normal app or public API</td><td>REST</td><td>Simple, cacheable, everyone knows it</td></tr>
+    <tr><td>Many screens, many shapes of data, mobile apps</td><td>GraphQL</td><td>Client takes only what it needs</td></tr>
+    <tr><td>Backend services calling each other, high volume</td><td>gRPC</td><td>Small, fast, strict contracts</td></tr>
+    <tr><td>Chat, games, two-way live data</td><td>WebSockets</td><td>Both sides talk any time</td></tr>
+    <tr><td>Live updates in one direction</td><td>SSE (or long polling)</td><td>Simpler than WebSockets</td></tr>
+    <tr><td>Another company needs to tell you about an event</td><td>Webhook</td><td>No wasted polling</td></tr>
+  </table>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>REST</b> is easy but can over/under-fetch. <b>GraphQL</b> fixes that but moves complexity to the server.</li>
+    <li><b>Persistent connections</b> (WebSocket, SSE) feel instant but cost memory and make scaling harder (see the scaling lesson).</li>
+    <li><b>Do not default to the fancy one.</b> In an interview, start with REST and move to another only when you can name the problem it solves.</li>
+  </ul>
+  <p class="tip">Make writes safe to retry. A client may resend a <code>POST</code> after a timeout. An <b>idempotency key</b> (a unique id sent with the request) lets the server notice "already done" and not charge twice.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 330" role="img" aria-label="Three rows: a client asks a server and gets an answer (REST, GraphQL, gRPC); a browser and server talk both ways over a WebSocket; a payment provider calls your server with a webhook">
+      <defs><marker id="ar-m2-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="20" width="150" height="60" rx="8"/>
+        <rect x="475" y="20" width="150" height="60" rx="8"/>
+        <path d="M168 40 H472" marker-end="url(#ar-m2-1)"/>
+        <path d="M472 62 H168" marker-end="url(#ar-m2-1)" stroke-dasharray="6 5"/>
+        <rect x="15" y="125" width="150" height="60" rx="8"/>
+        <rect x="475" y="125" width="150" height="60" rx="8"/>
+        <path d="M168 155 H472" marker-start="url(#ar-m2-1)" marker-end="url(#ar-m2-1)"/>
+        <rect x="15" y="235" width="150" height="60" rx="8"/>
+        <rect x="475" y="235" width="150" height="60" rx="8"/>
+        <path d="M472 265 H168" marker-end="url(#ar-m2-1)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="90" y="46" font-size="15" font-weight="700">Client</text>
+        <text x="90" y="65" font-size="13">app or browser</text>
+        <text x="550" y="46" font-size="15" font-weight="700">Server</text>
+        <text x="550" y="65" font-size="13">your API</text>
+        <text x="320" y="34" font-size="14">1. Request: "give me post 1"</text>
+        <text x="320" y="78" font-size="14">2. Response: JSON</text>
+        <text x="90" y="151" font-size="15" font-weight="700">Browser</text>
+        <text x="90" y="170" font-size="13">stays connected</text>
+        <text x="550" y="151" font-size="15" font-weight="700">Server</text>
+        <text x="550" y="170" font-size="13">chat / live scores</text>
+        <text x="320" y="146" font-size="14">3. WebSocket: both talk any time</text>
+        <text x="90" y="261" font-size="15" font-weight="700">Your server</text>
+        <text x="90" y="280" font-size="13">has a public URL</text>
+        <text x="550" y="261" font-size="15" font-weight="700">Payment app</text>
+        <text x="550" y="280" font-size="13">other company</text>
+        <text x="320" y="258" font-size="14">4. Webhook: "payment done!"</text>
+        <text x="320" y="288" font-size="13">they call you, no polling</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 and 2: ask and answer (REST, GraphQL, gRPC). Step 3: an open line, both ways. Step 4: the arrow points at you, because the other side starts the call.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m2-1 apis.excalidraw</code> in your Module 2 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+REST+vs+GraphQL+vs+gRPC" target="_blank" rel="noopener">YouTube search: "ByteByteGo REST vs GraphQL vs gRPC"</a>
+      <span class="meta">Short. Watch it all and note one sentence for each style.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hussein+Nasser+websockets+vs+long+polling+vs+server+sent+events" target="_blank" rel="noopener">YouTube search: "Hussein Nasser websockets vs long polling vs server sent events"</a>
+      <span class="meta">Pick one result. Watch the part that compares how the connection stays open.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status" target="_blank" rel="noopener">MDN: HTTP response status codes</a>
+      <span class="meta">Skim the five groups (1xx to 5xx). Know 200, 201, 400, 401, 403, 404, 429, 500 by heart.</span></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API" target="_blank" rel="noopener">MDN: WebSockets API</a>
+      <span class="meta">Read only the introduction to see what problem it solves.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+  <p>You will call a free practice API, <code>jsonplaceholder.typicode.com</code>. It holds fake blog posts. Nothing you do there changes anything real.</p>
+
+  <h3>A. Call it from Command Prompt with curl</h3>
+  <ol class="steps">
+    <li>Press <kbd>⊞ Win</kbd>, type <code>cmd</code>, press <kbd>Enter</kbd>.</li>
+    <li>Type this and press <kbd>Enter</kbd>. (Use <code>curl.exe</code>, with the <code>.exe</code>, so you do not hit a different command of the same name in PowerShell.)
+      <pre><code>curl.exe https://jsonplaceholder.typicode.com/posts/1</code></pre>
+      You should see a block of JSON with <code>userId</code>, <code>id</code>, <code>title</code> and <code>body</code>. That is a REST <code>GET</code> on the resource "post number 1".</li>
+    <li>Now see the status code and headers too. The <code>-i</code> flag means "include the headers":
+      <pre><code>curl.exe -i https://jsonplaceholder.typicode.com/posts/1</code></pre>
+      The first line should say <code>HTTP/... 200 OK</code>.</li>
+    <li>Ask for a page of results (pagination). The <code>_limit</code> part is how this practice API pages:
+      <pre><code>curl.exe "https://jsonplaceholder.typicode.com/posts?_limit=3"</code></pre>
+      You get only 3 posts.</li>
+    <li>Ask for something that does not exist:
+      <pre><code>curl.exe -i https://jsonplaceholder.typicode.com/posts/99999</code></pre>
+      The first line should say <code>404 Not Found</code>.</li>
+    <li>Create a post with <code>POST</code>. In Command Prompt, the quotes inside the JSON must be escaped with a backslash, exactly like this:
+      <pre><code>curl.exe -i -X POST -H "Content-Type: application/json" -d "{\"title\":\"hello\",\"body\":\"my first post\",\"userId\":1}" https://jsonplaceholder.typicode.com/posts</code></pre>
+      You should see <code>201 Created</code> and a post with <code>"id": 101</code>. The site only pretends to save it; asking for post 101 afterwards will give 404. That is expected.</li>
+  </ol>
+
+  <h3>B. Call the same API from the browser</h3>
+  <ol class="steps">
+    <li>In Chrome, open <code>https://jsonplaceholder.typicode.com</code> (a normal page is better than a blank tab).</li>
+    <li>Press <kbd>F12</kbd> and click the <span class="ui">Console</span> tab.</li>
+    <li>Copy the line below from this page (use its Copy button).
+      <pre><code>fetch('https://jsonplaceholder.typicode.com/posts/1').then(r=>r.json()).then(console.log)</code></pre></li>
+    <li>Click inside the Console next to the <code>&gt;</code> and press <kbd>Ctrl</kbd> + <kbd>V</kbd>. <b>Chrome may refuse</b> and show a warning: "Warning: Don't paste code into the DevTools Console that you don't understand or haven't reviewed yourself... type 'allow pasting'". It does this to protect people from scams.</li>
+    <li>This code is yours and safe, so type <code>allow pasting</code> in the Console and press <kbd>Enter</kbd>. Then paste again and press <kbd>Enter</kbd>. (If Chrome pasted it without a warning, just press <kbd>Enter</kbd>.)</li>
+    <li>You should see a <code>Promise</code> line and then an object. Click the small triangle to open it: the same <code>title</code> and <code>body</code> as in cmd. <code>fetch</code> is how your React code calls REST APIs.</li>
+    <li>Click the <span class="ui">Network</span> tab, run the line once more, and click the new <code>1</code> row. Under <span class="ui">Headers</span> find <span class="ui">Request Method</span> (<code>GET</code>) and <span class="ui">Status Code</span> (<code>200</code>).</li>
+  </ol>
+  <div class="warn">Never paste code into the Console just because a stranger told you to. It can steal your logged-in sessions. Paste only code you have read and understood.</div>
+
+  <h3>C. Pick the right style</h3>
+  <ol class="steps">
+    <li>On paper, for each case write REST, GraphQL, gRPC, WebSocket, SSE or webhook, plus one sentence why: (a) a live cricket score on a web page; (b) a payment app telling your shop "payment received"; (c) two backend services exchanging 50,000 small messages a second; (d) a simple product catalogue for a website.</li>
+    <li>Check with the table above. Suggested answers: (a) SSE or WebSocket, (b) webhook, (c) gRPC, (d) REST.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What does <code>POST /orders</code> normally mean, and which status code should come back on success?</summary><p>Create a new order. <code>201 Created</code> (or <code>200</code> in simple APIs).</p></details>
+  <details><summary>What are over-fetching and under-fetching?</summary><p>Over-fetching: the response has far more data than the screen needs. Under-fetching: one screen needs several calls to get all its data. GraphQL lets the client ask for exactly the fields it wants in one call.</p></details>
+  <details><summary>Why is gRPC rarely called straight from a browser page?</summary><p>Browsers do not natively speak its binary HTTP/2 format. It shines between backend services.</p></details>
+  <details><summary>How does a webhook differ from polling?</summary><p>In polling you keep asking "done yet?". With a webhook the other side calls your URL once when it is done, saving requests. You must verify the signature and handle retries.</p></details>
+  <details><summary>You are building a live notification bell that only needs server-to-browser updates. What do you choose and why?</summary><p>SSE: one-way push over plain HTTP, simpler than WebSockets. If the client also had to send frequent messages (chat), I would move to WebSockets.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would start with a REST API with JSON, versioned like /v1, paginated with cursors. If clients struggle with over-fetching I would consider GraphQL."</blockquote>
+  <blockquote>"For live two-way features I would use WebSockets; for one-way updates SSE is simpler. Between internal services I would consider gRPC. For third-party events I would take a webhook."</blockquote>
+  <p><b>Common follow-up question:</b> What goes wrong with webhooks and how do you handle it?</p>
+  <p>The sender may retry, so you can receive the same event twice, and events may arrive out of order. I verify the signature, return 200 quickly, store the event id to ignore duplicates, and do the heavy work in the background.</p>
+</section>
+
+</main>
+</body>
+</html>
