@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a chat app</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-4">
+<main class="lesson">
+
+<section class="story">
+  <h2>The phone line that stays open</h2>
+  <p>Imagine two friends, Asha and Ravi, on a long phone call. The line stays open, so the moment Asha speaks, Ravi hears. Nobody has to keep dialling to ask "anything new?". That is a chat app: a line that stays open.</p>
+  <p>Now picture a big telephone exchange with a million open lines. When Asha talks, the exchange must find Ravi's line, which may be connected to a different desk, and pass the words along. If Ravi's phone is off, the exchange writes the message on a slip and keeps it until he is back. When he is back, he gets all the slips in the right order. In a group call with 200 people, one voice must reach 199 others.</p>
+  <p>Chat design is about three things: <b>keeping lots of lines open</b>, <b>finding the right line fast</b>, and <b>never losing or scrambling a message</b>, even when someone is offline.</p>
+</section>
+
+<section class="explain">
+  <h2>Design a chat app (like WhatsApp)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. Try to draw what happens when Ravi is offline: where does the message wait?</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. Realtime delivery builds on <a href="m2-1.html">WebSockets</a> and the <a href="m2-11.html">pub/sub</a> idea.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>One-to-one chat and group chat (up to a few hundred members).</li>
+    <li>Send and receive text messages in real time; send images, video and files.</li>
+    <li>Delivery and read receipts (one tick sent, two ticks delivered, blue ticks read).</li>
+    <li>Online status ("online", "last seen").</li>
+    <li>Messages sent while you are offline arrive when you come back. Chat history syncs.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Low latency:</b> a message should arrive in well under a second.</li>
+    <li><b>No message lost, none duplicated on screen, and in the right order</b> within a conversation.</li>
+    <li><b>Highly available</b> and scalable to hundreds of millions of users.</li>
+    <li>Private: <b>end-to-end encryption</b>.</li>
+  </ul>
+  <p><b>Out of scope:</b> voice and video calls, status/stories, payments, message search.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 100 million daily active users, each sending 40 messages a day.</p>
+  <ul>
+    <li><b>Messages:</b> 100,000,000 x 40 = 4,000,000,000 a day. At about 100,000 seconds a day: <b>40,000 messages a second</b> average, about <b>120,000</b> at peak (3x).</li>
+    <li><b>Storage:</b> assume 200 bytes a message (text plus metadata). 4,000,000,000 x 200 B = 800 GB a day, which is about <b>290 TB a year</b> (800 GB x 365). Very large, and it only grows.</li>
+    <li><b>Connections:</b> assume 20% of users are online at once: 20 million open WebSockets. A well-tuned server can hold on the order of 100,000 idle connections, so 20,000,000 / 100,000 = <b>about 200 connection servers</b>. We plan for more for safety.</li>
+    <li><b>Media:</b> assume 10% of messages carry media of 200 KB: 400,000,000 x 200 KB = 80 TB a day. That goes to <a href="m2-13.html">object storage</a> and a CDN, never through the chat servers.</li>
+  </ul>
+  <p>Conclusions: we need servers that hold <b>many long-lived connections</b>, a storage engine built for <b>huge append-only writes</b>, and media outside the message path.</p>
+
+  <h3>3. API</h3>
+  <p>Chat mostly speaks over one <b>WebSocket</b> per device (<a href="m2-1.html">WebSockets</a>), with a few ordinary REST calls on the side.</p>
+<pre><code>WebSocket  wss://chat.example.com/ws   (login token sent when connecting)
+
+client -> server
+  { "type": "send", "client_msg_id": "c-77", "conversation_id": "x", "body": "hi" }
+  { "type": "ack",  "conversation_id": "x", "up_to_seq": 118, "status": "delivered" | "read" }
+server -> client
+  { "type": "sent",    "client_msg_id": "c-77", "seq": 119 }          (stored, here is its number)
+  { "type": "message", "conversation_id": "x", "seq": 119, "sender": 7, "body": "hi", "ts": "..." }
+  { "type": "receipt", "conversation_id": "x", "up_to_seq": 119, "status": "read", "by": 9 }
+  { "type": "presence","user": 9, "online": true }
+
+REST
+  POST /media/upload-url                     -> pre-signed URL to upload a file to object storage
+  GET  /conversations/{id}/messages?after_seq=118&limit=50   -> sync missed messages
+  POST /conversations   { "members": [7, 9, 12] }             -> create a group</code></pre>
+
+  <h3>4. Data model</h3>
+  <ul>
+    <li><b>Users, conversations, group members:</b> relational (PostgreSQL). Small compared with messages, and relationships and constraints matter (<a href="m2-2.html">SQL vs NoSQL</a>).</li>
+    <li><b>Messages:</b> a <b>wide-column store</b> such as Cassandra or HBase. The key: <b>partition key = <code>conversation_id</code></b>, <b>clustering key = <code>seq</code></b>. That keeps one conversation's messages together on disk in order, so "latest 50 messages" or "everything after seq 118" is a quick read from one partition.
+<pre><code>messages
+  conversation_id  (partition key)
+  seq              (clustering key, increasing)
+  sender_id, body, media_key, created_at</code></pre></li>
+    <li><b>Presence and sessions:</b> in Redis with short TTLs: <code>presence:{user}</code> and <code>session:{user}</code> (which connection server holds this user's connection).</li>
+    <li><b>Media:</b> files in object storage, only the key in the message row.</li>
+  </ul>
+  <p><b>Why wide-column here?</b> The workload is a flood of appends, reads of recent ranges by one key, no joins, and the data must spread over many machines (<a href="m2-10.html">sharding</a>). Wide-column stores are made for that. The cost: no joins, limited query flexibility, eventual consistency by default (<a href="m3-2.html">consistency</a>). We accept that because we only ever query a conversation by its id. Very busy conversations can grow huge partitions, so split a partition by time bucket (for example conversation plus month).</p>
+
+  <h3>5. High-level design</h3>
+  <ol>
+    <li>Asha's phone sends a message over its open <b>WebSocket</b> to a <b>connection server</b>.</li>
+    <li>The connection server passes it to the <b>chat service</b> (a normal stateless service).</li>
+    <li>The chat service checks the <b>session registry</b> (Redis) to learn which connection server holds Ravi's connection.</li>
+    <li>It gives the message the next <b>sequence number</b> for the conversation and <b>saves</b> it in the message store.</li>
+    <li>It forwards the message to Ravi's connection server, which writes it down Ravi's WebSocket. Ravi's phone replies with a "delivered" ack, later a "read" ack, and both travel back to Asha as receipts.</li>
+    <li>If Ravi is offline (no session), the message just stays stored and the chat service asks the <b>push service</b> (Apple or Google) to show a notification.</li>
+  </ol>
+  <p>When Ravi comes back, his app connects and says "my last seq in this chat is 118". The server sends everything after 118.</p>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: connections and presence</h4>
+  <p>Why WebSockets and not polling? Polling asks "any news?" every few seconds: wasteful and slow. A WebSocket stays open so the server pushes the instant something arrives. The catch: connection servers are <b>stateful</b>. User 7 is "stuck" to server C14 for as long as the line is open. So:</p>
+  <ul>
+    <li>Put a <b>load balancer</b> (layer 4 is fine) in front to spread new connections; it does not need to route messages (<a href="m2-5.html">load balancers</a>).</li>
+    <li>When a client connects, the connection server writes <code>session:{user} = server id</code> into Redis. When it disconnects, it deletes it.</li>
+    <li>To deliver to Ravi, the chat service looks up his server and sends the message to just that server (through an internal RPC or a pub/sub topic per server).</li>
+    <li>When a connection server is restarted or crashes, its users reconnect elsewhere, and clients must reconnect with backoff and jitter so they do not all arrive at once.</li>
+  </ul>
+  <p><b>Presence</b> ("online"): the client sends a small heartbeat every 15 to 30 seconds, and the server sets <code>presence:{user}</code> in Redis with a TTL of about 30 to 60 seconds. If heartbeats stop, the key expires and the user shows offline; the last-seen time is saved. Do not broadcast every presence change to every contact: a person with 500 contacts flickering online would create a storm. Send presence only to people who currently have that chat open or visible, or let clients fetch it when needed.</p>
+
+  <h4>Deep dive B: ordering, groups and receipts</h4>
+  <p>Messages must appear in the same order for everyone <b>in a conversation</b>. We do not need a global order across all of WhatsApp, only per conversation. Clock timestamps are unreliable (phones disagree by seconds), so we use a <b>per-conversation sequence number</b>: the Nth message in conversation X gets <code>seq = N</code>. To hand out numbers without gaps or duplicates, one component must own each conversation's counter at a time: route a conversation always to the same chat-service shard (hash of <code>conversation_id</code>), or use an atomic increment in the store. Clients sort by <code>seq</code>. If a client sees 118 then 120, it knows 119 is missing and asks for it.</p>
+  <p>Retries: the sender's app tags each message with a <code>client_msg_id</code>. If the network drops and the app resends, the server sees the same id and returns the original <code>seq</code> rather than storing a second copy (<a href="m3-4.html">idempotency</a>).</p>
+  <table>
+    <tr><th></th><th>One-to-one</th><th>Group</th></tr>
+    <tr><td>Delivery</td><td>Send to the other user's devices</td><td>Store once for the conversation; <b>fan out</b> the delivery to each member's connection</td></tr>
+    <tr><td>Storage</td><td>One row per message</td><td>Still one row per message (not one per member)</td></tr>
+    <tr><td>Receipts</td><td>One delivered, one read</td><td>Track per member; show "delivered to all" or "read by all" when everyone has done it</td></tr>
+    <tr><td>Cost</td><td>Cheap</td><td>Work grows with group size, so cap group size</td></tr>
+  </table>
+  <p><b>Receipts:</b> "sent" means the server stored it. "Delivered" means Ravi's device acked. "Read" means the app was open on that chat. Receipts are tiny messages going the other way and are compressed as "up to seq N".</p>
+
+  <h4>Deep dive C: offline sync, media, encryption</h4>
+  <ul>
+    <li><b>Offline:</b> messages are already stored by sequence. Each device remembers the last seq it has per conversation and syncs "after_seq" on reconnect. A push notification wakes the phone. Keep delivered-but-not-yet-synced messages until acked.</li>
+    <li><b>Media:</b> the phone asks for a pre-signed URL, uploads the file straight to object storage, then sends a normal chat message containing the file's key and a small thumbnail. The receiver downloads it from the CDN. The chat servers never carry the heavy bytes.</li>
+    <li><b>End-to-end encryption, in one paragraph:</b> each device makes a key pair and shares only its public key with the server. The sender's app encrypts every message with keys that only the recipient's device can use, so the server stores and forwards <i>ciphertext</i> and cannot read it, not even for a court order or a hacker. The Signal protocol, used by WhatsApp, also changes keys as messages go, so one stolen key does not expose the past. The costs: the server cannot search or moderate content, adding a new device or restoring backups is harder, and groups need extra key handling.</li>
+  </ul>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Stateful connection servers</b> are the hardest to scale and deploy. Drain them slowly, and expect reconnection spikes.</li>
+    <li><b>At-least-once delivery plus dedupe</b> (by <code>client_msg_id</code> and <code>seq</code>) instead of the myth of exactly-once.</li>
+    <li><b>Eventual consistency</b> on the message store is fine because messages are append-only and ordered by seq.</li>
+    <li><b>Bottlenecks:</b> hot group chats (one partition, one sequence counter), presence traffic, and the session registry.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): connection count per server, message delivery latency (p99), undelivered backlog, reconnect rate.</li>
+  </ul>
+  <p><b>At 10x scale</b> (1 billion users): shard the session registry and presence by user id, split big groups into smaller delivery shards, run connection servers in many regions with the chat service close to them, use more partitions and time buckets, and push heavy media entirely via CDN.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 440" role="img" aria-label="Chat architecture. Phone A connects by WebSocket to a connection server, which calls the chat service. The chat service looks up the recipient's connection server in a Redis session registry, saves the message in the message store, and forwards it to the second connection server and phone B. If B is offline, a push service sends a notification. Media goes to object storage.">
+      <defs><marker id="ar-m5-4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="55" width="100" height="50" rx="8"/>
+        <rect x="160" y="50" width="130" height="60" rx="8"/>
+        <rect x="340" y="50" width="130" height="60" rx="8"/>
+        <rect x="520" y="50" width="105" height="60" rx="8"/>
+        <rect x="520" y="190" width="105" height="60" rx="8"/>
+        <rect x="15" y="305" width="100" height="50" rx="8"/>
+        <rect x="160" y="300" width="130" height="60" rx="8"/>
+        <rect x="390" y="300" width="120" height="60" rx="8"/>
+        <rect x="525" y="300" width="100" height="60" rx="8"/>
+        <path d="M115 80 H158" marker-end="url(#ar-m5-4)"/>
+        <path d="M290 80 H338" marker-end="url(#ar-m5-4)"/>
+        <path d="M470 80 H518" marker-end="url(#ar-m5-4)"/>
+        <path d="M470 100 H495 V215 H518" marker-end="url(#ar-m5-4)"/>
+        <path d="M360 110 V250 H225 V298" marker-end="url(#ar-m5-4)"/>
+        <path d="M160 330 H117" marker-end="url(#ar-m5-4)"/>
+        <path d="M440 110 V298" marker-end="url(#ar-m5-4)" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="65" y="85" font-size="14" font-weight="700">Phone A</text>
+        <text x="225" y="76" font-size="14" font-weight="700">Connection</text>
+        <text x="225" y="94" font-size="14" font-weight="700">server 1</text>
+        <text x="405" y="76" font-size="14" font-weight="700">Chat</text>
+        <text x="405" y="94" font-size="14" font-weight="700">service</text>
+        <text x="572" y="76" font-size="14" font-weight="700">Message</text>
+        <text x="572" y="94" font-size="13">store</text>
+        <text x="572" y="216" font-size="14" font-weight="700">Redis</text>
+        <text x="572" y="234" font-size="13">sessions + presence</text>
+        <text x="65" y="335" font-size="14" font-weight="700">Phone B</text>
+        <text x="225" y="326" font-size="14" font-weight="700">Connection</text>
+        <text x="225" y="344" font-size="14" font-weight="700">server 2</text>
+        <text x="450" y="326" font-size="14" font-weight="700">Push service</text>
+        <text x="450" y="344" font-size="13">(FCM / APNs)</text>
+        <text x="575" y="326" font-size="14" font-weight="700">Object</text>
+        <text x="575" y="344" font-size="13">storage (media)</text>
+        <text x="136" y="73" font-size="13">1</text>
+        <text x="314" y="73" font-size="13">2</text>
+        <text x="494" y="73" font-size="13">4</text>
+        <text x="508" y="170" font-size="13">3</text>
+        <text x="372" y="190" font-size="13" text-anchor="start">5</text>
+        <text x="452" y="200" font-size="13" text-anchor="start">6 B offline</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="150" font-size="13">1. A sends over WebSocket</text>
+        <text x="15" y="168" font-size="13">2. Hand it to chat service</text>
+        <text x="15" y="186" font-size="13">3. Look up B's server (Redis)</text>
+        <text x="15" y="204" font-size="13">4. Number it (seq) and save</text>
+        <text x="15" y="222" font-size="13">5. Push to B's server, to B</text>
+        <text x="15" y="240" font-size="13">6. Offline: store + push alert</text>
+        <text x="15" y="258" font-size="13">7. Acks return the same way</text>
+        <text x="15" y="400" font-size="13">Photos and videos skip the chat servers:</text>
+        <text x="15" y="418" font-size="13">upload to object storage, send only the key.</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 to 5 are a live delivery, step 6 is the offline case. Receipts (step 7) travel back along the same lines.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-4 chat.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+design+a+chat+system" target="_blank" rel="noopener">YouTube search: "ByteByteGo design a chat system"</a>
+      <span class="meta">Short. Watch it all and look for how they find the recipient's server.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+design+WhatsApp+system+design" target="_blank" rel="noopener">YouTube search: "Gaurav Sen design WhatsApp system design"</a>
+      <span class="meta">Pick the main result. Watch the part on message flow and receipts.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://discord.com/blog" target="_blank" rel="noopener">Discord Engineering blog</a>
+      <span class="meta">Search the page for their post about how Discord stores messages, and note the partition key they chose.</span></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API" target="_blank" rel="noopener">MDN: WebSockets API</a>
+      <span class="meta">Read the introduction to see how a WebSocket differs from a normal request.</span></li>
+    <li><a href="https://www.whatsapp.com/security" target="_blank" rel="noopener">WhatsApp: Security</a>
+      <span class="meta">Read the end-to-end encryption overview; skip the technical white paper for now.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 30 to 45 for the build)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design a chat app like WhatsApp" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes.</li>
+    <li>For deep dives pick three: how a message finds the recipient's server, ordering with sequence numbers, and offline sync. Draw the offline path on a separate copy of the diagram.</li>
+    <li>Stop the recording and save it as <code>m5-4 mock</code>, and the drawing as <code>m5-4 chat-mock.excalidraw</code>. Compare with the lesson and write down what you missed.</li>
+  </ol>
+
+  <h3>B. Variation questions</h3>
+  <details><summary>1. The same user is logged in on a phone and a laptop. What changes?</summary>
+    <p>The session registry holds a <i>set</i> of connections per user, one per device. The chat service delivers to every connected device. Each device tracks its own last seen <code>seq</code> per conversation, so each can sync independently. Receipts: "delivered" can mean "delivered to at least one device"; "read" when any device reads it.</p></details>
+  <details><summary>2. Two messages arrive at the phone in the order seq 121 then seq 120. What does the app do?</summary>
+    <p>It sorts by <code>seq</code> when drawing the screen, so 120 shows above 121. If a number is missing (it got 122 but never 121), the app asks the server for the missing range with <code>after_seq</code>. It never trusts arrival order or phone clocks.</p></details>
+  <details><summary>3. How would you add "typing..." indicators?</summary>
+    <p>Send a tiny, <b>ephemeral</b> event over the WebSocket that is forwarded but never stored, and drops silently if the other user is offline. Throttle it (at most one every few seconds) and auto-expire it on the receiver after a few seconds. Never queue or retry it.</p></details>
+
+  <h3>Build it (optional, about 30 to 45 minutes)</h3>
+  <p>You will build a tiny live chat in <b>one HTML file</b>, with no build tools. Two Chrome tabs will chat with each other through <b>Supabase Realtime Broadcast</b>, which sends a message to everyone subscribed to a named channel. The code uses <code>supabase-js</code> version 2.118.0 loaded from a CDN script tag. It was syntax-checked with <code>node --check</code>, and the CDN address was confirmed to load.</p>
+  <p class="warn">This is a learning demo. It uses only your project's <b>publishable (anon) key</b>, which is safe to put in a browser page. There is no login, and anyone who knows your project URL, key and the channel name can join the room. Never put a secret or service_role key in this file. Also, Broadcast does <b>not store</b> messages: a message exists only for people connected at that moment, which is exactly why a real chat app needs the message store from deep dive A.</p>
+
+  <h3>Build step 1: find your two values</h3>
+  <ol class="steps">
+    <li>Open your Supabase dashboard in Chrome and open a project (any project works; this demo creates no tables).</li>
+    <li>Click the <b>gear icon</b> (<span class="ui">Project Settings</span>) at the bottom of the left sidebar, then the page that lists <b>API keys</b> (it may be called <span class="ui">API Keys</span> or <span class="ui">API</span>).</li>
+    <li>Copy the <b>Project URL</b> (like <code>https://abcdxyz.supabase.co</code>) and the <b>publishable key</b> (older projects call it the <b>anon</b> key) into a Notepad window for now. Do not copy the secret or service_role key.</li>
+  </ol>
+
+  <h3>Build step 2: create the file</h3>
+  <ol class="steps">
+    <li>Open VS Code. Choose <span class="ui">File</span> then <span class="ui">Open Folder</span> and pick (or create) a folder such as <code>Documents\system-design\chat</code>.</li>
+    <li>Click the <span class="ui">New File</span> icon next to the folder name in the file list and name the file <code>chat.html</code>.</li>
+    <li>Paste the whole file below. Then find the two lines at the top of the script and replace <code>https://YOUR-PROJECT-REF.supabase.co</code> and <code>YOUR-PUBLISHABLE-OR-ANON-KEY</code> with your values (keep the quotes):
+<pre><code>&lt;!doctype html&gt;
+&lt;html lang="en"&gt;
+&lt;head&gt;
+&lt;meta charset="utf-8"&gt;
+&lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;
+&lt;title&gt;Tiny chat&lt;/title&gt;
+&lt;style&gt;
+  body { font-family: system-ui, sans-serif; max-width: 480px; margin: 20px auto; padding: 0 12px; }
+  #log { border: 1px solid #999; height: 320px; overflow-y: auto; padding: 8px; margin-bottom: 8px; }
+  .msg { margin: 4px 0; }
+  .me { text-align: right; color: #0a5; }
+  .sys { color: #888; font-style: italic; }
+  form { display: flex; gap: 6px; }
+  input { flex: 1; padding: 8px; font-size: 16px; }
+  button { padding: 8px 14px; font-size: 16px; }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;h2&gt;Tiny chat&lt;/h2&gt;
+&lt;div id="status"&gt;Connecting...&lt;/div&gt;
+&lt;div id="log"&gt;&lt;/div&gt;
+&lt;form id="form"&gt;
+  &lt;input id="text" autocomplete="off" placeholder="Type a message" disabled&gt;
+  &lt;button disabled id="send"&gt;Send&lt;/button&gt;
+&lt;/form&gt;
+
+&lt;script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  // 1. Paste YOUR project values here. Only the publishable (anon) key is allowed in this file.
+  const SUPABASE_URL = "https://YOUR-PROJECT-REF.supabase.co";
+  const SUPABASE_KEY = "YOUR-PUBLISHABLE-OR-ANON-KEY";
+
+  // 2. Ask for a name once per tab
+  const username = (prompt("Pick a username") || "").trim() || "guest-" + Math.floor(Math.random() * 1000);
+
+  const logEl = document.getElementById("log");
+  const statusEl = document.getElementById("status");
+  const textEl = document.getElementById("text");
+  const sendBtn = document.getElementById("send");
+
+  function addLine(text, cls) {
+    const div = document.createElement("div");
+    div.className = "msg " + (cls || "");
+    div.textContent = text; // textContent (not innerHTML) so nobody can inject HTML
+    logEl.appendChild(div);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  // 3. Connect, and join the channel called "room-1". Everyone on the same name hears each other.
+  const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const channel = client.channel("room-1", {
+    config: { broadcast: { self: true } }, // also deliver my own message back to me
+  });
+
+  channel
+    .on("broadcast", { event: "message" }, ({ payload }) =&gt; {
+      const mine = payload.user === username;
+      addLine(mine ? payload.text : payload.user + ": " + payload.text, mine ? "me" : "");
+    })
+    .subscribe((state) =&gt; {
+      statusEl.textContent = "Status: " + state + " (you are " + username + ")";
+      const ok = state === "SUBSCRIBED";
+      textEl.disabled = !ok;
+      sendBtn.disabled = !ok;
+      if (ok) addLine("You joined room-1", "sys");
+    });
+
+  // 4. Send a message to everyone on the channel
+  document.getElementById("form").addEventListener("submit", (e) =&gt; {
+    e.preventDefault();
+    const text = textEl.value.trim();
+    if (!text) return;
+    channel.send({ type: "broadcast", event: "message", payload: { user: username, text } });
+    textEl.value = "";
+  });
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;</code></pre></li>
+    <li>Press <kbd>Ctrl</kbd> + <kbd>S</kbd> to save.</li>
+  </ol>
+
+  <h3>Build step 3: chat with yourself</h3>
+  <ol class="steps">
+    <li>In File Explorer, find <code>chat.html</code> and double-click it. It opens in your browser (if it opens in another browser, right-click and choose <span class="ui">Open with</span> then <span class="ui">Google Chrome</span>).</li>
+    <li>A box asks "Pick a username". Type <code>asha</code> and press <kbd>Enter</kbd>. The line at the top should change to <code>Status: SUBSCRIBED (you are asha)</code> and "You joined room-1" appears in the box.</li>
+    <li>Click the address bar and press <kbd>Ctrl</kbd> + <kbd>L</kbd> then <kbd>Ctrl</kbd> + <kbd>C</kbd> to copy the address. Press <kbd>Ctrl</kbd> + <kbd>T</kbd> for a new tab, press <kbd>Ctrl</kbd> + <kbd>V</kbd> and <kbd>Enter</kbd>. Type the username <code>ravi</code>.</li>
+    <li>Type <code>hello Ravi</code> in the first tab (asha) and press <kbd>Enter</kbd>. It appears in green on the right in asha's tab, and in the second tab as <code>asha: hello Ravi</code>. Switch tabs with <kbd>Ctrl</kbd> + <kbd>Tab</kbd> and reply.</li>
+    <li>Open a third tab and join as <code>meera</code>. You now have a group: everyone hears everyone. Close ravi's tab, send a message, then reopen the page as ravi: the missed message is <b>not there</b>. That is the offline problem this lesson solved with sequence numbers and a message store.</li>
+    <li>If the status says <code>CHANNEL_ERROR</code> or <code>TIMED_OUT</code>, check three things: the URL and key have no extra spaces or quotes inside them, you are online, and the Realtime settings in your Supabase project allow public channels (look for a Realtime or Realtime settings page in the dashboard). Press <kbd>F12</kbd> and open the <span class="ui">Console</span> tab for more detail.</li>
+  </ol>
+
+  <h3>Build step 4: check the code parses (optional)</h3>
+  <ol class="steps">
+    <li>You can confirm there is no typo in the script without running it. Open a terminal in VS Code with <kbd>Ctrl</kbd> + <kbd>`</kbd> and copy just the code inside the <code>copy just the code between the second pair of <code>&lt;script&gt;</code> tags intolt;scriptcopy just the code between the second pair of <code>&lt;script&gt;</code> tags intogt;</code> tag near the bottom (the one without <code>src</code>) into a file called <code>check.js</code>, then run <code>node --check check.js</code>. No output means the syntax is fine.</li>
+  </ol>
+  <p class="tip">Skipped on purpose: no message history, no typing indicator, no receipts, no login. Each is a variation question above and a good next exercise.</p>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why do chat apps use WebSockets instead of polling?</summary><p>A WebSocket stays open so the server can push a message the instant it arrives. Polling asks repeatedly "anything new?", which wastes requests and adds delay.</p></details>
+  <details><summary>How does the chat service know which server holds the recipient's connection?</summary><p>Each connection server records <code>user to server id</code> in a shared session registry (Redis) when a user connects and removes it when they disconnect. The chat service looks it up and forwards the message to that server.</p></details>
+  <details><summary>What breaks if you order messages by the phone's clock timestamp?</summary><p>Phone clocks differ by seconds or more, so two people could see messages in different orders or a reply before the question. Use a per-conversation sequence number assigned by the server.</p></details>
+  <details><summary>What breaks if a message is only held on the connection server and that server crashes?</summary><p>The message is lost. Messages must be saved in the durable message store before the server says "sent", and delivered messages are kept until acked, so reconnecting clients can sync from their last seq.</p></details>
+  <details><summary>Why is partition key = conversation_id a good choice for the message store, and what could go wrong?</summary><p>All messages of a conversation sit together in order, so reading recent history is one fast partition read. A huge group chat can make one partition very large and hot; split it by time bucket.</p></details>
+  <details><summary>You must decide between Postgres and Cassandra for messages at 40,000 writes a second. What do you choose?</summary><p>A wide-column store like Cassandra: append-heavy writes, access always by conversation id and range, easy horizontal spread, no joins needed. Postgres stays for users and group membership. For a small app, plain Postgres is fine; the choice follows the scale.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Clients hold a WebSocket to a connection server. A Redis session registry maps user to server, so the chat service can forward a message straight to the recipient's connection server. Every message gets a per-conversation sequence number and is stored before we acknowledge it."</blockquote>
+  <blockquote>"Messages live in a wide-column store partitioned by conversation id and ordered by sequence number. Offline users sync from their last seen sequence number when they reconnect, and media goes through object storage and a CDN, not through the chat servers."</blockquote>
+  <p><b>Common follow-up question:</b> How do you guarantee ordering and no duplicates?</p>
+  <p>Order comes from the per-conversation sequence number, not clocks. Duplicates are avoided with a client-generated message id that makes retries idempotent, and the receiver ignores a seq it already has. Delivery is at-least-once.</p>
+  <p><b>Common follow-up question:</b> How does a group message reach 200 people?</p>
+  <p>It is stored once for the conversation, then the chat service fans out to each member's connection server. Offline members get a push notification and sync later. I would cap group size, because the fan-out cost grows with members.</p>
+</section>
+
+</main>
+</body>
+</html>

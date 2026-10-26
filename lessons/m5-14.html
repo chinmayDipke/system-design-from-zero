@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a multi-tenant SaaS</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-14">
+<main class="lesson">
+
+<section class="story">
+  <h2>One apartment building, many families</h2>
+  <p>Think of one big apartment building. Fifty families live in it. They share the lift, the water tank, the watchman and the electricity connection, so each family pays far less than if each had built its own house. But every family has its own locked door. Nobody can walk into another family's flat, and nobody should see another family's bills.</p>
+  <p>A software product that serves many businesses at the same time, such as many restaurants using one billing app, is the same. The restaurants are the <b>tenants</b>. They share the same servers and database (the building), but each must see <b>only its own data</b> (its own door).</p>
+  <p>Three things can go wrong in a building. A neighbour can <b>leave the door unlocked</b> (a data leak, the worst one). A neighbour can run a loud party all night and use all the water (a <b>noisy neighbour</b>). And a very big family may want its own separate house (a <b>dedicated database</b>). This lesson is about building the locks, the water meter and the option to move out.</p>
+</section>
+
+<section class="explain">
+  <h2>Design a multi-tenant SaaS (restaurant billing, POS or any B2B app)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. Decide: if one developer forgets <code>WHERE tenant_id = ...</code> in one query, what stops a customer seeing another customer's data?</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. This design uses <a href="m2-3.html">database indexes and transactions</a>, <a href="m2-12.html">rate limiting</a>, <a href="m2-7.html">caching</a> and <a href="m3-8.html">auth basics</a>. The product is imaginary and generic: an app that restaurants use to take orders and print bills.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>A business can <b>sign up (be onboarded)</b> and gets its own workspace with its own users, menu and orders.</li>
+    <li>Staff of a business can create and view <b>orders</b> (the main data), run reports, and change settings.</li>
+    <li>Each tenant can have <b>its own configuration and feature flags</b> (for example a new report switched on for some tenants only).</li>
+    <li>The platform <b>measures usage</b> and <b>bills</b> each tenant.</li>
+    <li>A tenant can <b>export all its data</b> and can <b>ask for it to be deleted</b> when it leaves.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Strong isolation:</b> a tenant must never read or change another tenant's data. This is the number one rule.</li>
+    <li><b>Fair performance:</b> one tenant's heavy use must not slow down the others.</li>
+    <li><b>Low cost per tenant:</b> thousands of small tenants should be cheap to serve.</li>
+    <li><b>Easy upgrades:</b> one code version and one schema change should reach all tenants.</li>
+    <li>Available during meal rushes, with order writes strongly consistent (<a href="m2-3.html">ACID</a>).</li>
+  </ul>
+  <p><b>Out of scope:</b> the payment gateway, the internals of the kitchen printer, mobile app design, and the identity provider (login itself is in <a href="m3-8.html">the auth lesson</a>).</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 10,000 tenants (restaurants), averaging 100 orders a day, with a few big chains doing 100 times that. Each tenant has about 5 staff devices.</p>
+  <ul>
+    <li><b>Orders:</b> 10,000 x 100 = 1,000,000 orders a day, divided by 100,000 s = <b>10 a second</b>. Most come in the meal rush, so peak is perhaps 5 to 10 times: <b>about 50 to 100 a second</b>. Tiny for a database.</li>
+    <li><b>Reads:</b> 50,000 staff devices refreshing the order screen every 10 seconds = <b>5,000 reads a second</b>. These need to be cheap and cacheable.</li>
+    <li><b>Storage:</b> 1,000,000 orders x 1 KB = 1 GB a day, about <b>365 GB a year</b>. One database server handles this for years. That is the big surprise: the data is small, so the hard parts are isolation, fairness and operations, not capacity.</li>
+    <li><b>The per-tenant cost of the wrong model:</b> with a schema per tenant and 50 tables each, 10,000 tenants means 500,000 tables, and a schema change must be run 10,000 times. With a database per tenant, there would be 10,000 databases to connect to, back up and upgrade. This is why the tenancy model matters.</li>
+  </ul>
+
+  <h3>3. API</h3>
+<pre><code>POST /orders                 (tenant is taken from the login token, never from the request body)
+  { "table": "T4", "items": [ { "sku": "dosa", "qty": 2 } ] }
+  201 -> { "order_id": 8841 }
+
+GET  /orders?status=open&amp;limit=50     -> only this tenant's orders
+GET  /settings                         -> this tenant's configuration and enabled features
+PUT  /settings                         -> change it
+POST /exports                          -> start a full data export  (202, then a download link)
+DELETE /tenant                         -> start deletion (admin only, with confirmation)
+GET  /usage                            -> metered usage this month (orders, staff accounts)</code></pre>
+  <p><b>Rule:</b> the tenant id comes from the <b>verified token</b> (a claim signed by the server), never from a URL or JSON field that the client can change. This is the first defence against leaks.</p>
+
+  <h3>4. Data model</h3>
+<pre><code>tenants      (id, name, plan, status, created_at, region, shard)
+users        (id, tenant_id, email, role)
+orders       (id, tenant_id, table_no, status, total_paise, created_at)   INDEX (tenant_id, created_at)
+tenant_config(tenant_id PK, settings jsonb, feature_flags jsonb)
+usage_events (tenant_id, metric, quantity, at)                           -- for billing</code></pre>
+  <p>Every table that holds tenant data has a <code>tenant_id</code> column, and every index that serves common queries starts with <code>tenant_id</code>, so that each tenant's rows sit together in the index and queries stay fast as the table grows. <b>Why SQL:</b> orders, bills and reports need transactions, joins and exact numbers, and our volume is small.</p>
+
+  <h3>5. High-level design</h3>
+  <p>Numbers match the picture.</p>
+  <ol>
+    <li>A staff member's app sends a request with a login token to the <b>API gateway</b>. The gateway verifies the token and learns the <b>tenant id</b>.</li>
+    <li>The gateway applies <b>per-tenant rate limits</b> (counters keyed by tenant) and forwards the request, with the tenant id attached, to the <b>app service</b>.</li>
+    <li>The app service loads the tenant's <b>config and feature flags</b> (cached) to decide what this tenant may do.</li>
+    <li>It checks a <b>tenant-aware cache</b>, where every key starts with the tenant id.</li>
+    <li>On a miss, it queries the <b>shared database</b>. Before the query, the app tells the database who the tenant is (<code>set local app.tenant_id</code>), and <b>row-level security</b> makes the database itself filter rows.</li>
+    <li>Very large or regulated tenants are routed to their own <b>dedicated database</b> (the "silo"), chosen from the tenant's record.</li>
+    <li>Usage counters feed <b>metering</b> and billing.</li>
+  </ol>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: the tenancy model</h4>
+  <table>
+    <tr><th></th><th>Shared tables with <code>tenant_id</code></th><th>Schema per tenant</th><th>Database per tenant</th></tr>
+    <tr><td><b>Isolation</b></td><td>Logical only. Relies on correct filters (or row-level security)</td><td>Better: separate namespaces, can use separate permissions</td><td>Strongest: separate files, credentials and backups</td></tr>
+    <tr><td><b>Cost per tenant</b></td><td>Lowest; thousands of tenants share everything</td><td>Medium; each tenant adds many tables and catalog entries</td><td>Highest; each tenant has its own database to run (or at least a connection and storage)</td></tr>
+    <tr><td><b>Schema changes</b></td><td>One migration for all tenants</td><td>Run the migration once per schema; thousands of runs, some fail</td><td>Run it per database; the most operational work</td></tr>
+    <tr><td><b>Noisy neighbour risk</b></td><td>Highest; same tables, same cache, same CPU</td><td>Medium; same server</td><td>Lowest (own resources) if each is on its own instance</td></tr>
+    <tr><td><b>Per-tenant backup, restore, export, delete</b></td><td>Hard: need filtered extracts; deleting means <code>DELETE ... WHERE tenant_id</code></td><td>Easier: dump or drop one schema</td><td>Easiest: restore or drop one database</td></tr>
+    <tr><td><b>Cross-tenant reports</b></td><td>Easy (one query)</td><td>Awkward (union many schemas)</td><td>Hard (query many databases)</td></tr>
+    <tr><td><b>Best for</b></td><td>Many small tenants, a typical B2B app</td><td>Dozens to hundreds of tenants with moderate customisation</td><td>A few very large, regulated or high-value tenants</td></tr>
+  </table>
+  <p><b>Pick:</b> start with <b>shared tables with a <code>tenant_id</code> column and row-level security</b>, because at our scale it is the cheapest and easiest to run. Keep the <b>option</b> to move a big tenant into its own database: that is the <b>hybrid</b> (often called pool plus silo). The tenant record says where its data lives, and the gateway or app routes accordingly. To make a later move possible, never write code that assumes one database, and always carry the tenant id.</p>
+
+  <h4>Deep dive B: isolation with row-level security</h4>
+  <p>The most common leak is human: one query somewhere forgets <code>WHERE tenant_id = ...</code>. <b>Row-level security (RLS)</b> in PostgreSQL is a safety net inside the database itself. You enable it on a table and add a <b>policy</b>: a rule that every query must satisfy, added automatically. Even if the app code forgets the filter, the database adds it.</p>
+  <ul>
+    <li>The policy compares each row's <code>tenant_id</code> with the current tenant. A simple way to know the current tenant is a <b>session setting</b>: the app runs <code>set local app.tenant_id = '42'</code> at the start of each transaction, and the policy reads it with <code>current_setting('app.tenant_id', true)</code>. (Supabase apps often read it from the login token's claims instead, which works the same way.)</li>
+    <li>Use <code>set local</code> (lasts only until the end of the transaction), <b>never</b> a plain <code>set</code>. With a connection pool, a plain <code>set</code> sticks to the connection and leaks the tenant to the next request that borrows it. This is a serious real-world bug.</li>
+    <li><b>The gotcha:</b> the <b>table owner bypasses RLS</b> by default, and so do superusers and roles with the <code>BYPASSRLS</code> attribute. If your app connects as the owner, the policy is never applied and everything seems to work, while nothing is protected. Fixes: connect the app as a <b>non-owner role</b> with only the permissions it needs, or run <code>alter table ... force row level security</code> so that even the owner is subject to the policy (this still does not apply to superusers or <code>BYPASSRLS</code> roles). You will see the owner bypass in the exercise.</li>
+    <li>A query with <b>no tenant set</b> should return <b>nothing</b>, not everything. Write the policy so a missing setting matches no rows. The exercise shows this.</li>
+    <li>RLS is a second lock, not the only lock. Keep the explicit <code>WHERE tenant_id = ...</code> in your code too (it helps the query planner and is obvious to readers). The two together mean one mistake is not enough to leak.</li>
+  </ul>
+
+  <h4>Deep dive C: noisy neighbours, caching, config and flags</h4>
+  <ul>
+    <li><b>Noisy neighbours.</b> One tenant running a huge report or an import script can slow everyone. Defences: <b>per-tenant rate limits</b> and quotas at the gateway (a token bucket or sliding window keyed by tenant id, see <a href="m5-2.html">the rate limiter lesson</a>), <b>per-tenant limits</b> on concurrent requests and on queries' running time, <b>fair queues</b> for background jobs (one queue per tenant, or round-robin between tenants, so one tenant's 100,000 jobs do not block others), and the last resort: <b>move the heavy tenant to its own database or machine</b>. Report big queries on a read replica, not the main database. Rate limits by plan (small plan 10 requests a second, large plan 100) double as a pricing tool.</li>
+    <li><b>Tenant-aware cache keys.</b> In a shared cache, a key like <code>menu:today</code> would mix tenants: the first tenant to fill it serves its menu to everybody. Always include the tenant id in the key: <code>t:42:menu:today</code>. Treat a cache key without a tenant prefix as a bug, and build a small helper function that makes keys, so nobody writes them by hand. The same goes for search indexes, file storage paths (<code>tenant-42/receipts/...</code>), queues and logs.</li>
+    <li><b>Per-tenant config and feature flags.</b> Store settings (currency, tax rules, logo, enabled modules) in one row per tenant and cache it with a short TTL. A <b>feature flag</b> is an on/off switch evaluated per tenant: "new report: on for tenants 42 and 77". It lets you release to a few tenants first, turn a feature off without a deploy, and sell features by plan. Keep flags few and remove them when the rollout is done.</li>
+  </ul>
+
+  <h4>Deep dive D: onboarding, billing, export and deletion</h4>
+  <ul>
+    <li><b>Onboarding</b> must be fully automatic, since thousands of tenants cannot each need an engineer: create the tenant row, the first admin user, default config and sample data, and (for a silo plan) provision a database. Make each step <a href="m3-4.html">idempotent</a> so a retry after a failure does not create a second tenant.</li>
+    <li><b>Metering and billing.</b> Record usage events (an order created, a staff seat in use) with the tenant id, either by counting in Redis and saving totals, or by writing events to a queue and aggregating in a daily job. Bill from the aggregated totals, and keep the raw events for disputes. The plan limits (for example 500 orders a month) are enforced with the same counters.</li>
+    <li><b>Export.</b> A tenant should be able to take its data out (it is their data, and often a legal requirement). Run it as a background job that reads only that tenant's rows, writes files to a private storage path, and gives a time-limited download link. It must not slow the live system, so run it against a replica and rate limit it.</li>
+    <li><b>Deletion.</b> When a tenant leaves, delete its rows from every store: database, cache, search index, file storage, backups (by expiry) and logs where it is allowed. Use a <b>soft delete first</b> (mark the tenant as pending deletion for a grace period such as 30 days, then hard delete). With one table per tenant model, it is a drop; with shared tables it is a careful <code>DELETE ... WHERE tenant_id = ...</code> in batches. Keep a record of what was deleted and when.</li>
+  </ul>
+
+  <h4>Testing for cross-tenant leaks</h4>
+  <p>The worst bug in this system is invisible: everything works, but one tenant can see another's data. Test for it on purpose:</p>
+  <ul>
+    <li><b>Two-tenant tests:</b> in the test database create tenants A and B with data. For every endpoint, call it as A and assert that no row, id, name or count from B appears. Run it on every build.</li>
+    <li><b>Guess the id:</b> as A, request B's order by its id (<code>GET /orders/8841</code>). The answer must be "not found", not B's order. This is called an insecure direct object reference, and it is the classic mistake.</li>
+    <li><b>Test the database rules as the app does:</b> run the policy tests while connected as the non-owner app role (as in the exercise below), because tests run as the owner pass even when the policy is wrong.</li>
+    <li><b>A missing tenant returns nothing,</b> and a wrong tenant on <code>INSERT</code> is rejected.</li>
+    <li>Review every place that bypasses the normal path: background jobs, exports, admin tools, reports and caches, since these often skip the tenant filter.</li>
+  </ul>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Cost against isolation:</b> shared tables are cheapest and least isolated; a database per tenant is the opposite. The hybrid lets each tenant be in the right place for its size and its contract.</li>
+    <li><b>Simplicity against safety:</b> RLS adds a little complexity and a small cost per query, but turns a catastrophic mistake into a harmless empty result.</li>
+    <li><b>Fairness against utilisation:</b> strict per-tenant limits protect everyone but can throttle a tenant who is paying and has a real spike, so allow bursts and make limits depend on the plan.</li>
+    <li><b>Bottlenecks:</b> the single shared database as tenants grow (shard it by tenant id into several databases, with a lookup table from tenant to shard), one huge tenant (move it out), and cache memory.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): requests, errors and latency <b>per tenant</b> (add the tenant id to every log line and metric), top tenants by load, queue age per tenant, rate-limit hits, and automated leak-test results.</li>
+  </ul>
+  <p><b>At 10x scale</b> (100,000 tenants): several shared database clusters with a tenant-to-shard directory so tenants can be moved between them, dedicated silos for the biggest tenants, a per-region setup so tenants' data stays in their own country, automated per-tenant migrations with a staged rollout, and a "cell" design: independent copies of the whole stack, each serving a few thousand tenants, so a failure affects only one cell.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 470" role="img" aria-label="Multi-tenant architecture. Tenant users call an API gateway that verifies the token, finds the tenant and applies per-tenant rate limits. The app service reads per-tenant config and flags, uses a tenant-aware cache, and queries a shared Postgres database with row-level security. Large tenants are routed to a dedicated database. Usage counters feed billing.">
+      <defs><marker id="ar-m5-14" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="95" height="55" rx="8"/>
+        <rect x="150" y="40" width="120" height="55" rx="8"/>
+        <rect x="310" y="40" width="115" height="55" rx="8"/>
+        <rect x="470" y="40" width="155" height="55" rx="8"/>
+        <rect x="150" y="170" width="120" height="55" rx="8"/>
+        <rect x="310" y="170" width="115" height="55" rx="8"/>
+        <rect x="150" y="300" width="120" height="55" rx="8"/>
+        <rect x="310" y="300" width="115" height="55" rx="8"/>
+        <rect x="470" y="300" width="155" height="55" rx="8"/>
+        <path d="M110 67 H148" marker-end="url(#ar-m5-14)"/>
+        <path d="M270 67 H308" marker-end="url(#ar-m5-14)"/>
+        <path d="M425 67 H468" marker-end="url(#ar-m5-14)"/>
+        <path d="M210 95 V168" marker-end="url(#ar-m5-14)"/>
+        <path d="M367 95 V168" marker-end="url(#ar-m5-14)"/>
+        <path d="M367 225 V298" marker-end="url(#ar-m5-14)"/>
+        <path d="M210 225 V298" marker-end="url(#ar-m5-14)"/>
+        <path d="M425 82 H447 V327 H468" marker-end="url(#ar-m5-14)" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="62" y="64" font-size="14" font-weight="700">Tenant</text>
+        <text x="62" y="82" font-size="13">staff apps</text>
+        <text x="210" y="62" font-size="14" font-weight="700">API gateway</text>
+        <text x="210" y="80" font-size="13">token to tenant id</text>
+        <text x="367" y="64" font-size="14" font-weight="700">App service</text>
+        <text x="367" y="82" font-size="13">tenant in context</text>
+        <text x="547" y="62" font-size="14" font-weight="700">Config + flags</text>
+        <text x="547" y="80" font-size="13">per tenant, cached</text>
+        <text x="210" y="192" font-size="14" font-weight="700">Rate limits</text>
+        <text x="210" y="210" font-size="13">counters per tenant</text>
+        <text x="367" y="192" font-size="14" font-weight="700">Cache</text>
+        <text x="367" y="210" font-size="13">keys start t:{tenant}</text>
+        <text x="210" y="322" font-size="14" font-weight="700">Metering</text>
+        <text x="210" y="340" font-size="13">usage, billing</text>
+        <text x="367" y="322" font-size="14" font-weight="700">Shared DB</text>
+        <text x="367" y="340" font-size="13">tenant_id + RLS</text>
+        <text x="547" y="322" font-size="14" font-weight="700">Dedicated DB</text>
+        <text x="547" y="340" font-size="13">for a large tenant</text>
+        <text x="129" y="60" font-size="13">1</text>
+        <text x="289" y="60" font-size="13">2</text>
+        <text x="447" y="60" font-size="13">3</text>
+        <text x="224" y="138" font-size="13" text-anchor="start">limit</text>
+        <text x="381" y="138" font-size="13" text-anchor="start">4</text>
+        <text x="381" y="268" font-size="13" text-anchor="start">5</text>
+        <text x="460" y="205" font-size="13" text-anchor="start">6 routed by tenant</text>
+        <text x="224" y="268" font-size="13" text-anchor="start">usage</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="395" font-size="13">1. Request with a signed token; the gateway reads the tenant id from the token, never from the body</text>
+        <text x="15" y="413" font-size="13">2. Per-tenant rate limit, then the app service; 3. config and feature flags decide what this tenant may use</text>
+        <text x="15" y="431" font-size="13">4. Cache keys always carry the tenant id; 5. the database sets the tenant and RLS filters every query</text>
+        <text x="15" y="449" font-size="13">6. A large or regulated tenant is sent to its own database; usage events go to metering and billing</text>
+      </g>
+    </svg>
+    <figcaption>The tenant id enters at the gateway and travels to every layer: limits, cache keys, database rules and billing.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-14 multi-tenant.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=multi-tenant+SaaS+architecture+database+per+tenant+vs+shared+schema" target="_blank" rel="noopener">YouTube search: "multi-tenant SaaS architecture database per tenant vs shared schema"</a>
+      <span class="meta">Pick a short talk or explainer. Watch the part comparing the tenancy models, and note the noisy neighbour discussion.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Supabase+row+level+security+explained" target="_blank" rel="noopener">YouTube search: "Supabase row level security explained"</a>
+      <span class="meta">Pick the official Supabase video if it appears. Watch how a policy is written and tested.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.postgresql.org/docs/current/ddl-rowsecurity.html" target="_blank" rel="noopener">PostgreSQL docs: Row security policies</a>
+      <span class="meta">Read the first page and look for the sentences about table owners and <code>FORCE ROW LEVEL SECURITY</code>. This is the gotcha from the lesson.</span></li>
+    <li><a href="https://supabase.com/docs/guides/database/postgres/row-level-security" target="_blank" rel="noopener">Supabase docs: Row Level Security</a>
+      <span class="meta">Read the intro and the first policy examples. See how Supabase uses roles such as <code>authenticated</code>.</span></li>
+    <li><a href="https://roadmap.sh/system-design" target="_blank" rel="noopener">roadmap.sh: System design</a>
+      <span class="meta">Skim to see where multi-tenancy and isolation sit among the other topics.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 25 to 30 for the SQL)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design a multi-tenant SaaS" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes.</li>
+    <li>In the deep dives, draw the three-column tenancy table from memory and say which one you pick and why. Then explain what RLS protects against.</li>
+    <li>Stop the recording and save it as <code>m5-14 mock</code>, and the drawing as <code>m5-14 multi-tenant-mock.excalidraw</code>. Compare with the lesson and note what you missed.</li>
+  </ol>
+
+  <h3>B. Row-level security in the Supabase SQL Editor (25 to 30 minutes)</h3>
+  <p class="warn"><b>Use a scratch project, not a real one.</b> This script creates tables called <code>tenants</code> and <code>orders</code>. If your project already has tables with those names, stop and use a different project (or rename them everywhere in the script). Run each block on its own: select all the old text with <kbd>Ctrl</kbd> + <kbd>A</kbd>, paste the new text, press <span class="ui">Run</span> (or <kbd>Ctrl</kbd> + <kbd>Enter</kbd>). The names, rows and tenants here are made-up examples.</p>
+
+  <p class="tip"><b>If a result seems to be missing.</b> Depending on the editor version, the results panel may show one tab per statement, or only the result of the <b>last</b> statement. In Part 3 and 4 our blocks end with <code>commit;</code>, which returns nothing. If you only see <span class="ui">Success. No rows returned</span> and no rows, the <code>select</code> result is hidden. Use this variant, which saves the rows in a temporary table and reads them after the commit (use a new table name each time, for example <code>seen_2</code>):
+<pre><code>begin;
+set local role authenticated;
+set local app.tenant_id = '1';
+create temp table seen_1 as select id, tenant_id, item from orders order by id;
+commit;
+select * from seen_1;</code></pre>
+  We tested the plain blocks and this variant on a real Postgres; the rows are the same either way.</p>
+
+  <h3>Part 1: tables and data</h3>
+  <ol class="steps">
+    <li>Open your Supabase dashboard in Chrome and open a project. Click <span class="ui">SQL Editor</span> in the left sidebar, then <span class="ui">+ New query</span> (it may be a plus icon).</li>
+    <li>Paste this and press <span class="ui">Run</span>:
+<pre><code>create table tenants (
+  id   int  primary key,
+  name text not null
+);
+
+create table orders (
+  id           bigint generated always as identity primary key,
+  tenant_id    int  not null references tenants (id),
+  item         text not null,
+  amount_paise int  not null
+);
+
+create index orders_tenant_idx on orders (tenant_id);
+
+insert into tenants (id, name) values (1, 'Tenant One'), (2, 'Tenant Two');
+
+insert into orders (tenant_id, item, amount_paise) values
+  (1, 'Masala dosa', 9000), (1, 'Filter coffee', 4000), (1, 'Idli', 6000),
+  (2, 'Paneer tikka', 21000), (2, 'Naan', 5000);
+
+select tenant_id, count(*) as orders
+from orders group by tenant_id order by tenant_id;</code></pre>
+      You should see two rows: <code>tenant_id 1</code> with <code>orders 3</code>, and <code>tenant_id 2</code> with <code>orders 2</code>. There are 5 orders in total.</li>
+  </ol>
+
+  <h3>Part 2: turn on RLS and write the policy</h3>
+  <ol class="steps">
+    <li>Paste this and press <span class="ui">Run</span>:
+<pre><code>alter table tenants enable row level security;
+alter table orders  enable row level security;
+
+-- A row is visible (and writable) only if its tenant_id equals the tenant
+-- named in the session setting app.tenant_id.
+-- nullif(..., '') turns an empty or missing setting into NULL, which matches no row.
+create policy tenant_isolation on orders
+  using      (tenant_id = nullif(current_setting('app.tenant_id', true), '')::int)
+  with check (tenant_id = nullif(current_setting('app.tenant_id', true), '')::int);
+
+create policy own_tenant on tenants
+  using (id = nullif(current_setting('app.tenant_id', true), '')::int);
+
+-- Let the app role use the tables. (Supabase usually grants this already; running it again is harmless.)
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on orders to authenticated;
+grant select on tenants to authenticated;
+
+select count(*) as orders_seen_by_owner from orders;</code></pre>
+      You should see <code>orders_seen_by_owner</code> equal to <b>5</b>. That is the gotcha, in action: you are running as the <b>owner</b> of the tables (the <code>postgres</code> role in the editor). Owners <b>bypass</b> row-level security, so RLS is switched on and the owner still sees everything. Never test RLS as the owner.
+      <br>What the policy says: <code>using</code> is the rule for rows that a query may <b>see</b> (and update or delete), and <code>with check</code> is the rule for rows a query may <b>write</b>. <code>current_setting('app.tenant_id', true)</code> reads a custom setting; the <code>true</code> means "return empty instead of an error if it was never set".</li>
+  </ol>
+
+  <h3>Part 3: see each tenant's own rows</h3>
+  <p>We now pretend to be the app. In one run we start a transaction, switch to the non-owner role <code>authenticated</code>, name the tenant, query, and commit. <code>set local</code> lasts only until the transaction ends, so nothing leaks into the next run.</p>
+  <ol class="steps">
+    <li><b>Tenant 1.</b> Paste and run:
+<pre><code>begin;
+set local role authenticated;
+set local app.tenant_id = '1';
+select id, tenant_id, item from orders order by id;
+commit;</code></pre>
+      You should see exactly <b>3 rows</b>: <code>1 Masala dosa</code>, <code>2 Filter coffee</code>, <code>3 Idli</code>, all with <code>tenant_id 1</code>. There was no <code>where tenant_id = 1</code> in the query. The database added it.</li>
+    <li><b>Tenant 2.</b> Same block, with the tenant changed to <code>'2'</code>:
+<pre><code>begin;
+set local role authenticated;
+set local app.tenant_id = '2';
+select id, tenant_id, item, amount_paise from orders order by id;
+commit;</code></pre>
+      You should see <b>2 rows</b>: <code>4 Paneer tikka 21000</code> and <code>5 Naan 5000</code>. Tenant 2 cannot see tenant 1's orders.</li>
+    <li><b>The tenants table too.</b> Run:
+<pre><code>begin;
+set local role authenticated;
+set local app.tenant_id = '1';
+select id, name from tenants;
+commit;</code></pre>
+      You should see <b>one row</b>: <code>1 Tenant One</code>. Tenant 1 does not even learn that tenant 2 exists.</li>
+    <li><b>Forget to set the tenant.</b> This is the "developer forgot" case:
+<pre><code>begin;
+set local role authenticated;
+select count(*) as visible_orders from orders;
+commit;</code></pre>
+      You should see <code>visible_orders 0</code>. With no tenant named, nothing is visible. A missing tenant fails <b>closed</b> (shows nothing), not open (shows everything). That is the behaviour you want.</li>
+    <li><b>The owner trap again.</b> Run this and notice what you get:
+<pre><code>begin;
+set local app.tenant_id = '1';
+select count(*) as orders_without_role_switch from orders;
+commit;</code></pre>
+      You should see <code>5</code>, not 3. The tenant is set, but we did not switch to <code>authenticated</code>, so we are still the owner and the policy is skipped. This is exactly what happens in real apps that connect as the table owner. The fix is to connect as a non-owner role, or to run <code>alter table orders force row level security;</code>, which makes even the owner follow the policy. (Even <b>force</b> does not apply to superusers or roles with the <code>BYPASSRLS</code> attribute, so in your editor, where you may be one of those, the role switch above is the reliable test.)</li>
+  </ol>
+
+  <h3>Part 4: tenants cannot write into each other's data</h3>
+  <ol class="steps">
+    <li><b>Try to insert an order for the wrong tenant.</b> We are tenant 1, trying to create an order for tenant 2:
+<pre><code>begin;
+set local role authenticated;
+set local app.tenant_id = '1';
+insert into orders (tenant_id, item, amount_paise) values (2, 'Sneaky order', 100);
+commit;</code></pre>
+      You should see a red error with the text <code>new row violates row-level security policy for table "orders"</code> (it may be shown with a code like 42501). That error comes from the <code>with check</code> part. If the next thing you run complains <code>current transaction is aborted</code>, run <code>rollback;</code> on its own once, and then continue.</li>
+    <li><b>Try to change another tenant's rows.</b> Tenant 1 tries to zero out tenant 2's prices:
+<pre><code>begin;
+set local role authenticated;
+set local app.tenant_id = '1';
+update orders set amount_paise = 0 where tenant_id = 2 returning id;
+commit;</code></pre>
+      You should see <span class="ui">Success. No rows returned</span>: zero rows were updated, because tenant 2's rows are invisible to tenant 1. There is no error, since from tenant 1's point of view those rows simply do not exist.</li>
+    <li><b>Check that nothing changed.</b> Back as the owner, run:
+<pre><code>select tenant_id, count(*) as n, sum(amount_paise) as total
+from orders group by tenant_id order by tenant_id;</code></pre>
+      You should see tenant 1 with <code>n 3, total 19000</code> and tenant 2 with <code>n 2, total 26000</code>. (9000 + 4000 + 6000 = 19000, and 21000 + 5000 = 26000.) The sneaky insert and update did nothing.</li>
+    <li><b>A legitimate insert works.</b> Tenant 1 adds its own order:
+<pre><code>begin;
+set local role authenticated;
+set local app.tenant_id = '1';
+insert into orders (tenant_id, item, amount_paise) values (1, 'Vada', 3000) returning item, tenant_id;
+commit;</code></pre>
+      You should see one row: <code>Vada</code>, <code>1</code>.</li>
+    <li><b>Check that the setting did not leak out.</b> Run:
+<pre><code>select current_user, current_setting('app.tenant_id', true) as leftover;</code></pre>
+      You should see <code>current_user</code> as <code>postgres</code> and <code>leftover</code> as an empty value (or null). The role switch and the tenant setting disappeared at the end of each transaction, which is why we used <code>set local</code>.</li>
+  </ol>
+
+  <h3>Part 5: clean up</h3>
+  <ol class="steps">
+    <li>Run the lines below. The editor may ask you to confirm a "destructive" query; confirm it:
+<pre><code>drop table orders;
+drop table tenants;</code></pre>
+      You should see <span class="ui">Success. No rows returned</span>. Dropping the tables also removes their policies.</li>
+    <li>Write three sentences in your notes: "RLS is a lock inside the database that works even when app code forgets a filter." "The table owner bypasses it, so test as a non-owner role." "Use <code>set local</code> and keep it inside a transaction."</li>
+  </ol>
+
+  <h3>C. Variation questions</h3>
+  <details><summary>1. One restaurant chain has 200 outlets and does 100 times the traffic of a normal tenant. What do you do?</summary>
+    <p>First give it higher limits for its plan, and move its reports to a read replica. If it still affects others, move it to a dedicated database (the silo): copy its rows, switch its tenant record to point to the new database, and let the gateway route to it. The app code does not change, since it already carries the tenant id and asks "where does this tenant live?".</p></details>
+  <details><summary>2. A tenant asks for "delete all our data" the day they leave. What do you do?</summary>
+    <p>Mark the tenant as pending deletion (soft delete) and block logins. After a grace period, delete in batches: all rows with that tenant id in every table, the cache keys with its prefix, its search index documents, its files under its storage path, and its queued jobs. Backups expire on their own schedule. Keep an audit record of when and what was deleted, and confirm completion to the tenant.</p></details>
+  <details><summary>3. Add a "super admin" screen that shows data across all tenants, for support staff. How do you do it safely?</summary>
+    <p>Do not weaken the tenant policy. Use a separate role (or a separate service) with its own permission and its own policy or the bypass attribute, reachable only from an internal network and only for a few authenticated staff. Log every access, and prefer read-only views or tools that show only what support needs, with the ability to act "as" one tenant at a time.</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is row-level security and why use it when the app already filters by tenant?</summary><p>It is a rule inside the database that adds a tenant filter to every query automatically. App code can forget a filter in one query; RLS makes that mistake return nothing instead of leaking another tenant's data. It is a second lock.</p></details>
+  <details><summary>What breaks if the app connects to Postgres as the table owner?</summary><p>The owner bypasses RLS by default, so the policies are never applied and every tenant can see all rows, even though RLS looks enabled. Connect as a non-owner role, or use <code>force row level security</code> (which still does not bind superusers or BYPASSRLS roles).</p></details>
+  <details><summary>What breaks if you use a plain <code>set app.tenant_id = ...</code> with a connection pool?</summary><p>A session-level setting stays on the pooled connection after the request ends, so the next request that borrows it may run as the previous tenant. Use <code>set local</code> inside a transaction so the setting disappears at commit.</p></details>
+  <details><summary>What breaks if the cache key is just <code>menu:today</code> in a shared cache?</summary><p>The first tenant to fill the key stores its menu, and every other tenant is served that menu: a cross-tenant leak that also looks like a plain caching bug. Always prefix keys with the tenant id, such as <code>t:42:menu:today</code>.</p></details>
+  <details><summary>What breaks if one tenant runs a huge import on the shared database and nothing limits it?</summary><p>It uses the CPU, connections and I/O that the other tenants share, so everyone slows down (a noisy neighbour). Use per-tenant rate limits and quotas, fair job queues, replicas for reports, and as a last resort move that tenant to its own database.</p></details>
+  <details><summary>For 5,000 small restaurants, would you pick shared tables, schema per tenant, or database per tenant? Why?</summary><p>Shared tables with a <code>tenant_id</code> and RLS. Thousands of tiny tenants make per-tenant schemas or databases too costly to run and migrate (thousands of copies of every change). Keep the ability to move a big or regulated tenant into its own database later.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would start with shared tables and a tenant_id column on every table, with indexes that start with tenant_id, and enforce isolation twice: in the app with a tenant context taken from the verified token, and in the database with row-level security policies."</blockquote>
+  <blockquote>"For fairness I would add per-tenant rate limits and quotas at the gateway, tenant-prefixed cache keys, and fair job queues. A very large or regulated tenant can be moved to its own database, so the model is a hybrid."</blockquote>
+  <p><b>Common follow-up question:</b> How do you make sure there is no data leak between tenants?</p>
+  <p>Defence in depth: tenant id from the signed token only, RLS in the database with the app connecting as a non-owner role, tenant-aware cache and file paths, and automated tests that create two tenants and assert that every endpoint and every direct-id request returns nothing from the other tenant. Also add the tenant id to logs so that any suspicious access is visible.</p>
+  <p><b>Common follow-up question:</b> How do you onboard thousands of tenants without manual work?</p>
+  <p>Automate it as an idempotent workflow: create the tenant record, admin user, default config and sample data, and only for premium plans provision a dedicated database. Shared tables mean a new tenant is just rows, so onboarding takes seconds and costs almost nothing.</p>
+</section>
+
+</main>
+</body>
+</html>

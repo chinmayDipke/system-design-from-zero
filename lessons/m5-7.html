@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a payment system</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-7">
+<main class="lesson">
+
+<section class="story">
+  <h2>The society maintenance collector</h2>
+  <p>In a housing society, residents pay maintenance to one trusted collector instead of each paying the society's bank directly. The collector writes every payment in a notebook: "Flat 402 paid Rs 500". Every evening the collector deposits the money and keeps a tiny fee for the trouble.</p>
+  <p>Three things can go wrong, and a good collector prepares for each. First, <b>the same payment gets written twice</b> because someone shouted the receipt twice. So every receipt has a unique number. Second, <b>"did Flat 402 pay or not?"</b>: the resident says yes, the collector's hand was busy and does not remember. So at the end of the week the collector checks the notebook against the bank statement and fixes any mismatch. Third, <b>a refund</b>: you never tear a page out of the notebook; you write a new line that cancels the old one.</p>
+  <p>A payment system is that collector at a very large scale: nobody may be charged twice, no rupee may vanish, and every number must be explainable later. Money is the one area where "mostly correct" is not allowed.</p>
+</section>
+
+<section class="explain">
+  <h2>Design a payment system (like Razorpay or UPI checkout)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. Draw the moment the customer pays and ask: how does my server <b>find out</b> the payment succeeded, and what if that message never arrives?</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. The key ideas come from <a href="m3-4.html">idempotency</a>, <a href="m2-3.html">ACID transactions</a> and <a href="m3-8.html">security basics</a>. The design here is a platform that takes payments for merchants by connecting to banks and UPI networks (what a payment gateway or PSP does), and also what a merchant does when integrating one.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>A merchant creates an <b>order</b> for an amount; the customer pays by UPI, card, netbanking or wallet.</li>
+    <li>The system tracks the payment through its states and tells the merchant the result (<b>webhook</b> and status API).</li>
+    <li>Keep a correct <b>record of all money movement</b> (a ledger), and settle money to merchants.</li>
+    <li><b>Refunds</b>, full or partial.</li>
+    <li>Daily <b>reconciliation</b> with banks and partners.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Correctness above everything:</b> never charge twice, never lose a payment, never show a wrong balance. Strong consistency for money data (<a href="m3-1.html">CAP</a>: choose consistency).</li>
+    <li><b>Durable and auditable:</b> every change is recorded and can be explained to a bank or regulator years later.</li>
+    <li><b>Highly available</b> for checkout, with graceful behaviour when a bank is slow or down.</li>
+    <li><b>Secure</b> and compliant (PCI DSS for cards).</li>
+  </ul>
+  <p><b>Out of scope:</b> building the bank or card-network connections themselves, fraud and risk scoring (mention as a next step), invoicing and GST, subscriptions.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 10 million payments a day.</p>
+  <ul>
+    <li><b>Payments:</b> 10,000,000 / 100,000 s = <b>100 a second</b> on average. A festival sale at 10x: <b>1,000 a second</b>.</li>
+    <li><b>Webhooks:</b> a payment produces 2 to 3 events (created, authorised, captured): about 300 a second on average and 3,000 at peak.</li>
+    <li><b>Ledger rows:</b> about 4 rows per payment (payment, fee, plus later settlement and refund entries): 40,000,000 rows a day. At about 100 bytes: 4 GB a day, or about <b>1.5 TB a year</b> (4 GB x 365). Payments rows: 10,000,000 x 500 B = 5 GB a day, about 1.8 TB a year.</li>
+    <li><b>Amounts:</b> Rs 500 is stored as <b>50,000 paise</b> in a 64-bit integer. The largest 64-bit number is about 9.2 x 10^18, which is far more paise than any payment needs.</li>
+  </ul>
+  <p>The numbers are modest: one well-run PostgreSQL primary (with replicas) handles 1,000 writes a second. <b>The challenge is correctness, not size.</b></p>
+
+  <h3>3. API</h3>
+<pre><code>POST /v1/orders                         Idempotency-Key: k1
+  { "amount_paise": 50000, "currency": "INR", "receipt": "inv_123" }
+  201 -> { "order_id": "ord_9" }
+
+(Customer pays on the checkout page. Card/UPI details go to the PSP, not to us.)
+
+POST /v1/payments/verify                (called by our own frontend after checkout)
+  { "order_id": "ord_9", "payment_id": "pay_5", "signature": "..." }
+  200 -> { "status": "captured" }
+
+POST /webhooks/psp                      (called BY the PSP; header carries a signature)
+  { "event": "payment.captured", "event_id": "evt_77", "payload": { ... } }
+  200 -> {}                             (reply fast, process safely)
+
+GET  /v1/payments/{id}                  -> current status
+POST /v1/payments/{id}/refunds          Idempotency-Key: k2
+  { "amount_paise": 20000 }  -> 201 { "refund_id": "rfd_3", "status": "pending" }</code></pre>
+
+  <h3>4. Data model</h3>
+<pre><code>orders         (order_id, merchant_id, amount_paise BIGINT, currency, status,
+                idempotency_key UNIQUE, created_at)
+payments       (payment_id, order_id, psp_payment_id UNIQUE, status,
+                amount_paise BIGINT, method, failure_code, updated_at)
+webhook_events (event_id UNIQUE, payload, received_at, processed_at)
+refunds        (refund_id, payment_id, amount_paise, status, idempotency_key UNIQUE)
+ledger_entries (id, txn_id, account, direction [debit|credit],
+                amount_paise BIGINT CHECK (> 0), created_at)    -- append-only</code></pre>
+  <p><b>Why SQL:</b> payments need transactions (update the status and write the ledger rows together or not at all), unique constraints (the safety net for idempotency) and strong consistency. PostgreSQL fits. <b>Why integer paise:</b> floating-point numbers cannot store most decimal fractions exactly, so sums drift. You will see this below. Integers never drift, and the PSP APIs themselves take amounts in the smallest unit.</p>
+
+  <h3>5. High-level design</h3>
+  <ol>
+    <li>The customer taps "Pay" on the merchant's site. The merchant server <b>creates an order</b> at the PSP and saves it as <code>CREATED</code>.</li>
+    <li>The PSP's <b>checkout</b> opens (a hosted page or an embedded widget). The customer enters card details or approves on a UPI app. <b>Card data goes straight to the PSP</b>, never through the merchant's servers.</li>
+    <li>The PSP talks to the <b>bank, UPI network or card network</b>. The customer proves identity (OTP, UPI PIN).</li>
+    <li>The PSP sends a <b>webhook</b> to the merchant with the result. (The browser also returns with a payment id and signature, but the browser can be closed or lie; the webhook is the source of truth.)</li>
+    <li>The webhook handler <b>verifies the signature</b>, <b>dedupes</b> by event id, and in one database transaction updates the payment status and writes the <b>ledger</b> entries.</li>
+    <li>The order is marked <b>paid</b> and fulfilment starts (a message on a <a href="m2-11.html">queue</a>, see <a href="m5-3.html">notifications</a>).</li>
+    <li>Later the PSP <b>settles</b> the money to the merchant's bank account and sends a settlement file. A <b>reconciliation job</b> matches it against our records.</li>
+  </ol>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: the payment state machine, idempotency and webhooks</h4>
+  <p>A payment moves through <b>states</b>, and only in allowed directions:</p>
+  <table>
+    <tr><th>State</th><th>Meaning</th><th>Can move to</th></tr>
+    <tr><td><code>created</code></td><td>Order exists, no attempt yet</td><td>pending, failed (expired)</td></tr>
+    <tr><td><code>pending</code></td><td>Customer is paying, bank has not answered. Also used when we <b>do not know</b></td><td>authorised, captured, failed</td></tr>
+    <tr><td><code>authorised</code></td><td>Bank agreed to reserve the money (cards)</td><td>captured, failed</td></tr>
+    <tr><td><code>captured</code></td><td>Money is ours: the order is paid</td><td>refunded (fully or partly)</td></tr>
+    <tr><td><code>failed</code></td><td>Bank said no, or time ran out</td><td>(final)</td></tr>
+    <tr><td><code>refunded</code></td><td>Money returned to the customer</td><td>(final)</td></tr>
+  </table>
+  <p>Enforce transitions in code and with a conditional update (<code>UPDATE payments SET status='captured' WHERE id=? AND status IN ('pending','authorised')</code>). Webhooks can arrive <b>late, twice or out of order</b>; a stale "pending" event must never overwrite "captured".</p>
+  <p><b>Idempotency</b> (<a href="m3-4.html">last time we met it</a>): a customer double-clicks "Pay", the network times out and the app retries, or the PSP resends a webhook. Each of these must not cause a second charge or a second ledger entry. Three tools: (1) an <b>idempotency key</b> on every create call, with a unique index, so a repeat returns the stored result; (2) a <code>webhook_events</code> table with a unique <code>event_id</code>: insert first, and if it already exists, return 200 and do nothing; (3) the unique <code>psp_payment_id</code> on payments.</p>
+  <p><b>Webhook safety:</b> verify the signature, which is an HMAC (a keyed hash) of the <b>raw request body</b> using a secret shared with the PSP; compare it in constant time and reject mismatches, so a stranger cannot post "payment captured" to your endpoint. Reply <code>200</code> quickly (save the event, then process), because the PSP will retry for hours or days if you time out. As a safety net for lost webhooks, a job re-checks the status with the PSP for any payment still <code>pending</code> after a few minutes.</p>
+
+  <h4>Deep dive B: the double-entry ledger</h4>
+  <p>A <b>ledger</b> records money movement as rows that are never edited or deleted. <b>Double-entry</b> means every movement has at least two rows: money <b>leaves</b> one account and <b>arrives</b> in another, and the total debits equal the total credits. If they ever differ, you have a bug, and you can find it. Example: the customer pays Rs 500, our fee is 2% (Rs 10):</p>
+  <table>
+    <tr><th>txn_id</th><th>account</th><th>direction</th><th>amount (paise)</th><th>meaning</th></tr>
+    <tr><td>pay_001</td><td>bank_cash</td><td>debit</td><td>50,000</td><td>Rs 500 arrived in our bank</td></tr>
+    <tr><td>pay_001</td><td>merchant_payable</td><td>credit</td><td>49,000</td><td>We owe the merchant Rs 490</td></tr>
+    <tr><td>pay_001</td><td>fee_revenue</td><td>credit</td><td>1,000</td><td>Our fee, Rs 10</td></tr>
+  </table>
+  <p>Debits: 50,000. Credits: 49,000 + 1,000 = 50,000. Balanced. (Money we hold for others is a <b>liability</b>, which is why "merchant_payable" is on the credit side.) A <b>refund</b> is not an edit: it is a <b>new</b> pair of rows going the other way. Balances are computed by summing rows, or kept in a balances table updated in the <b>same transaction</b>. You will build a small ledger yourself below.</p>
+  <p>Never store money as a float. Use integer paise (or a fixed-precision <code>numeric</code> type) and decide in one place how fees are rounded.</p>
+
+  <h4>Deep dive C: unknown outcomes, reconciliation, refunds and card data</h4>
+  <ul>
+    <li><b>The "unknown" state.</b> You call the PSP and the request <b>times out</b>. Did the order get created? Did the charge happen? You <b>do not know</b>. Do not assume it failed (the customer may be charged) and do not blindly retry (a second charge). Mark it <code>pending</code>/unknown, then either retry the <b>same</b> request with the <b>same idempotency key</b>, or ask the PSP for the status using your own reference. UPI makes this common: the customer's bank may take a while, and a debit can be "pending" for minutes. Only a final status from the PSP moves the payment on, and if money was taken but the payment failed, it is reversed or refunded.</li>
+    <li><b>Reconciliation.</b> Every day, compare three sources: <b>our records</b>, the <b>PSP's report</b> and the <b>bank's settlement file/statement</b>. Match each line by the PSP payment id and amount. Three kinds of mismatch: in the file but not in ours (we missed a webhook: fix it); in ours but not in the file (we think it is paid but it is not: investigate before shipping goods); amounts differ (fees, partial refunds). Mismatches go to an exceptions queue for a human. This job is why double-entry and immutable rows matter: you can explain every rupee.</li>
+    <li><b>Refunds.</b> Create a refund row (with an idempotency key), ask the PSP to refund, and on success write reversing ledger entries. Before accepting, lock the payment row (<code>SELECT ... FOR UPDATE</code>, as in <a href="m5-6.html">the ticket lesson</a>) and check that <b>refunds so far + this one</b> is not more than the amount captured, or two simultaneous refund requests could each pass the check and refund too much. Refunds are asynchronous too: status <code>pending</code> then <code>processed</code>.</li>
+    <li><b>PCI DSS and tokens.</b> PCI DSS is the security standard for anyone who handles card data. The simplest rule: <b>never let card numbers touch your servers or database</b>, and never store the CVV at all. Use the PSP's hosted checkout or embedded fields, so card data goes straight to the PSP, and keep only a <b>token</b> (a random stand-in value) plus the last four digits for display. This also shrinks your compliance work enormously. In India, RBI rules also stop merchants from storing card numbers; saved cards work through tokens issued by the card network and PSP. Check current rules with the PSP before building card-on-file features.</li>
+  </ul>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Correctness over latency:</b> we accept a few milliseconds more for transactions, constraints and webhook dedupe. A fast wrong answer is worse than a slower right one.</li>
+    <li><b>Webhook versus polling:</b> webhooks are instant but can be lost; polling is reliable but slow. Use both: webhook first, a status check as a safety net.</li>
+    <li><b>No distributed transactions:</b> the payment update and the "order paid" message must both happen, but a database and a queue cannot share one transaction. Write the event to an <b>outbox table</b> in the same transaction as the payment update, and a relay publishes it (at-least-once, with idempotent consumers).</li>
+    <li><b>Bottlenecks:</b> hot merchants, ledger table growth (partition by month), the single primary. Dashboards read from replicas.</li>
+    <li><b>Multiple PSPs or banks:</b> route by success rate and cost, and fail over when one degrades (<a href="m3-6.html">circuit breaker</a>).</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): payment success rate per method and bank, webhook lag, count of payments stuck in pending, reconciliation mismatches (the most important alert).</li>
+  </ul>
+  <p><b>At 10x scale</b> (100 million payments a day): shard orders and payments by merchant or order id, partition the ledger by time, keep the webhook endpoint thin with a queue behind it, use several PSP connections with smart routing, and make reconciliation incremental instead of one nightly job.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 480" role="img" aria-label="Payment flow. The browser asks the merchant server, which creates an order at the PSP. The customer pays at the PSP checkout. The PSP talks to the bank, UPI or card network, then sends a signed webhook to the webhook handler, which updates the payments and ledger database and starts fulfilment. A reconciliation job compares the database with the settlement file.">
+      <defs><marker id="ar-m5-7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="60" width="90" height="50" rx="8"/>
+        <rect x="140" y="60" width="120" height="60" rx="8"/>
+        <rect x="300" y="60" width="110" height="60" rx="8"/>
+        <rect x="450" y="60" width="175" height="60" rx="8"/>
+        <rect x="140" y="190" width="120" height="60" rx="8"/>
+        <rect x="300" y="190" width="110" height="55" rx="8"/>
+        <rect x="450" y="190" width="175" height="55" rx="8"/>
+        <rect x="140" y="300" width="120" height="55" rx="8"/>
+        <rect x="300" y="300" width="110" height="55" rx="8"/>
+        <path d="M105 85 H138" marker-end="url(#ar-m5-7)"/>
+        <path d="M260 90 H298" marker-end="url(#ar-m5-7)"/>
+        <path d="M410 90 H448" marker-end="url(#ar-m5-7)"/>
+        <path d="M60 60 V32 H355 V58" marker-end="url(#ar-m5-7)" stroke-dasharray="5 4"/>
+        <path d="M355 120 V188" marker-end="url(#ar-m5-7)"/>
+        <path d="M300 217 H262" marker-end="url(#ar-m5-7)"/>
+        <path d="M410 217 H448" marker-end="url(#ar-m5-7)"/>
+        <path d="M200 120 V188" marker-end="url(#ar-m5-7)"/>
+        <path d="M200 300 V252" marker-end="url(#ar-m5-7)"/>
+        <path d="M300 327 H262" marker-end="url(#ar-m5-7)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="60" y="90" font-size="14" font-weight="700">Browser</text>
+        <text x="200" y="86" font-size="14" font-weight="700">Merchant</text>
+        <text x="200" y="104" font-size="14" font-weight="700">server</text>
+        <text x="355" y="86" font-size="14" font-weight="700">PSP</text>
+        <text x="355" y="104" font-size="13">gateway</text>
+        <text x="537" y="86" font-size="14" font-weight="700">Bank / UPI /</text>
+        <text x="537" y="104" font-size="14" font-weight="700">card network</text>
+        <text x="200" y="215" font-size="14" font-weight="700">Payments +</text>
+        <text x="200" y="233" font-size="14" font-weight="700">ledger DB</text>
+        <text x="355" y="213" font-size="14" font-weight="700">Webhook</text>
+        <text x="355" y="231" font-size="14" font-weight="700">handler</text>
+        <text x="537" y="213" font-size="14" font-weight="700">Order paid</text>
+        <text x="537" y="231" font-size="13">start fulfilment</text>
+        <text x="200" y="324" font-size="14" font-weight="700">Reconciliation</text>
+        <text x="200" y="342" font-size="13">job (daily)</text>
+        <text x="355" y="324" font-size="14" font-weight="700">Settlement</text>
+        <text x="355" y="342" font-size="13">file from PSP</text>
+        <text x="121" y="78" font-size="13">1a</text>
+        <text x="279" y="83" font-size="13">1b</text>
+        <text x="429" y="83" font-size="13">3</text>
+        <text x="281" y="210" font-size="13">5</text>
+        <text x="429" y="210" font-size="13">6</text>
+        <text x="207" y="24" font-size="13">2  customer pays at the PSP checkout</text>
+        <text x="368" y="160" font-size="13" text-anchor="start">4 webhook</text>
+        <text x="212" y="282" font-size="13" text-anchor="start">7</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="392" font-size="13">1. Our server creates an order at the PSP</text>
+        <text x="15" y="410" font-size="13">2. Customer pays on the PSP checkout</text>
+        <text x="15" y="428" font-size="13">3. PSP talks to bank / UPI / card network</text>
+        <text x="15" y="446" font-size="13">4. PSP sends a signed webhook to us</text>
+        <text x="330" y="392" font-size="13">5. Verify, dedupe, save state + ledger</text>
+        <text x="330" y="410" font-size="13">6. Order is paid: start fulfilment</text>
+        <text x="330" y="428" font-size="13">7. Daily: match records to settlement file</text>
+        <text x="330" y="458" font-size="13" font-weight="700">Card data never touches our servers.</text>
+      </g>
+    </svg>
+    <figcaption>The dashed arrow is the customer's card or UPI details going straight to the PSP. Our system learns the result from the signed webhook (step 4) and double-checks it every day (step 7).</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-7 payments.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+payment+system+design" target="_blank" rel="noopener">YouTube search: "ByteByteGo payment system design"</a>
+      <span class="meta">Short. Watch it all, especially the parts on idempotency and reconciliation.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=how+UPI+works+NPCI+PSP+bank+explained" target="_blank" rel="noopener">YouTube search: "how UPI works NPCI PSP bank explained"</a>
+      <span class="meta">Pick a short recent explainer. Watch the part showing who talks to whom when you scan a QR code.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://stripe.com/blog/idempotency" target="_blank" rel="noopener">Stripe blog: Designing robust and predictable APIs with idempotency</a>
+      <span class="meta">Read it all. It explains idempotency keys with payment examples.</span></li>
+    <li><a href="https://razorpay.com/docs/webhooks/" target="_blank" rel="noopener">Razorpay docs: Webhooks</a>
+      <span class="meta">Skim how webhooks are signed and verified, and how retries work.</span></li>
+    <li><a href="https://en.wikipedia.org/wiki/Double-entry_bookkeeping" target="_blank" rel="noopener">Wikipedia: Double-entry bookkeeping</a>
+      <span class="meta">Read the introduction and the "Debits and credits" idea only.</span></li>
+    <li><a href="https://www.pcisecuritystandards.org/" target="_blank" rel="noopener">PCI Security Standards Council</a>
+      <span class="meta">Find the short overview of PCI DSS on the home page; no need to read the standard.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 25 for the SQL)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design a payment system" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes.</li>
+    <li>In deep dives, draw the state machine with arrows, explain what happens when a webhook arrives twice, and walk through the ledger rows for a Rs 500 payment.</li>
+    <li>Stop the recording and save it as <code>m5-7 mock</code>, and the drawing as <code>m5-7 payments-mock.excalidraw</code>. Compare with the lesson and note what you missed.</li>
+  </ol>
+
+  <h3>B. Build a tiny double-entry ledger in Supabase</h3>
+  <p>Use a scratch project. The table is named <code>demo_ledger_entries</code> and you drop it at the end. Run each block on its own: select the old text with <kbd>Ctrl</kbd> + <kbd>A</kbd>, paste the new text and press <span class="ui">Run</span> (or <kbd>Ctrl</kbd> + <kbd>Enter</kbd>). Amounts are in <b>paise</b>, so Rs 500 is <code>50000</code>.</p>
+  <ol class="steps">
+    <li>Open your Supabase dashboard in Chrome and open a project. In the left sidebar click <span class="ui">SQL Editor</span>, then <span class="ui">+ New query</span> (it may be a plus icon).</li>
+    <li><b>Why not floats?</b> First a quick experiment:
+<pre><code>select
+  0.1::float8  + 0.2::float8  as float_sum,
+  0.1::numeric + 0.2::numeric as numeric_sum;</code></pre>
+      You should see <code>float_sum</code> equal to <code>0.30000000000000004</code> and <code>numeric_sum</code> equal to <code>0.3</code>. The float is slightly wrong. A payment system must not do that, so we use whole numbers of paise.</li>
+    <li>Create the ledger table. You should see <span class="ui">Success. No rows returned</span>:
+<pre><code>create table demo_ledger_entries (
+  id           bigint generated always as identity primary key,
+  txn_id       text   not null,   -- groups the rows of one money movement
+  account      text   not null,
+  direction    text   not null check (direction in ('debit', 'credit')),
+  amount_paise bigint not null check (amount_paise &gt; 0),
+  created_at   timestamptz not null default now()
+);
+
+-- Good habit: no public API access to this table
+alter table demo_ledger_entries enable row level security;</code></pre>
+      Notice the <code>check</code> rules: a direction must be debit or credit, and an amount must be above zero.</li>
+    <li>Record the Rs 500 payment as <b>two rows</b>, inserted by one statement so both rows are saved together or not at all:
+<pre><code>insert into demo_ledger_entries (txn_id, account, direction, amount_paise)
+values
+  ('pay_001', 'bank_cash',        'debit',  50000),
+  ('pay_001', 'merchant_payable', 'credit', 50000);</code></pre>
+      You should see <span class="ui">Success. No rows returned</span>.</li>
+    <li>Check that debits equal credits:
+<pre><code>select
+  sum(amount_paise) filter (where direction = 'debit')  as total_debits,
+  sum(amount_paise) filter (where direction = 'credit') as total_credits
+from demo_ledger_entries;</code></pre>
+      You should see <code>total_debits 50000</code> and <code>total_credits 50000</code>. Balanced.</li>
+    <li>See the balance of each account (positive means more debits than credits):
+<pre><code>select
+  account,
+  sum(case when direction = 'debit' then amount_paise else -amount_paise end) as net_debit_paise
+from demo_ledger_entries
+group by account
+order by account;</code></pre>
+      You should see <code>bank_cash 50000</code> and <code>merchant_payable -50000</code>. The two always cancel out.</li>
+    <li><b>Now a bug.</b> Pretend a developer saved only half of a payment (one row, no matching credit):
+<pre><code>insert into demo_ledger_entries (txn_id, account, direction, amount_paise)
+values ('pay_002', 'bank_cash', 'debit', 20000);</code></pre>
+      Run the totals query from step 5 again (the one that shows <code>total_debits</code>). You should now see <code>total_debits 70000</code> and <code>total_credits 50000</code>. The books do not balance, so something is wrong.</li>
+    <li><b>Find which payment is broken</b> with a check per transaction:
+<pre><code>select
+  txn_id,
+  sum(case when direction = 'debit' then amount_paise else -amount_paise end) as imbalance_paise
+from demo_ledger_entries
+group by txn_id
+having sum(case when direction = 'debit' then amount_paise else -amount_paise end) &lt;&gt; 0;</code></pre>
+      You should see one row: <code>pay_002</code> with <code>imbalance_paise 20000</code>. This is what a reconciliation job does at scale.</li>
+    <li><b>Fix it the right way:</b> not by editing the old row, but by adding the missing entry:
+<pre><code>insert into demo_ledger_entries (txn_id, account, direction, amount_paise)
+values ('pay_002', 'merchant_payable', 'credit', 20000);</code></pre>
+      Run the per-transaction query again: it should return no rows. Run the totals query: <code>70000</code> and <code>70000</code>.</li>
+    <li><b>Refund the first Rs 500.</b> A refund is a new pair of rows in the opposite direction, not a delete:
+<pre><code>insert into demo_ledger_entries (txn_id, account, direction, amount_paise)
+values
+  ('refund_001', 'merchant_payable', 'debit',  50000),
+  ('refund_001', 'bank_cash',        'credit', 50000);</code></pre>
+      Run the totals query from step 5: you should see <code>120000</code> and <code>120000</code>. Still balanced, and the history of both the payment and the refund is kept.</li>
+    <li><b>Optional, with a fee.</b> A Rs 500 payment where we keep a 2% fee (Rs 10) uses three rows:
+<pre><code>insert into demo_ledger_entries (txn_id, account, direction, amount_paise)
+values
+  ('pay_003', 'bank_cash',        'debit',  50000),
+  ('pay_003', 'merchant_payable', 'credit', 49000),
+  ('pay_003', 'fee_revenue',      'credit',  1000);</code></pre>
+      Run the totals query from step 5 once more: <code>170000</code> and <code>170000</code>. Then run the per-transaction query: it should still show no rows.</li>
+    <li>Click <span class="ui">Table Editor</span> and open <code>demo_ledger_entries</code> to look at your rows. Then clean up in the SQL Editor (it may ask you to confirm a "destructive" query):
+<pre><code>drop table demo_ledger_entries;</code></pre></li>
+  </ol>
+  <p class="tip">Skipped on purpose: a database rule that rejects an unbalanced transaction automatically. Real systems add one (for example a deferred constraint or a trigger that checks the sum when the transaction commits), plus a balances table. The idea is the same: debits must equal credits.</p>
+
+  <h3>C. Draw the payment state machine (10 minutes)</h3>
+  <ol class="steps">
+    <li>On a new Excalidraw canvas press <kbd>R</kbd> and draw boxes for <code>created</code>, <code>pending</code>, <code>authorised</code>, <code>captured</code>, <code>failed</code> and <code>refunded</code>.</li>
+    <li>Press <kbd>A</kbd> and draw only the allowed arrows from the table in deep dive A. Label each with its cause (for example "webhook: captured" or "timeout").</li>
+    <li>Circle the arrow you must never allow (<code>captured</code> back to <code>pending</code>) and write "late webhook: ignore" beside it. Save as <code>m5-7 states.excalidraw</code>.</li>
+  </ol>
+
+  <h3>D. Variation questions</h3>
+  <details><summary>1. The customer's bank debited the money, but the PSP shows the payment as pending for 10 minutes. What do you do?</summary>
+    <p>Keep the order in <code>pending</code>; do not ship and do not mark failed. Tell the customer "we are confirming your payment". A job checks the status with the PSP at growing intervals. If it ends as captured, continue as normal; if it ends as failed, the PSP reverses the debit to the customer, and we tell them. Never create a second payment for the same order meanwhile.</p></details>
+  <details><summary>2. The webhook handler crashes after updating the payment but before marking the order paid. What happens?</summary>
+    <p>If both steps are in one database transaction (or the "order paid" event goes into an outbox table in the same transaction), a crash leaves either both or neither done. When the PSP retries the webhook, dedupe by event id returns 200 if it was fully processed, or the handler runs again safely if it was not.</p></details>
+  <details><summary>3. Support a split payment: one Rs 1,000 order between two sellers, with a Rs 20 platform fee.</summary>
+    <p>One payment, one ledger transaction with more rows: debit bank 100000; credit seller_A_payable 49000 and seller_B_payable 49000; credit fee_revenue 2000. Debits 100000, credits 100000. A refund reverses the same rows in proportion.</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why store money as integer paise and not as a float?</summary><p>Floats cannot represent most decimal fractions exactly, so sums drift (0.1 + 0.2 is not exactly 0.3). Integers are exact, and PSP APIs also use the smallest currency unit.</p></details>
+  <details><summary>What breaks if you trust the browser's "payment success" redirect instead of the webhook?</summary><p>The user can close the tab before it returns, so you never learn about a real payment, or a malicious user can fake the redirect to get goods without paying. The signed webhook (plus a status check) is the source of truth.</p></details>
+  <details><summary>What breaks if the PSP sends the same webhook twice and you have no dedupe?</summary><p>You credit the merchant twice, write duplicate ledger entries and possibly ship two orders. Insert the event id into a table with a unique constraint first, and skip if it already exists.</p></details>
+  <details><summary>What breaks if a call to the PSP times out and you just retry it with a new request?</summary><p>If the first request actually worked, the customer is charged twice. Retry with the same idempotency key, or look up the payment by your own reference first, and treat the payment as "unknown/pending" until you get a final answer.</p></details>
+  <details><summary>What does double-entry give you that a single "balance" column does not?</summary><p>Every movement has a source and destination, rows are never edited, and total debits must equal total credits, so errors are detectable, every balance is explainable, and history is auditable.</p></details>
+  <details><summary>You must pick between handling card numbers yourself or using the PSP's hosted checkout. Which and why?</summary><p>The hosted checkout (or the PSP's embedded fields). Card data never touches your servers, which shrinks your PCI DSS scope and risk. You keep only a token and the last four digits. Handling card data yourself is only worth it for a company whose business is processing cards.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would integrate a PSP with a hosted checkout, so card data never touches our servers. The result arrives as a signed webhook, which I verify, dedupe by event id, and apply in one database transaction that updates the payment state and writes ledger entries."</blockquote>
+  <blockquote>"Money is stored as integer paise, every create call carries an idempotency key with a unique index, and the ledger is append-only double-entry. A daily reconciliation job matches our records against the PSP settlement file."</blockquote>
+  <p><b>Common follow-up question:</b> What happens when you call the PSP and it times out?</p>
+  <p>The outcome is unknown, so I mark the payment pending, never assume failure and never blindly retry with a new request. I retry with the same idempotency key or query the PSP by our reference, and only a final status moves the payment on. A job picks up anything stuck in pending.</p>
+  <p><b>Common follow-up question:</b> How do you guarantee a refund cannot exceed the payment?</p>
+  <p>Lock the payment row with <code>SELECT ... FOR UPDATE</code> inside the transaction, check that refunds already made plus the new one do not exceed the captured amount, then insert the refund and the reversing ledger rows. The refund call carries its own idempotency key, so a retry does not refund twice.</p>
+</section>
+
+</main>
+</body>
+</html>

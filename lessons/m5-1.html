@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a URL shortener</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-1">
+<main class="lesson">
+
+<section class="story">
+  <h2>The post office box number</h2>
+  <p>Your friend lives at "Flat 402, Sunrise Heights, Road No. 7, Near the Big Banyan Tree, Pune 411001". Nobody wants to write that on every parcel. So the post office gives your friend a small box: <b>PO Box 4821</b>. Send the parcel to 4821 and the post office looks up the long address in its register and delivers it.</p>
+  <p>A URL shortener is that post office. You give it a very long web address. It gives back a tiny code like <code>sho.rt/aZ3kP9q</code>. When someone opens the short link, the shortener looks up the long address and sends the visitor there.</p>
+  <p>It sounds too easy to be an interview question. The fun starts when a billion people use it: how do you make sure two boxes never get the same number, and how do you look up the register so fast that nobody waits?</p>
+</section>
+
+<section class="explain">
+  <h2>Design a URL shortener (like bit.ly)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. You will learn far more from the gap between your answer and this one than from reading it cold.</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>: requirements, estimate, API, data model, high-level design, deep dives, wrap-up.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>Given a long URL, create a short URL.</li>
+    <li>Opening the short URL redirects to the long URL.</li>
+    <li>Optional: the user picks a custom alias; links can expire; the owner sees click counts.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Very read-heavy:</b> far more clicks than creations, say 100 to 1.</li>
+    <li><b>Fast redirects:</b> under about 100 ms on the server side. A redirect is the user waiting for the real page, so it must feel instant.</li>
+    <li><b>Highly available</b> (<a href="m3-3.html">availability</a>): if the shortener is down, every link on the internet that points to it is broken.</li>
+    <li>Short codes are <b>unique</b>, and ideally hard to guess one by one.</li>
+    <li>Slightly stale analytics are fine. A link that was just created may take a moment to work everywhere (eventual consistency is acceptable; see <a href="m3-2.html">consistency models</a>).</li>
+  </ul>
+  <p><b>Out of scope today:</b> user accounts and login, a dashboard UI, spam and malware scanning (mention it as a next step).</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assumptions: 100 million new links a month, reads are 100 times writes. A month is about 2.6 million seconds (30 x 86,400), so we round to 2.5 million. A day is about 100,000 seconds (<a href="m3-9.html">estimation</a>).</p>
+  <ul>
+    <li><b>Writes:</b> 100,000,000 / 2,600,000 = about 40 per second. Peak at 3x: about 120 per second.</li>
+    <li><b>Reads:</b> 40 x 100 = <b>4,000 per second</b>. Peak at 3x: about 12,000 per second.</li>
+    <li><b>Storage per year:</b> 100 million x 12 = 1.2 billion links. At about 500 bytes a row (code, long URL, dates, owner) that is 1.2 billion x 500 B = 600 GB a year. Over 5 years: about 3 TB. One big database can hold that, but we will want replicas.</li>
+    <li><b>Cache size:</b> 4,000 reads a second x 86,400 = about 345 million reads a day. Links follow the 80/20 rule: a small share of links gets most clicks. Cache the hot 20%: 345 million x 0.2 = 69 million entries x 500 B = about 35 GB. That fits in a few Redis machines (<a href="m2-7.html">caching</a>).</li>
+    <li><b>Key space:</b> in 5 years we create about 6 billion codes. Seven characters of base62 (0-9, a-z, A-Z) give 62^7 = about 3.5 trillion codes, so we would use only 0.2% of them. Six characters give 62^6 = 56.8 billion, still enough for 6 billion.</li>
+  </ul>
+  <p>What the numbers tell us: 12,000 reads a second is too much to send to the database every time, so <b>a cache is needed</b>. Storage is modest, so <b>no sharding on day one</b>.</p>
+
+  <h3>3. API</h3>
+<pre><code>POST /api/v1/urls
+  body: { "url": "https://long...", "alias": "my-link" (optional), "expires_at": "2027-01-01" (optional) }
+  201 -> { "code": "aZ3kP9q", "short_url": "https://sho.rt/aZ3kP9q" }
+  409 -> alias already taken
+
+GET /{code}
+  302 -> Location: https://long...        (404 if unknown or expired)
+
+GET /api/v1/urls/{code}/stats
+  200 -> { "clicks": 1234, "last_click": "..." }
+
+DELETE /api/v1/urls/{code}
+  204</code></pre>
+  <p>Creating links needs an API key or login in real life, and a <a href="m5-2.html">rate limiter</a> to stop abuse (next lesson).</p>
+
+  <h3>4. Data model</h3>
+  <p>One main table:</p>
+<pre><code>links
+  code        text  PRIMARY KEY      -- the short code, "aZ3kP9q"
+  url         text  NOT NULL         -- the long URL
+  created_at  timestamptz
+  expires_at  timestamptz NULL
+  owner_id    uuid  NULL</code></pre>
+  <p>The only hot query is "find the row where code = X", and the primary key index makes it a fast point lookup (<a href="m2-3.html">indexes</a>). No joins. <b>SQL or NoSQL?</b> Both work. The access pattern is pure key-value, so a key-value store like DynamoDB or Cassandra fits at huge scale. At our size (about 3 TB in 5 years) PostgreSQL is perfectly fine and gives us a unique constraint for free, which we need for collision handling. Click events go in a separate store (deep dive below).</p>
+
+  <h3>5. High-level design</h3>
+  <p>Walk the redirect path, matching the numbers in the picture:</p>
+  <ol>
+    <li>The browser asks <code>GET /aZ3kP9q</code>.</li>
+    <li>A <a href="m2-5.html">load balancer</a> picks one of several stateless app servers.</li>
+    <li>The app server checks the <b>cache</b> (Redis) for the code.</li>
+    <li>On a hit it jumps straight to step 6.</li>
+    <li>On a miss it reads the database, then writes the answer into the cache with an expiry.</li>
+    <li>It replies <code>302</code> with the long URL in the <code>Location</code> header.</li>
+    <li>Off to the side, it drops a "click happened" message on a <b>queue</b>. A worker reads the queue and updates analytics. The user never waits for this.</li>
+  </ol>
+  <p>The create path is simpler: app server makes a code, inserts the row, returns the short URL. Since reads outnumber writes 100 to 1, we can scale the two paths separately.</p>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: how do we make the short code?</h4>
+  <table>
+    <tr><th>Option</th><th>How</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Hash + collision handling</b></td><td>Hash the long URL (MD5/SHA), turn it to base62, keep the first 7 characters</td><td>Same URL gives the same code; no central counter</td><td>Different URLs can collide. You must check the database and retry with a salt. Extra read on every create</td></tr>
+    <tr><td><b>Base62 of a counter</b></td><td>A global counter 1, 2, 3 ... encoded in base62</td><td>No collisions ever; short codes (6 characters reach 56 billion)</td><td>A single counter is a bottleneck and a single point of failure; codes are guessable and countable by competitors</td></tr>
+    <tr><td><b>Pre-generated key service (KGS)</b></td><td>A separate service generates random unused codes in advance and stores them. App servers grab a batch of, say, 1,000 into memory</td><td>Fast creates, no collisions, no counter hot spot, codes look random</td><td>One more service to run. Keys in a crashed server's batch are lost (fine, we have trillions). The KGS must itself be replicated</td></tr>
+    <tr><td><b>Snowflake-style ID</b></td><td>A 64-bit ID built from time + machine ID + sequence, then base62</td><td>Unique across many machines with no coordination</td><td>64 bits is about 11 base62 characters: not "short". Time-ordered, so guessable</td></tr>
+  </table>
+  <p><b>Our pick:</b> random 7-character base62 codes, <b>with the database primary key as the collision guard</b>: generate, try to insert, and if the database says "duplicate key", draw another code. At 0.2% of the key space used, a retry is rare. That is exactly what the build project below does. At higher scale, move to a <b>key generation service</b> so creates need no retry and no extra database round trip. If the interviewer likes counters, the fix for the bottleneck is to hand each app server a <i>block</i> of numbers (say 1,000 at a time) and to scramble the bits so codes are not guessable in order.</p>
+
+  <h4>Deep dive B: 301 or 302?</h4>
+  <p>A <code>301</code> means "moved permanently". Browsers remember it and next time go straight to the long URL <b>without asking us</b>. A <code>302</code> means "found, temporarily": the browser asks us every time (see <a href="m1-3.html">status codes</a>).</p>
+  <table>
+    <tr><th></th><th>301 Permanent</th><th>302 Temporary</th></tr>
+    <tr><td>Server load</td><td>Lower: repeat visitors skip us</td><td>Higher: every click reaches us</td></tr>
+    <tr><td>Analytics</td><td>Lost for repeat clicks</td><td>Every click counted</td></tr>
+    <tr><td>Changing or expiring a link</td><td>Hard: browsers cached the old target</td><td>Easy: next click gets the new answer</td></tr>
+  </table>
+  <p><b>Pick 302</b> when the business sells analytics, expiry or editable links (most do). Pick 301 for a simple "make this URL shorter" tool where load and search-engine credit matter more. Say the trade-off out loud; that is the answer interviewers want.</p>
+
+  <h4>Deep dive C: the read-heavy cache</h4>
+  <p>Use <b>cache-aside</b> (<a href="m2-7.html">caching 1</a>): the app checks Redis first; on a miss it reads the database and fills Redis. Give every entry a <b>TTL</b> (say 1 hour) so memory does not fill with dead links and so a deleted or edited link stops being served within a known time. Evict with LRU when memory is full. Because short codes never change their target, stale data is rarely a problem; for an edited or deleted link, delete the cache key at the same time. Also cache "not found" for a short while (a few seconds) so a bot hammering random codes does not hit the database each time.</p>
+
+  <h4>Smaller deep dives</h4>
+  <ul>
+    <li><b>Expiry:</b> store <code>expires_at</code>. On every read, if the time has passed, return 404 (lazy check). Set the Redis TTL to the smaller of the default and the time left. A nightly cleanup job deletes expired rows in batches; never delete millions of rows in one go.</li>
+    <li><b>Custom aliases:</b> insert with the alias as the code. The same primary key rule gives a clean <code>409 Conflict</code> if it is taken. Reject reserved words (<code>api</code>, <code>admin</code>) and bad characters, and limit the length.</li>
+    <li><b>Click analytics through a queue:</b> do not write a database row per click inside the redirect: 12,000 peak clicks a second would crush the main table. Instead publish an event (code, time, country, device, referrer) to a <a href="m2-11.html">queue</a>. Workers read in batches and add to an analytics store such as a columnar database, or into hourly counters. If the queue is slow, redirects are unaffected. If an event is lost, a count is off by one, which is acceptable for analytics.</li>
+  </ul>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Availability over consistency:</b> a new link may take a moment to be visible on replicas. We accept that.</li>
+    <li><b>The database</b> is the bottleneck on cache misses. Replicas help, and the cache absorbs most reads.</li>
+    <li><b>Abuse:</b> attackers create millions of links, or point them at malware. Needs a <a href="m5-2.html">rate limiter</a> and a URL safety check.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): cache hit rate (aim for 90%+), redirect latency, error rate, queue lag.</li>
+  </ul>
+  <p><b>At 10x scale</b> (400 million creations a month, 40,000 reads a second): add Redis nodes (shard keys by code with <a href="m2-10.html">consistent hashing</a>), shard the database by a hash of the code, move to a key generation service, serve hot links from a CDN-like edge cache, and run the app servers in several regions.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 440" role="img" aria-label="URL shortener architecture. A browser sends a request to a load balancer, then app servers. App servers check a Redis cache, fall back to the database on a miss, and reply with a 302 redirect. Click events go to a queue, then an analytics worker, then an analytics store.">
+      <defs><marker id="ar-m5-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="50" width="110" height="50" rx="8"/>
+        <rect x="165" y="50" width="110" height="50" rx="8"/>
+        <rect x="315" y="50" width="130" height="50" rx="8"/>
+        <rect x="490" y="50" width="135" height="50" rx="8"/>
+        <rect x="315" y="190" width="130" height="50" rx="8"/>
+        <rect x="490" y="190" width="135" height="50" rx="8"/>
+        <rect x="490" y="290" width="135" height="50" rx="8"/>
+        <rect x="490" y="380" width="135" height="45" rx="8"/>
+        <path d="M125 75 H163" marker-end="url(#ar-m5-1)"/>
+        <path d="M275 75 H313" marker-end="url(#ar-m5-1)"/>
+        <path d="M445 75 H488" marker-end="url(#ar-m5-1)"/>
+        <path d="M380 100 V188" marker-end="url(#ar-m5-1)"/>
+        <path d="M440 100 V145 H557 V188" marker-end="url(#ar-m5-1)"/>
+        <path d="M557 240 V288" marker-end="url(#ar-m5-1)"/>
+        <path d="M557 340 V378" marker-end="url(#ar-m5-1)"/>
+        <path d="M360 50 V25 H70 V48" marker-end="url(#ar-m5-1)" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="70" y="80" font-size="14" font-weight="700">Browser</text>
+        <text x="220" y="80" font-size="14" font-weight="700">Load balancer</text>
+        <text x="380" y="75" font-size="14" font-weight="700">App servers</text>
+        <text x="380" y="92" font-size="13">(stateless)</text>
+        <text x="557" y="75" font-size="14" font-weight="700">Redis cache</text>
+        <text x="557" y="92" font-size="13">TTL 1 hour</text>
+        <text x="380" y="215" font-size="14" font-weight="700">Database</text>
+        <text x="380" y="232" font-size="13">links table</text>
+        <text x="557" y="220" font-size="14" font-weight="700">Click queue</text>
+        <text x="557" y="320" font-size="14" font-weight="700">Analytics worker</text>
+        <text x="557" y="407" font-size="14" font-weight="700">Analytics store</text>
+        <text x="144" y="68" font-size="13">1</text>
+        <text x="294" y="68" font-size="13">2</text>
+        <text x="466" y="68" font-size="13">3</text>
+        <text x="394" y="150" font-size="13">5</text>
+        <text x="500" y="138" font-size="13">7</text>
+        <text x="215" y="19" font-size="13">6  redirect (302 + Location)</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="190" font-size="13">1. Browser: GET /aZ3kP9q</text>
+        <text x="15" y="210" font-size="13">2. Balancer picks a server</text>
+        <text x="15" y="230" font-size="13">3. Check the cache</text>
+        <text x="15" y="250" font-size="13">4. Hit: skip to step 6</text>
+        <text x="15" y="270" font-size="13">5. Miss: read DB, fill cache</text>
+        <text x="15" y="290" font-size="13">6. Reply 302 with long URL</text>
+        <text x="15" y="310" font-size="13">7. Click event to queue (async)</text>
+        <text x="15" y="360" font-size="13">Create path: app server makes a</text>
+        <text x="15" y="378" font-size="13">code and INSERTs into the DB.</text>
+      </g>
+    </svg>
+    <figcaption>The read path is steps 1 to 6. Step 7 happens on the side so analytics never slow down a redirect.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-1 url-shortener.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+design+a+URL+shortener" target="_blank" rel="noopener">YouTube search: "ByteByteGo design a URL shortener"</a>
+      <span class="meta">Short. Watch it all, and compare their ID generation choice with the table above.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+design+bit.ly+url+shortener" target="_blank" rel="noopener">YouTube search: "Hello Interview design bit.ly URL shortener"</a>
+      <span class="meta">Pick the full problem breakdown. Watch the part on generating unique short codes.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#design-pastebincom-or-bitly" target="_blank" rel="noopener">System Design Primer: Design Pastebin.com (or Bit.ly)</a>
+      <span class="meta">Read the use cases, the back-of-envelope numbers and the base62 section.</span></li>
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: system design learning path</a>
+      <span class="meta">If the list has a URL shortener (Bit.ly) problem breakdown, read how it handles the short code and scale.</span></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/302" target="_blank" rel="noopener">MDN: 302 Found</a>
+      <span class="meta">Read the first two paragraphs, then compare with 301 on the same site.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 60 to 90 for the build)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Close this page. Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span>, and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> from the Start menu and press the round red <span class="ui">Record</span> button, so you can listen back later.</li>
+    <li>Open <code>excalidraw.com</code> with a blank canvas. Say out loud: "Design a URL shortener." Then follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 minutes to repeat the question, 5 requirements, 3 estimation, 3 API, 3 data model, 10 high-level design, 14 deep dives, 5 wrap-up. Glance at the stopwatch at each switch.</li>
+    <li>Talk the whole time as if the interviewer were there. Draw the diagram from memory, not from this page.</li>
+    <li>Stop the recording and save it as <code>m5-1 mock.m4a</code> (or whichever name suggestion Sound Recorder gives) in your Module 5 folder. Save the drawing as <code>m5-1 url-shortener-mock.excalidraw</code>.</li>
+    <li>Now open the lesson again and compare. Tick off: did you do the arithmetic? Did you name 301 vs 302? Did you pick one code scheme and say why? Write the two things you missed at the top of your drawing.</li>
+  </ol>
+
+  <h3>B. Variation questions</h3>
+  <p>Try each on paper for 5 minutes before opening the answer.</p>
+  <details><summary>1. Now support custom aliases. What changes?</summary>
+    <p>The API gets an optional <code>alias</code> field. Insert with the alias as the primary key. The unique constraint turns a clash into <code>409 Conflict</code>, with no race between "check" and "insert" (see <a href="m5-2.html">next lesson</a> for why that race matters). Validate the length and characters, block reserved words, and make sure generated codes cannot collide with aliases (the same table and the same primary key do that for free). A cache check before insert is not enough; the database is the source of truth.</p></details>
+  <details><summary>2. The same long URL is submitted twice. Should it return the same code?</summary>
+    <p>Depends on the product. If links are anonymous and share no analytics, returning the existing code saves space: hash the URL and keep an index on that hash. If each owner wants separate analytics, expiry or aliases, each creation needs its own code. State the choice. The default most services use is a new code per request.</p></details>
+  <details><summary>3. A link goes viral: 50,000 clicks a second on one code. What do you do?</summary>
+    <p>One cache key becomes a hot key. Keep the hot entry also in each app server's memory for a few seconds (a local cache in front of Redis). Or replicate that key across several Redis nodes. A CDN edge can serve it with a short TTL if you use 302 with <code>Cache-Control: max-age=...</code>.</p></details>
+
+  <h3>Build it (optional, about 60 to 90 minutes)</h3>
+  <p>You will build the real redirect path: a Next.js app that creates short links in Supabase and serves redirects through an Upstash Redis cache, and you will <b>see</b> a cache miss turn into a hit. This is a learning demo: keep it on your own machine, and read the notes about keys before you deploy it anywhere.</p>
+  <p>The steps below were tested with Next.js 16, <code>@supabase/supabase-js</code> 2.118 and <code>@upstash/redis</code> 1.40. If yours is newer, the steps should still work; if something differs, the error message usually points at the file.</p>
+
+  <h3>Build step 1: the table in Supabase</h3>
+  <ol class="steps">
+    <li>Open your Supabase dashboard in Chrome and open your project (or create one called <code>shortener</code> and wait for it to finish setting up).</li>
+    <li>In the left sidebar click <span class="ui">SQL Editor</span>, then <span class="ui">+ New query</span> (it may be a plus icon). Paste this and press <span class="ui">Run</span> (or <kbd>Ctrl</kbd> + <kbd>Enter</kbd>):
+<pre><code>create table links (
+  code       text primary key,
+  url        text not null,
+  created_at timestamptz default now()
+);
+
+alter table links enable row level security;
+
+-- Learning demo only: lets the publishable (anon) key insert and read.
+create policy "demo insert" on links for insert to anon with check (true);
+create policy "demo read"   on links for select to anon using (true);</code></pre>
+      You should see <span class="ui">Success. No rows returned</span>. If it asks about running a query that changes things, confirm.</li>
+    <li>Click <span class="ui">Table Editor</span> in the left sidebar. You should see a table <code>links</code> with three columns and no rows.</li>
+    <li>Click the <b>gear icon</b> (<span class="ui">Project Settings</span>) at the bottom of the sidebar and find the page that lists <b>API keys</b> (it may be called <span class="ui">API Keys</span> or <span class="ui">API</span>). Keep this tab open. You need two things: the <b>Project URL</b> (looks like <code>https://abcdxyz.supabase.co</code>) and the <b>publishable key</b> (older projects call it the <b>anon</b> key). Do <b>not</b> copy the secret or service_role key.</li>
+  </ol>
+  <p class="warn">The two policies above let anyone who has your publishable key insert and read links. For a public link shortener that is roughly the intent for reads, but a real product would use a server-only secret key and stricter policies. Never put a secret key in code you commit.</p>
+
+  <h3>Build step 2: the cache in Upstash</h3>
+  <ol class="steps">
+    <li>Open <code>console.upstash.com</code> and log in. Click <span class="ui">Create Database</span> (it may be under a Redis section).</li>
+    <li>Name it <code>shortener-cache</code>, choose the <b>Regional</b> type and the region closest to you (for example Mumbai if listed), and create it with the free plan.</li>
+    <li>On the database page scroll to the <b>REST API</b> section. You need two values: <code>UPSTASH_REDIS_REST_URL</code> and <code>UPSTASH_REDIS_REST_TOKEN</code>. There is usually a <span class="ui">.env</span> tab that shows both lines ready to copy. Keep this tab open.</li>
+  </ol>
+
+  <h3>Build step 3: create the project</h3>
+  <ol class="steps">
+    <li>Open File Explorer, make a folder such as <code>Documents\system-design\build</code>. Right-click it and choose <span class="ui">Open with Code</span> (it may be under <span class="ui">Show more options</span>), or open VS Code and use <span class="ui">File</span> then <span class="ui">Open Folder</span>.</li>
+    <li>Open a terminal in VS Code with <kbd>Ctrl</kbd> + <kbd>`</kbd>. Paste this one line and press <kbd>Enter</kbd>. If it asks "Ok to proceed?", type <code>y</code>:
+<pre><code>npx create-next-app@latest shortener --ts --app --eslint --no-tailwind --no-src-dir --import-alias "@/*" --use-npm --yes</code></pre>
+      It takes a minute or two and ends with <span class="ui">Success! Created shortener</span>.</li>
+    <li>Move into the new folder and install the two libraries:
+<pre><code>cd shortener
+npm install @supabase/supabase-js @upstash/redis</code></pre></li>
+    <li>In VS Code use <span class="ui">File</span> then <span class="ui">Open Folder</span> and open the <code>shortener</code> folder itself, so the left file list shows <code>app</code>, <code>package.json</code> and so on. Open a new terminal with <kbd>Ctrl</kbd> + <kbd>`</kbd> (it starts inside the folder).</li>
+  </ol>
+
+  <h3>Build step 4: secrets in .env.local</h3>
+  <ol class="steps">
+    <li>In the VS Code file list, right-click an empty spot at the top level (next to <code>package.json</code>) and choose <span class="ui">New File</span>. Name it exactly <code>.env.local</code>.</li>
+    <li>Paste this and replace the four values with the ones from your Supabase and Upstash tabs. No quotes, no spaces around <code>=</code>:
+<pre><code>SUPABASE_URL=https://YOUR-PROJECT-REF.supabase.co
+SUPABASE_KEY=YOUR-PUBLISHABLE-OR-ANON-KEY
+UPSTASH_REDIS_REST_URL=https://YOUR-DB.upstash.io
+UPSTASH_REDIS_REST_TOKEN=YOUR-UPSTASH-TOKEN</code></pre></li>
+    <li>Press <kbd>Ctrl</kbd> + <kbd>S</kbd>. This file is already listed in <code>.gitignore</code> (the line <code>.env*</code>), so Git will not commit it. <b>Never commit or share this file.</b></li>
+  </ol>
+
+  <h3>Build step 5: the code</h3>
+  <p>Create each file below. To create a file inside a folder that does not exist yet, right-click in the file list, choose <span class="ui">New File</span> and type the path with slashes, for example <code>lib/clients.ts</code>; VS Code makes the folder. For the folder <code>[code]</code>, type the square brackets exactly.</p>
+  <ol class="steps">
+    <li>File <code>lib/clients.ts</code> (one place that builds the two connections):
+<pre><code>import { createClient } from "@supabase/supabase-js";
+import { Redis } from "@upstash/redis";
+
+// Server-side only: these env vars have no NEXT_PUBLIC_ prefix,
+// so Next.js never sends them to the browser.
+export const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_KEY!
+);
+
+// Reads UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN
+export const redis = Redis.fromEnv();</code></pre></li>
+    <li>File <code>lib/code.ts</code> (makes a random 7-character base62 code):
+<pre><code>import { randomInt } from "node:crypto";
+
+const ALPHABET =
+  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+// 7 random base62 characters, for example "aZ3kP9q" (62^7 is about 3.5 trillion)
+export function makeCode(length = 7): string {
+  let out = "";
+  for (let i = 0; i &lt; length; i++) {
+    out += ALPHABET[randomInt(ALPHABET.length)];
+  }
+  return out;
+}</code></pre></li>
+    <li>File <code>app/api/shorten/route.ts</code> (create a link; a duplicate code makes the database return error <code>23505</code>, and we try another):
+<pre><code>import { NextResponse } from "next/server";
+import { supabase } from "@/lib/clients";
+import { makeCode } from "@/lib/code";
+
+export async function POST(req: Request) {
+  let body: { url?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Send JSON like {\"url\":\"https://...\"}" }, { status: 400 });
+  }
+
+  // Accept only real http or https URLs
+  let target: URL;
+  try {
+    target = new URL(String(body.url));
+    if (target.protocol !== "http:" &amp;&amp; target.protocol !== "https:") throw new Error("bad scheme");
+  } catch {
+    return NextResponse.json({ error: "url must be a valid http or https URL" }, { status: 400 });
+  }
+
+  // Try a few times: if a random code is already taken, the database says
+  // "duplicate key" (error code 23505) and we simply draw another code.
+  for (let attempt = 0; attempt &lt; 3; attempt++) {
+    const code = makeCode();
+    const { error } = await supabase.from("links").insert({ code, url: target.toString() });
+    if (!error) {
+      const origin = new URL(req.url).origin;
+      return NextResponse.json({ code, shortUrl: `${origin}/${code}` }, { status: 201 });
+    }
+    if (error.code !== "23505") {
+      console.error("insert failed", error);
+      return NextResponse.json({ error: "Could not save the link" }, { status: 500 });
+    }
+  }
+  return NextResponse.json({ error: "Could not find a free code, try again" }, { status: 503 });
+}</code></pre></li>
+    <li>File <code>app/[code]/route.ts</code> (the redirect: cache first, then the database):
+<pre><code>import { NextResponse } from "next/server";
+import { redis, supabase } from "@/lib/clients";
+
+const TTL_SECONDS = 60 * 60; // keep a link in the cache for 1 hour
+
+function go(url: string, cache: "HIT" | "MISS") {
+  const res = NextResponse.redirect(url, 302);
+  res.headers.set("x-cache", cache); // see this with: curl.exe -i
+  return res;
+}
+
+export async function GET(
+  _req: Request,
+  { params }: { params: Promise&lt;{ code: string }&gt; }
+) {
+  const { code } = await params;
+  const key = `link:${code}`;
+
+  // 1. Ask the cache first (fast)
+  const cached = await redis.get&lt;string&gt;(key);
+  if (cached) {
+    console.log(`cache HIT  ${code}`);
+    return go(cached, "HIT");
+  }
+
+  // 2. Miss: ask the database (slower)
+  console.log(`cache MISS ${code}`);
+  const { data, error } = await supabase
+    .from("links")
+    .select("url")
+    .eq("code", code)
+    .maybeSingle();
+
+  if (error) {
+    console.error("select failed", error);
+    return new NextResponse("Something went wrong", { status: 500 });
+  }
+  if (!data) {
+    return new NextResponse("Short link not found", { status: 404 });
+  }
+
+  // 3. Fill the cache for next time, with an expiry (TTL)
+  await redis.set(key, data.url, { ex: TTL_SECONDS });
+  return go(data.url, "MISS");
+}</code></pre></li>
+    <li>Press <kbd>Ctrl</kbd> + <kbd>S</kbd> on each file.</li>
+  </ol>
+
+  <h3>Build step 6: run it and watch the cache</h3>
+  <ol class="steps">
+    <li>In the VS Code terminal run <code>npm run dev</code>. You should see <span class="ui">Ready</span> and a line with <code>http://localhost:3000</code>. Leave it running.</li>
+    <li>Open a separate <b>Command Prompt</b> (Start menu, type <code>cmd</code>, press <kbd>Enter</kbd>). Create a short link (this exact line works in Command Prompt; in PowerShell the quotes behave differently, so stay in cmd):
+<pre><code>curl.exe -X POST http://localhost:3000/api/shorten -H "Content-Type: application/json" -d "{\"url\":\"https://developer.mozilla.org/en-US/docs/Web/HTTP\"}"</code></pre>
+      You should see something like <code>{"code":"aZ3kP9q","shortUrl":"http://localhost:3000/aZ3kP9q"}</code>. Copy your code. In the Supabase <span class="ui">Table Editor</span> click refresh: one new row.</li>
+    <li>Ask for the short link the first time. <code>-i</code> prints the response headers. Replace <code>aZ3kP9q</code> with your code:
+<pre><code>curl.exe -i http://localhost:3000/aZ3kP9q</code></pre>
+      You should see <code>HTTP/1.1 302 Temporary Redirect</code>, a <code>location:</code> header with the long URL, and <code>x-cache: MISS</code>. In the VS Code terminal you should also see <code>cache MISS aZ3kP9q</code>.</li>
+    <li>Run the same command again. Now the header says <code>x-cache: HIT</code>, and the terminal prints <code>cache HIT aZ3kP9q</code>. The second answer never touched Supabase.</li>
+    <li>Open the Upstash console, your database, and the <span class="ui">Data Browser</span> tab (or the <span class="ui">CLI</span> tab). Look for the key <code>link:aZ3kP9q</code>. In the CLI tab type <code>TTL link:aZ3kP9q</code>: it prints the seconds left, a bit under 3600. Type <code>DEL link:aZ3kP9q</code>, run the curl again, and you get <b>MISS</b> once more. That is cache-aside with a TTL, working.</li>
+    <li>Try an unknown code, for example <code>curl.exe -i http://localhost:3000/nope123</code>. You should get <code>404</code>.</li>
+    <li>Stop the server with <kbd>Ctrl</kbd> + <kbd>C</kbd> in the VS Code terminal. Then check that the app builds for production:
+<pre><code>npm run build</code></pre>
+      It should end with a table of routes including <code>/[code]</code> and <code>/api/shorten</code>.</li>
+  </ol>
+
+  <h3>Optional: deploy to Vercel</h3>
+  <ol class="steps">
+    <li>Push the project to a new GitHub repository (<code>.env.local</code> stays out because of <code>.gitignore</code>; check on github.com that the file is not there).</li>
+    <li>Open <code>vercel.com</code>, click <span class="ui">Add New</span> then <span class="ui">Project</span>, and import the repository.</li>
+    <li>Before pressing <span class="ui">Deploy</span>, open the <span class="ui">Environment Variables</span> section and add the same four names and values you put in <code>.env.local</code>, one by one. Then press <span class="ui">Deploy</span>.</li>
+    <li>When it finishes, run the same curl commands with your <code>.vercel.app</code> address instead of <code>localhost:3000</code>. If you get a Vercel login page instead of JSON, deployment protection is on for that URL; use the production domain shown on the project page.</li>
+  </ol>
+  <p class="tip">Skipped on purpose: no web page for the form, no click analytics queue, no expiry, no custom alias. Those are the variation questions above; add them as practice.</p>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why is a URL shortener "read-heavy", and what does that lead us to add?</summary><p>People click far more links than they create, roughly 100 to 1. So a cache (Redis) in front of the database serves most redirects, and the read path is scaled separately from the write path.</p></details>
+  <details><summary>Compare a base62 counter with a pre-generated key service.</summary><p>A counter never collides and gives short codes, but one counter is a bottleneck and single point of failure, and codes are guessable. A key service pre-makes random unused codes and hands out batches, so creates are fast and codes look random, at the cost of one more service to run and replicate.</p></details>
+  <details><summary>What breaks if you use a 301 redirect and the business wants click counts?</summary><p>Browsers cache a 301, so repeat visitors skip your server and those clicks are never counted. You also cannot change or expire the link for people who already cached it. Use 302.</p></details>
+  <details><summary>What breaks if two app servers both check "is this code free?" and then insert?</summary><p>Both can see "free" and both insert, so one overwrites the other or two links share a code. The fix is to let the database primary key decide: just insert, and on a duplicate-key error pick another code.</p></details>
+  <details><summary>What breaks if the Redis cache has no TTL and the cache goes down for an hour, then returns empty?</summary><p>Without a TTL, memory fills with dead links over time. When Redis returns empty, all 12,000 reads a second fall on the database at once (a cache stampede), which may overload it. Use TTLs, replicate Redis, and consider a short local cache or request coalescing.</p></details>
+  <details><summary>What would you choose for expiry: delete rows on the minute, or check on read? Why?</summary><p>Check on read, plus a nightly batch cleanup. Deleting rows exactly on time needs a heavy scheduler for little benefit; the read check is cheap and always correct.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"It is a read-heavy key-value problem: about 40 writes and 4,000 reads a second. So I would put Redis in front of the database with cache-aside, and the database only needs a primary key on the code."</blockquote>
+  <blockquote>"For codes I would use random 7-character base62 with the primary key as the collision guard, moving to a key generation service at higher scale. I would redirect with 302 so we can count clicks and expire links."</blockquote>
+  <p><b>Common follow-up question:</b> How do you stop two servers generating the same code?</p>
+  <p>Let the database enforce it: the code is the primary key, so a second insert fails with a duplicate-key error and the server draws another code. With a counter, give each server its own block of numbers. With a key generation service, each key is handed to only one server.</p>
+  <p><b>Common follow-up question:</b> How do you count clicks without slowing redirects?</p>
+  <p>Publish a click event to a queue after deciding the redirect, and let workers update analytics in batches. The redirect never waits for analytics, and a slow worker only delays the numbers.</p>
+</section>
+
+</main>
+</body>
+</html>

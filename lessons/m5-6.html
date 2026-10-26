@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a ticket booking system</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-6">
+<main class="lesson">
+
+<section class="story">
+  <h2>One window, one last seat</h2>
+  <p>At a railway station there is one ticket window and one chart on the wall. The clerk looks at the chart, sees "Seat 42: empty", writes your name and stamps your ticket. Simple. Now add a second window. Two clerks look at the chart at the same moment. Both see "Seat 42: empty". Both write a name. Two passengers walk to the train with a ticket for the same seat.</p>
+  <p>The fix is a rule everyone follows: <b>only one clerk can write on a seat at a time</b>, and a seat you are "thinking about" is marked with a sticky note that falls off after five minutes if you do not pay.</p>
+  <p>Now it is 10 am on Tatkal day and a million people rush to the windows at once. You also need a <b>waiting room</b> outside, with a guard letting people in a few at a time. This lesson is all about those three ideas: <b>never sell a seat twice</b>, <b>hold seats while paying</b>, and <b>survive the rush</b>.</p>
+</section>
+
+<section class="explain">
+  <h2>Design a ticket booking system (BookMyShow, IRCTC Tatkal)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. Write down in one sentence how you would stop two people booking the last seat. We will test your answer in the SQL editor below.</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. This lesson leans on <a href="m2-3.html">transactions and ACID</a>, <a href="m3-4.html">idempotency</a>, and <a href="m5-2.html">rate limiting</a>.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>Browse shows (or trains) and see a <b>seat map</b> with free and taken seats.</li>
+    <li><b>Select seats</b>; the system <b>holds</b> them for a few minutes while you pay.</li>
+    <li>Pay, and on success the seats are <b>booked</b> and you get a ticket. On failure or timeout the seats are released.</li>
+    <li>Cancel a booking (and release the seats).</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>No double booking, ever.</b> This is the one hard guarantee. It needs <b>strong consistency</b> for seat inventory (the "C" side of <a href="m3-1.html">CAP</a>).</li>
+    <li>Browsing can be <b>slightly stale</b> (a seat map that is 2 seconds old is fine).</li>
+    <li>Survive <b>huge spikes</b>: a blockbuster opening or Tatkal at 10 am, maybe 50 to 100 times normal traffic.</li>
+    <li>Fair: first come, first served as far as possible. Low latency for hold and book.</li>
+  </ul>
+  <p><b>Out of scope:</b> how the payment itself works (see <a href="m5-7.html">the payment lesson</a>), pricing and offers, recommendations, the theatre's own admin tools.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 2 million bookings a day on an ordinary day.</p>
+  <ul>
+    <li><b>Bookings:</b> 2,000,000 / 100,000 s = <b>20 a second</b> on average. For a big opening, 50x: <b>1,000 a second</b>.</li>
+    <li><b>Browsing:</b> about 100 seat-map views per booking: 2,000 a second on average and <b>100,000 a second</b> at the spike. This is mostly reads and can be cached.</li>
+    <li><b>Seat rows:</b> 5,000 venues x 3 screens x 4 shows a day x 7 days of advance sales = 420,000 shows. At 200 seats each that is 84,000,000 seat rows. At about 100 bytes a row: <b>8.4 GB</b>. That fits on one ordinary database.</li>
+    <li><b>Contention:</b> one hot show has 200 seats and 50,000 people trying in one minute: about 250 people for every seat.</li>
+  </ul>
+  <p>The surprise: <b>data size is tiny. The problem is not storage, it is many people fighting over the same few rows.</b> So the design is about correctness under contention, and about protecting the database from the rush.</p>
+
+  <h3>3. API</h3>
+<pre><code>GET  /shows/{id}/seats
+  200 -> { "seats": [ { "no": "A1", "status": "free" }, ... ] }     (cached for ~2 s)
+
+POST /shows/{id}/holds        Idempotency-Key: k1
+  { "seats": ["A1", "A2"] }
+  201 -> { "hold_id": "h9", "expires_at": "..." }
+  409 -> { "error": "seat A2 is no longer available" }
+
+POST /bookings                Idempotency-Key: k2
+  { "hold_id": "h9", "payment_ref": "pay_77" }
+  201 -> { "booking_id": "b5" }          (409 if already booked, 410 if the hold expired)
+
+DELETE /holds/{id}            release seats early
+GET    /queue/status          -> { "position": 12043, "admitted": false }  (waiting room)</code></pre>
+  <p>Both write calls carry an <b>idempotency key</b>, so a retry after a timeout cannot create a second hold or a second booking (<a href="m3-4.html">idempotency</a>).</p>
+
+  <h3>4. Data model</h3>
+<pre><code>shows          (show_id, movie, starts_at, venue_id)
+seats          (show_id, seat_no, status [free|held|booked],
+                held_by, held_until, version)           PK (show_id, seat_no)
+bookings       (booking_id, user_id, show_id, amount_paise, status,
+                idempotency_key UNIQUE)
+booking_seats  (booking_id, show_id, seat_no)           UNIQUE (show_id, seat_no)</code></pre>
+  <p><b>Why SQL:</b> we need real transactions (book three seats all-or-nothing), row locks and unique constraints that the database enforces for us. That is exactly what <a href="m2-3.html">ACID</a> databases are good at, and the data is small. NoSQL stores that give up multi-row transactions would make the hard part harder. Redis helps on the side for holds with expiry, the cached seat map and the waiting room.</p>
+  <p>Notice <code>UNIQUE (show_id, seat_no)</code> on <code>booking_seats</code>. It is the <b>last line of defence</b>: even if every other layer has a bug, the database refuses a second booking of the same seat.</p>
+
+  <h3>5. High-level design</h3>
+  <ol>
+    <li>Users arrive through a <b>virtual waiting room</b> (a queue page served from a CDN). It admits people at a rate the backend can handle.</li>
+    <li>Admitted users call the <b>booking service</b>. The seat map comes from a short-lived <b>cache</b>, not the database.</li>
+    <li>The user picks seats. The booking service <b>holds</b> them: one atomic database step marks the seats <code>held</code> with a <code>held_until</code> time. If any seat is taken, nothing is held and the user gets <code>409</code>.</li>
+    <li>The user is sent to pay at the <b>payment provider</b> (about 5 to 10 minutes allowed).</li>
+    <li>The provider calls our <b>webhook</b> with the result. On success, in one transaction the hold becomes a booking. On failure the seats are freed.</li>
+    <li>A <b>release job</b> frees expired holds (and correctness does not depend on it, see deep dive B).</li>
+    <li>A confirmation goes out through a <a href="m5-3.html">notification system</a>.</li>
+  </ol>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: how do we prevent double booking?</h4>
+  <p>The danger is a <b>read-then-write race</b>: two requests both read "free", then both write "booked". Every fix below makes the check and the write happen as one step the database controls.</p>
+  <table>
+    <tr><th>Option</th><th>How</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Row lock</b> (pessimistic)</td><td><code>BEGIN; SELECT ... FOR UPDATE;</code> locks the seat rows. Others wait until you commit. Then update and commit</td><td>Simple to reason about; good for booking several seats all-or-nothing</td><td>Waiters queue up and hold connections; locks held too long hurt throughput; risk of deadlock</td></tr>
+    <tr><td><b>Conditional update</b> (compare-and-set)</td><td><code>UPDATE seats SET status='held' WHERE seat='A1' AND status='free'</code>. If it changed 1 row you won, if 0 rows you lost</td><td>One statement, no explicit lock, very fast, no waiting</td><td>Multi-seat requests need a transaction around several updates</td></tr>
+    <tr><td><b>Optimistic locking</b> (version column)</td><td>Read the row and its <code>version</code>; update <code>WHERE version = :seen</code> and add 1. 0 rows means someone changed it, so retry or fail</td><td>No locks held while the user thinks</td><td>Under heavy contention many attempts fail and retry, wasting work</td></tr>
+    <tr><td><b>Unique constraint</b></td><td><code>UNIQUE (show_id, seat_no)</code> on bookings; the second insert fails</td><td>Cannot be bypassed; works for any code path</td><td>You only find out at the end, so you still need holds for a good user experience</td></tr>
+    <tr><td><b>Redis hold</b></td><td><code>SET hold:show:seat user NX EX 300</code>: set only if absent, auto-expires</td><td>Fast; built-in expiry; takes load off the database</td><td>A second source of truth; if Redis loses data a hold vanishes (the database constraint still saves you)</td></tr>
+  </table>
+  <p><b>Pick:</b> a <b>conditional update</b> for holding (it is the simplest correct thing and avoids waiting), wrapped in a transaction for multi-seat requests that locks the seats in a <b>fixed order</b> (for example seat number ascending), so two people grabbing A1+A2 and A2+A1 cannot deadlock each other. Keep the <b>unique constraint</b> on <code>booking_seats</code> as the final guard. For very hot shows, use <code>SELECT ... FOR UPDATE</code> only for the short moment of confirming, not while the user is choosing. The optimistic version is good when contention is low (random seats in a big hall), poor for the first-day rush.</p>
+
+  <h4>Deep dive B: holds, payment timeout and release</h4>
+  <p>A hold must <b>expire by itself</b>. If a user closes the tab with seats held, nobody else should be locked out forever. Store <code>held_until</code> on the seat. A seat counts as free if <code>status = 'free'</code> <b>or</b> <code>held_until &lt; now()</code>, so correctness does not depend on a background job running on time. The job just tidies up. The hold update can take over an expired hold in the same conditional statement.</p>
+  <p><b>The awkward case:</b> the user pays at minute 5:01, a second after the hold expired, and meanwhile somebody else grabbed the seat. The payment is real money, so the webhook handler first tries to re-acquire the same seats if they are still free; if not, it must <b>refund automatically</b> and tell the user (<a href="m5-7.html">refunds</a>). Never silently keep the money without a ticket. Also limit how many seats and how many simultaneous holds one user can have, or a bot can hold a whole theatre.</p>
+
+  <h4>Deep dive C: the waiting room, idempotency and read load</h4>
+  <ul>
+    <li><b>Virtual waiting room:</b> when 1,000,000 people arrive at 10:00, the database cannot serve them all. Put a queue in front. Each visitor gets a position (Redis sorted set by arrival time, or a hosted queue service), and sees a static "you are number 12,043" page from the CDN. A controller admits N people per second based on what the booking service can handle, handing out a signed <b>admission token</b> that the API checks. This turns a vertical wall of traffic into a steady stream. Combine it with a <a href="m5-2.html">rate limiter</a> per user, and CAPTCHA or login to slow bots.</li>
+    <li><b>Fairness:</b> queue by arrival time, or use a random draw among people who arrived in the first minute, so that a faster connection is not the only winner. Say which you chose.</li>
+    <li><b>Idempotent booking:</b> the client generates an <code>Idempotency-Key</code>; <code>bookings</code> has a unique index on it. If the request is retried (timeout, double-click, webhook delivered twice), the second attempt finds the existing row and returns the same booking instead of creating another.</li>
+    <li><b>Read scaling:</b> the seat map is served from a cache refreshed every second or two. If a seat looks free on a stale map but is taken, the hold call returns <code>409</code> and the app refreshes the map. The <b>database is always the truth</b>; the cache is only a hint.</li>
+  </ul>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Consistency over availability for seats:</b> if the database primary is unreachable we reject bookings rather than risk selling a seat twice (<a href="m3-1.html">CAP</a>). Browsing from cache can keep working.</li>
+    <li><b>Pessimistic versus optimistic:</b> locks are safe under high contention; version checks are cheaper under low contention. Hot shows are high contention.</li>
+    <li><b>Hold time:</b> short holds free seats quickly but annoy slow payers; long holds let seats sit idle (and enable hoarding). 5 to 10 minutes is typical.</li>
+    <li><b>Bottleneck:</b> all the contention for one hot show lands on a few rows of one database primary. Shard by <code>show_id</code> (<a href="m2-10.html">sharding</a>) so different shows live on different machines, and give a blockbuster its own capacity.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): hold success rate, 409 rate, number of holds expiring, payment-after-expiry count (should be near zero), queue length and admit rate.</li>
+  </ul>
+  <p><b>At 10x scale</b> (10 million bookings a day, bigger spikes): shard seats by show, run read replicas for browsing, move holds into Redis with the database as the final guard, run the waiting room entirely at the CDN edge, and pre-warm capacity before known sale times.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 440" role="img" aria-label="Ticket booking architecture. Users wait in a virtual waiting room, are admitted to the booking service, which holds seats in the database, uses Redis for the seat map cache, sends the user to a payment provider, and receives a webhook to confirm. A release job frees expired holds.">
+      <defs><marker id="ar-m5-6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="90" height="50" rx="8"/>
+        <rect x="135" y="40" width="120" height="60" rx="8"/>
+        <rect x="290" y="40" width="120" height="60" rx="8"/>
+        <rect x="480" y="40" width="145" height="60" rx="8"/>
+        <rect x="135" y="190" width="120" height="55" rx="8"/>
+        <rect x="290" y="190" width="120" height="60" rx="8"/>
+        <rect x="480" y="190" width="145" height="55" rx="8"/>
+        <path d="M105 65 H133" marker-end="url(#ar-m5-6)"/>
+        <path d="M255 70 H288" marker-end="url(#ar-m5-6)"/>
+        <path d="M410 62 H478" marker-end="url(#ar-m5-6)"/>
+        <path d="M478 84 H412" marker-end="url(#ar-m5-6)" stroke-dasharray="5 4"/>
+        <path d="M300 100 V145 H195 V188" marker-end="url(#ar-m5-6)"/>
+        <path d="M370 100 V188" marker-end="url(#ar-m5-6)"/>
+        <path d="M480 217 H412" marker-end="url(#ar-m5-6)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="60" y="70" font-size="14" font-weight="700">Users</text>
+        <text x="195" y="66" font-size="14" font-weight="700">Waiting room</text>
+        <text x="195" y="84" font-size="13">queue at the CDN</text>
+        <text x="350" y="66" font-size="14" font-weight="700">Booking</text>
+        <text x="350" y="84" font-size="14" font-weight="700">service</text>
+        <text x="552" y="66" font-size="14" font-weight="700">Payment provider</text>
+        <text x="552" y="84" font-size="13">(next lesson)</text>
+        <text x="195" y="214" font-size="14" font-weight="700">Redis</text>
+        <text x="195" y="232" font-size="13">seat-map cache</text>
+        <text x="350" y="214" font-size="14" font-weight="700">Database</text>
+        <text x="350" y="232" font-size="13">seats + bookings</text>
+        <text x="552" y="214" font-size="14" font-weight="700">Release job</text>
+        <text x="552" y="232" font-size="13">frees expired holds</text>
+        <text x="119" y="58" font-size="13">1</text>
+        <text x="271" y="63" font-size="13">2</text>
+        <text x="444" y="56" font-size="13">4</text>
+        <text x="444" y="99" font-size="13">5</text>
+        <text x="256" y="138" font-size="13">read</text>
+        <text x="384" y="150" font-size="13" text-anchor="start">3</text>
+        <text x="446" y="210" font-size="13">6</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="290" font-size="13">1. User waits in the virtual queue</text>
+        <text x="15" y="310" font-size="13">2. Admitted at a safe rate</text>
+        <text x="15" y="330" font-size="13">3. Hold seats: one atomic UPDATE</text>
+        <text x="15" y="350" font-size="13">4. Pay at the provider (5 to 10 min)</text>
+        <text x="15" y="370" font-size="13">5. Webhook: hold becomes booking</text>
+        <text x="15" y="390" font-size="13">6. Job frees expired holds</text>
+        <text x="15" y="410" font-size="13">Seat map is read from cache (1 to 2 s old)</text>
+        <text x="370" y="290" font-size="13" font-weight="700">The last line of defence:</text>
+        <text x="370" y="310" font-size="13">UNIQUE (show_id, seat_no)</text>
+        <text x="370" y="340" font-size="13" font-weight="700">Holds expire on their own:</text>
+        <text x="370" y="360" font-size="13">held_until &lt; now() means free</text>
+      </g>
+    </svg>
+    <figcaption>The database decides who gets a seat. The waiting room and cache exist to protect it from the rush.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-6 ticket-booking.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+design+ticketmaster+ticket+booking" target="_blank" rel="noopener">YouTube search: "Hello Interview design Ticketmaster ticket booking"</a>
+      <span class="meta">Pick the full problem breakdown. Watch the part on reserving seats and the waiting room.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=system+design+BookMyShow+double+booking+seat+lock" target="_blank" rel="noopener">YouTube search: "system design BookMyShow double booking seat lock"</a>
+      <span class="meta">Pick a recent walkthrough. Watch the part on locking seats and timeouts.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.postgresql.org/docs/current/explicit-locking.html" target="_blank" rel="noopener">PostgreSQL docs: Explicit locking</a>
+      <span class="meta">Skim section "Row-level locks" for FOR UPDATE. Do not try to read it all.</span></li>
+    <li><a href="https://redis.io/docs/latest/commands/set/" target="_blank" rel="noopener">Redis docs: SET</a>
+      <span class="meta">Read about the NX and EX options. Together they make a hold that expires.</span></li>
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: system design learning path</a>
+      <span class="meta">If the list has a ticket booking breakdown, read how it handles reservations.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 30 to 40 for the SQL)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design a ticket booking system" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes.</li>
+    <li>In the deep-dive slot, draw two lanes for "Asha" and "Ravi" racing for seat A1 and show where the lock, the conditional update or the unique constraint stops the second one. Then explain the hold timeout.</li>
+    <li>Stop the recording and save it as <code>m5-6 mock</code>, and the drawing as <code>m5-6 ticket-booking-mock.excalidraw</code>. Compare with the lesson and note what you missed.</li>
+  </ol>
+
+  <h3>B. Prevent double booking in the Supabase SQL Editor</h3>
+  <p class="warn"><b>Be honest about what the editor does.</b> Each time you press <span class="ui">Run</span>, the editor sends your text to the database, and a single statement is committed (made permanent) straight away. This is called <b>auto-commit</b>. So a lone <code>SELECT ... FOR UPDATE</code> would take a lock and release it a moment later, and you would see nothing. That is why Part 3 below puts <code>begin; ... commit;</code> and a 15-second pause <b>inside one run</b>. Use a scratch project, not a real one. Everything here uses tables named <code>demo_...</code> and you drop them at the end.</p>
+
+  <h3>Part 1: create the tables</h3>
+  <ol class="steps">
+    <li>Open your Supabase dashboard in Chrome and open a project. Click <span class="ui">SQL Editor</span> in the left sidebar, then <span class="ui">+ New query</span> (it may be a plus icon).</li>
+    <li>Paste this, then press <span class="ui">Run</span> (or <kbd>Ctrl</kbd> + <kbd>Enter</kbd>). You should see <span class="ui">Success. No rows returned</span>:
+<pre><code>create table demo_bookings (
+  id        bigint generated always as identity primary key,
+  show_id   int  not null,
+  seat_no   text not null,
+  user_name text not null,
+  unique (show_id, seat_no)   -- one booking per seat per show
+);
+
+create table demo_seats (
+  show_id    int  not null,
+  seat_no    text not null,
+  status     text not null default 'free',   -- free | held | booked
+  held_by    text,
+  held_until timestamptz,
+  booked_by  text,
+  version    int  not null default 0,
+  primary key (show_id, seat_no)
+);
+
+insert into demo_seats (show_id, seat_no)
+values (1, 'A1'), (1, 'A2'), (1, 'A3');
+
+-- Good habit: no public API access to these tables
+alter table demo_bookings enable row level security;
+alter table demo_seats    enable row level security;</code></pre></li>
+    <li>Click <span class="ui">Table Editor</span> in the left sidebar. You should see <code>demo_bookings</code> (empty) and <code>demo_seats</code> with three rows: A1, A2, A3, all <code>free</code>. (It may show an <b>RLS enabled</b> badge; that is what we want.)</li>
+    <li>Go back to the <span class="ui">SQL Editor</span>.</li>
+  </ol>
+
+  <h3>Part 2: the unique constraint stops a second booking</h3>
+  <p>Run each statement below <b>on its own</b>: select all the old text with <kbd>Ctrl</kbd> + <kbd>A</kbd>, paste the new text over it, press <span class="ui">Run</span>.</p>
+  <ol class="steps">
+    <li>Asha books seat A1:
+<pre><code>insert into demo_bookings (show_id, seat_no, user_name)
+values (1, 'A1', 'asha')
+returning *;</code></pre>
+      You should see one row: <code>seat_no A1</code>, <code>user_name asha</code>.</li>
+    <li>Ravi tries the same seat:
+<pre><code>insert into demo_bookings (show_id, seat_no, user_name)
+values (1, 'A1', 'ravi')
+returning *;</code></pre>
+      You should see a red error like <code>duplicate key value violates unique constraint "demo_bookings_show_id_seat_no_key"</code>. The database refused the second booking. Even if Asha and Ravi had clicked in the same millisecond, one of them would have had to wait for the other to finish, and then got this error. That is the last line of defence.</li>
+    <li>Real code usually does not want an error. Try the polite form:
+<pre><code>insert into demo_bookings (show_id, seat_no, user_name)
+values (1, 'A1', 'ravi')
+on conflict (show_id, seat_no) do nothing
+returning *;</code></pre>
+      You should see <span class="ui">Success. No rows returned</span>: zero rows came back, which is how your app learns "someone else got it" and shows the "seat taken" message.</li>
+    <li>Open the <span class="ui">Table Editor</span>, click <code>demo_bookings</code>: only Asha's row exists.</li>
+  </ol>
+
+  <h3>Part 3: compare-and-set, version check and holds</h3>
+  <ol class="steps">
+    <li><b>Optimistic version check.</b> Seat A3 starts at <code>version 0</code>. Run this:
+<pre><code>update demo_seats
+set status = 'booked', booked_by = 'asha', version = version + 1
+where show_id = 1 and seat_no = 'A3' and version = 0
+returning seat_no, booked_by, version;</code></pre>
+      You should see one row: <code>A3, asha, version 1</code>. Now press <span class="ui">Run</span> <b>again without changing anything</b>. This time you should get no rows, because the seat is now at version 1, not 0. A second person working from the old version loses cleanly.</li>
+    <li><b>Hold with an expiry.</b> Asha holds A1 for 5 minutes. The <code>where</code> says: free, or held but expired.
+<pre><code>update demo_seats
+set status = 'held', held_by = 'asha', held_until = now() + interval '5 minutes'
+where show_id = 1 and seat_no = 'A1'
+  and (status = 'free' or (status = 'held' and held_until &lt; now()))
+returning seat_no, held_by, held_until;</code></pre>
+      You should see one row with <code>held_until</code> about 5 minutes from now. (Seat A1 is free in <code>demo_seats</code>; the booking in Part 2 was in the other table.)</li>
+    <li>Ravi tries to hold A1 (same text with the name changed):
+<pre><code>update demo_seats
+set status = 'held', held_by = 'ravi', held_until = now() + interval '5 minutes'
+where show_id = 1 and seat_no = 'A1'
+  and (status = 'free' or (status = 'held' and held_until &lt; now()))
+returning seat_no, held_by, held_until;</code></pre>
+      You should get no rows: A1 is held and the hold has not expired.</li>
+    <li>Pretend 5 minutes have passed, by moving the expiry into the past:
+<pre><code>update demo_seats
+set held_until = now() - interval '1 minute'
+where show_id = 1 and seat_no = 'A1'
+returning seat_no, held_by, held_until;</code></pre>
+      Then run Ravi's hold again (the text from the previous step). This time one row comes back with <code>held_by ravi</code>. An expired hold is simply treated as free, so correctness does not depend on a cleanup job.</li>
+  </ol>
+
+  <h3>Part 4: a row lock across two query tabs</h3>
+  <p>The plan: Tab 1 starts a transaction, locks seat A2, then sleeps 15 seconds while holding the lock. Tab 2 tries the same seat meanwhile, and must <b>wait</b>.</p>
+  <ol class="steps">
+    <li>You need two query tabs. In the <span class="ui">SQL Editor</span> press <span class="ui">+ New query</span> twice, so you have two. Rename them if you like.</li>
+    <li>In <b>Tab 2</b> paste this and do <b>not</b> run it yet:
+<pre><code>begin;
+
+select seat_no, status from demo_seats
+where show_id = 1 and seat_no = 'A2'
+for update;
+
+update demo_seats
+set status = 'booked', booked_by = 'ravi', version = version + 1
+where show_id = 1 and seat_no = 'A2' and status = 'free';
+
+commit;
+
+select seat_no, status, booked_by from demo_seats
+where show_id = 1 and seat_no = 'A2';</code></pre></li>
+    <li>In <b>Tab 1</b> paste this and press <span class="ui">Run</span>. It will run for about 15 seconds:
+<pre><code>begin;
+
+select seat_no, status from demo_seats
+where show_id = 1 and seat_no = 'A2'
+for update;
+
+select pg_sleep(15);
+
+update demo_seats
+set status = 'booked', booked_by = 'asha', version = version + 1
+where show_id = 1 and seat_no = 'A2' and status = 'free';
+
+commit;
+
+select seat_no, status, booked_by from demo_seats
+where show_id = 1 and seat_no = 'A2';</code></pre></li>
+    <li><b>Quickly</b> (within 15 seconds) switch to Tab 2 and press <span class="ui">Run</span>. Tab 2 should appear to hang: its <code>SELECT ... FOR UPDATE</code> is waiting for Tab 1's lock.</li>
+    <li>When Tab 1 finishes (<code>commit</code>), Tab 2 wakes up. Its result should show seat <code>A2</code> as <code>booked</code> by <code>asha</code>, not ravi. Tab 2's update changed zero rows because, after waiting, it saw the seat was no longer <code>free</code>.</li>
+    <li><b>If it does not wait:</b> if Tab 2 answers instantly with the same final result, your editor ran the two requests one after the other instead of at the same time (it may share one database connection). You still saw the correct outcome (only Asha got A2), but not the waiting. If you see a <b>timeout</b> error in Tab 1, change <code>15</code> to <code>5</code> and try again. In your real app, each user has their own connection, so the waiting is real.</li>
+    <li>Reset the seat if you want to try again:
+<pre><code>update demo_seats
+set status = 'free', booked_by = null, version = 0
+where show_id = 1 and seat_no = 'A2';</code></pre></li>
+  </ol>
+
+  <h3>Part 5: the same idea in Redis (optional, 5 minutes)</h3>
+  <ol class="steps">
+    <li>Open <code>console.upstash.com</code>, your Redis database, and the <span class="ui">CLI</span> tab. Type and press <kbd>Enter</kbd>:
+<pre><code>SET hold:1:A3 asha NX EX 300</code></pre>
+      You should see <code>OK</code>. The hold exists and will vanish in 300 seconds.</li>
+    <li>Ravi tries: <code>SET hold:1:A3 ravi NX EX 300</code>. You should see <code>null</code> (or <code>nil</code>): <code>NX</code> means "only if it does not exist", so he lost.</li>
+    <li>Type <code>TTL hold:1:A3</code>. You should see a number just under 300. Then <code>DEL hold:1:A3</code> to clean up.</li>
+  </ol>
+
+  <h3>Part 6: clean up</h3>
+  <ol class="steps">
+    <li>In the SQL Editor run the next lines. The editor may ask you to confirm a "destructive" query; confirm it. Success means the demo tables are gone:
+<pre><code>drop table demo_bookings;
+drop table demo_seats;</code></pre></li>
+  </ol>
+
+  <h3>C. Variation questions</h3>
+  <details><summary>1. A family wants 6 seats together. How do you hold them?</summary>
+    <p>All-or-nothing in one transaction: update the six seats where each is free (or expired), and check that the count of updated rows is 6; if not, roll back so no seat stays held. Lock or update the seats in a fixed order (by seat number) so two groups going for overlapping seats cannot deadlock. Return <code>409</code> naming the seat that failed.</p></details>
+  <details><summary>2. The user pays successfully but the hold expired a minute ago. What now?</summary>
+    <p>The webhook handler tries to re-acquire the same seats. If they are still free, book them. If someone else has them, refund automatically and tell the user clearly. Never keep the money without a ticket. Also log these cases; if they are common, the hold time is too short.</p></details>
+  <details><summary>3. At 10:00 sharp, 1 million people hit "Book". What do you do?</summary>
+    <p>Put a virtual waiting room in front, served from a CDN, and admit users at a rate the booking service can handle. Rate limit each user, use login and CAPTCHA against bots, cache the seat map, and keep the database path short: one conditional update per hold. Shed load with a friendly message instead of letting the database fall over.</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is the read-then-write race in booking, and how do you stop it?</summary><p>Two requests both read "seat is free" and both write "booked". Stop it by making the check and the write a single step the database enforces: a conditional update, a row lock (<code>FOR UPDATE</code>), or a unique constraint.</p></details>
+  <details><summary>What breaks if you only check availability in your app code and have no unique constraint?</summary><p>Two app servers can both pass the check at the same moment and both insert, so the seat is sold twice. The unique constraint in the database is the guard that works no matter which code path or server runs.</p></details>
+  <details><summary>What breaks if holds never expire and a user closes the tab?</summary><p>Their seats stay held forever, so nobody can buy them and the show sells out only on paper. Holds need a <code>held_until</code> time (or a Redis TTL) and expired holds count as free.</p></details>
+  <details><summary>What breaks if two requests lock seats A1,A2 and A2,A1 in opposite orders?</summary><p>Each holds one lock and waits for the other: a deadlock, and the database aborts one. Always lock seats in a fixed order, such as ascending seat number.</p></details>
+  <details><summary>When would you choose optimistic locking over <code>FOR UPDATE</code>, and when not?</summary><p>Optimistic suits low contention (people picking random seats in a big hall), since nothing is locked while the user thinks. For a hot show, with hundreds of people per seat, optimistic attempts fail and retry constantly, so use a conditional update or a short row lock.</p></details>
+  <details><summary>Why is the seat map allowed to be stale, but the hold is not?</summary><p>The map is only a hint to help the user choose, and stale data costs at most a refreshed screen. The hold is where the seat is actually claimed, so it must hit the database, the single source of truth.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Data size is small, contention is the problem. I would keep seats in PostgreSQL and claim them with a conditional update inside a transaction, with a unique constraint on show and seat as the final guard against double booking."</blockquote>
+  <blockquote>"Seats are held for a few minutes with a held_until time, so an abandoned hold frees itself. For the 10 am rush I would put a virtual waiting room in front and admit users at a rate the booking service can handle."</blockquote>
+  <p><b>Common follow-up question:</b> Why not just use a distributed lock in Redis?</p>
+  <p>A Redis hold is fine for speed and expiry, but it is a second source of truth and can lose data on failover. I would still keep the unique constraint in the database as the final guard. The database transaction is what makes the booking itself safe.</p>
+  <p><b>Common follow-up question:</b> How do you make booking idempotent?</p>
+  <p>The client sends an idempotency key with the booking request, and the bookings table has a unique index on it. A retry or a duplicate webhook finds the existing row and returns the same result, so one payment never creates two bookings.</p>
+</section>
+
+</main>
+</body>
+</html>

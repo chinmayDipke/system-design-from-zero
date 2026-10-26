@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design search autocomplete</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-11">
+<main class="lesson">
+
+<section class="story">
+  <h2>The helpful shopkeeper who finishes your sentence</h2>
+  <p>You walk into a kirana shop and say "do..." and the shopkeeper already says "Dosa batter? Dove soap? Dolo?" He knows what most people in the colony ask for when they start with "do". You did not even finish the word, and your answer is ready.</p>
+  <p>How does he do it? He does not think hard each time. Over the years he noticed what people buy and remembers, for every <b>first few letters</b>, the five most popular things. Asking "do" or "dol" is just remembering, not searching the whole shop.</p>
+  <p>A search box with suggestions works the same way. The hard part is doing it for millions of people at once, in less than the blink of an eye, while you type. That is why the answers must be <b>pre-made and kept close</b>.</p>
+</section>
+
+<section class="explain">
+  <h2>Design search autocomplete (typeahead)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. In your own words: if the user typed "iph", where could the answer "iphone 15" come from in under 100 ms?</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. This design uses <a href="m2-7.html">caching</a>, <a href="m2-10.html">sharding</a>, <a href="m2-3.html">database indexes</a> and <a href="m2-8.html">CDNs</a>.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>While the user types, return the <b>top 5 (or 10) suggestions</b> that start with the typed <b>prefix</b>, ranked by how often people search them.</li>
+    <li>Suggestions should reflect <b>what people search</b>, so trending topics appear after some time.</li>
+    <li>Bad or unsafe suggestions must be <b>filtered out</b>.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Very fast:</b> under about 100 ms end to end, because the user is typing and the result must appear as they type.</li>
+    <li><b>Highly available.</b> If autocomplete is down, search still works, so this is not critical. A slightly stale list is fine (<a href="m3-2.html">eventual consistency</a>).</li>
+    <li><b>Read-heavy:</b> every keystroke is a request; the data is updated only periodically.</li>
+  </ul>
+  <p><b>Out of scope:</b> spell correction, personalised suggestions, multi-language ranking, and the search results page itself.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 100 million daily active users, each making 10 searches a day. After the debouncing described below, each search triggers about 4 suggestion requests.</p>
+  <ul>
+    <li><b>Searches:</b> 100,000,000 x 10 = 1,000,000,000 a day.</li>
+    <li><b>Suggestion requests:</b> 1,000,000,000 x 4 = 4,000,000,000 a day, divided by 100,000 s = <b>40,000 a second</b>. Peak at 2x is <b>80,000 a second</b>. (Without debouncing, one request per keystroke would be about 2 to 3 times more.)</li>
+    <li><b>Data size:</b> keep 10 million distinct popular queries of about 20 characters each: 10,000,000 x 20 = 200 million characters. Many queries share beginnings, so say the trie has about 100 million nodes. If a node costs about 50 bytes (child links plus 5 suggestion ids), that is 100,000,000 x 50 = <b>about 5 GB</b>. That fits in the memory of one machine. We shard for traffic, not for size.</li>
+    <li><b>Writes:</b> there are no writes on the request path. The data is rebuilt in a batch, for example every hour or every day.</li>
+  </ul>
+  <p>Conclusion: <b>a read-only, in-memory, cache-friendly problem</b>. Most of the engineering goes into making answers cheap to compute and close to the user.</p>
+
+  <h3>3. API</h3>
+<pre><code>GET /suggest?q=iph&amp;limit=5
+  200 -> { "prefix": "iph", "suggestions": ["iphone 15", "iphone 15 pro", "iphone charger", "iphone 14", "iphone case"] }
+  Cache-Control: public, max-age=300</code></pre>
+  <p>Only one endpoint. The <code>Cache-Control</code> header is on purpose: the same prefix gives the same answer for everyone, so browsers and CDNs can store it (deep dive C).</p>
+
+  <h3>4. Data model</h3>
+<pre><code>Trie node:  { children: { 'h': node, ... }, top_k: ["iphone 15", ... 5 items with counts] }
+
+Source of truth (batch):
+search_logs      (query, searched_at)                    -- huge, append-only, in files or a warehouse
+query_counts     (query, count)                          -- the result of the aggregation job
+blocked_terms    (term)                                  -- filter list
+
+Snapshot: the built trie, saved as a file in object storage, loaded by each suggestion server</code></pre>
+  <p><b>Why:</b> the trie is built offline and loaded into memory, so no database sits on the request path. Logs are written as files because they are just appended. You will try the simple "database only" version in the SQL exercise to feel why it is not enough at scale.</p>
+
+  <h3>5. High-level design</h3>
+  <p>Numbers match the picture.</p>
+  <ol>
+    <li>As the user types, the <b>browser</b> waits for a short pause (debounce) and checks its own cache of recent prefixes.</li>
+    <li>On a miss, the request goes to the <b>CDN / edge cache</b>, which returns the stored answer if another user already asked for this prefix.</li>
+    <li>On a miss there too, it reaches the <b>suggestion API</b>, which picks the right shard from the first letters of the prefix and asks the <b>trie server</b>.</li>
+    <li>The trie server walks the tree to the node for the prefix and returns the top 5 saved at that node. No scanning is needed. The response is cached on the way back.</li>
+    <li>Separately, the search service writes every submitted search into the <b>query logs</b>.</li>
+    <li>A <b>batch job</b> (hourly or daily) counts queries, applies the <b>blocklist</b>, and the <b>trie builder</b> makes a new trie snapshot.</li>
+    <li>New snapshots are published to the trie servers, which swap to the new trie without downtime.</li>
+  </ol>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: the trie with top-k at each node</h4>
+  <p>A <b>trie</b> (say "try") is a tree of letters. Each step down a branch adds one letter, so walking "i", "p", "h" lands on the node for the prefix "iph". All words starting with "iph" are below that node.</p>
+  <table>
+    <tr><th>Approach</th><th>Lookup for prefix "iph"</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Database <code>LIKE 'iph%'</code></b> with a prefix index</td><td>Find all matching rows, sort by count, take 5</td><td>Simple, no new system; works well for long prefixes and modest data</td><td>A short prefix such as "i" matches millions of rows to sort, which is slow; the database takes the load of every keystroke</td></tr>
+    <tr><td><b>Plain trie</b></td><td>Walk to the node, then visit <i>every</i> word below it to find the best 5</td><td>Fast walk</td><td>The search below the node is slow for short prefixes, the same problem</td></tr>
+    <tr><td><b>Trie with top-k cached at every node</b></td><td>Walk to the node and read its saved top 5</td><td>Lookup cost depends only on the prefix length (a handful of steps); no scanning</td><td>More memory (5 items per node); must be rebuilt to refresh the rankings</td></tr>
+  </table>
+  <p><b>Pick:</b> the trie with top-k at each node. We trade memory (cheap, we computed 5 GB) for time (the thing the user feels). A saved top 5 per node is exactly what the shopkeeper in the story remembers.</p>
+
+  <h4>Deep dive B: building it, and keeping it fresh</h4>
+  <table>
+    <tr><th>Approach</th><th>How</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Offline batch build</b></td><td>Every hour or day, aggregate the logs into <code>query_counts</code>, build a new trie, publish a snapshot, swap it in</td><td>Simple and robust; servers are read-only; easy to roll back; the blocklist is applied in one place</td><td>New trends take up to one cycle to appear</td></tr>
+    <tr><td><b>Real-time updates</b></td><td>Stream each search into counters and update the affected nodes live</td><td>Trending queries appear in minutes</td><td>Many writes to the top-k of nodes near the root (every search touches "i", "ip", "iph"...); locking and complexity; easier to poison with spam</td></tr>
+    <tr><td><b>Hybrid</b></td><td>The big trie is built daily; a small "trending" list updated every few minutes is merged into answers</td><td>Stable base, fresh trends</td><td>Two sources to merge</td></tr>
+  </table>
+  <p><b>Pick:</b> start with the <b>offline batch build</b>. Add a small real-time "trending" layer only if the product needs breaking-news freshness. To update safely, each server loads the new snapshot beside the old one and switches a pointer, so there is no moment with an empty trie.</p>
+  <p>To avoid rewarding one-off or recent noise, count with a <b>time decay</b> (last week's searches count more than last year's) and ignore queries seen fewer than some minimum number of times.</p>
+
+  <h4>Deep dive C: sharding, caching and the client</h4>
+  <ul>
+    <li><b>Sharding by prefix.</b> One machine can hold 5 GB but not take 80,000 requests a second, so we copy the trie to several servers (replicas) for traffic. If the data grew too big, we would <b>split by first letter</b>: shard 1 handles a to f, shard 2 handles g to m, and so on. But letters are not equally popular ("s" is far busier than "x"), so choose the ranges from real counts, or hash the first two letters, and watch for hot shards (<a href="m2-10.html">sharding</a>).</li>
+    <li><b>Caching, layer by layer.</b> The same prefix gives the same answer for everyone. So set <code>Cache-Control: max-age=300</code>, and let the <b>browser</b> and the <b>CDN</b> store answers. A few thousand short prefixes ("a", "ap", "app") receive a huge share of the traffic, and the CDN answers those without touching our servers. Keep also a small in-memory cache in the API.</li>
+    <li><b>Debouncing on the client.</b> Do not send a request on every keystroke. After each key, wait about 150 to 300 ms; if another key arrives, reset the timer. Only send when the user pauses. Also cancel an older request when a newer one is sent, and ignore a response that arrives out of order (check that its prefix still equals what is in the box). Debouncing alone can cut requests by half or more.</li>
+    <li><b>Prefix on the client.</b> Once the user has typed "iph" and you got 5 results, if the user types "ipho" you may filter those results on the device, before asking the server again.</li>
+  </ul>
+
+  <h4>Deep dive D: filtering bad suggestions</h4>
+  <p>Suggestions appear on a public page, so they must not show offensive, hateful or illegal terms, or private data such as someone's phone number. Do it in <b>three layers</b>: (1) a <b>blocklist</b> (and pattern rules) applied in the batch job, so a blocked term never enters the trie; (2) a quick <b>second check</b> on the serving side, so an urgent removal can take effect without waiting for the next build (a small "remove now" list); (3) a <b>report</b> button and a review process. Also drop queries with too few distinct searchers, which protects against both spam and privacy leaks (a query typed by only one person may be personal).</p>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Memory against speed:</b> storing top-k at every node costs memory but removes all work at request time. Limit depth (say the first 20 characters) and skip very rare queries to keep the trie small.</li>
+    <li><b>Freshness against simplicity:</b> an offline build is simple and stable but lags; real-time is fresh but complex and abusable.</li>
+    <li><b>Relevance against safety:</b> pure popularity can promote spam or offensive terms, so filtering is part of the design, not an extra.</li>
+    <li><b>Bottlenecks:</b> short prefixes are the hot keys (cache them hard), the batch job's runtime as logs grow (it is a big-data job, not a web request), and hot shards.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): suggestion latency p99, cache hit rate at the CDN, trie build age, share of searches that used a suggestion.</li>
+  </ul>
+  <p><b>At 10x scale:</b> more CDN caching (suggestions per region and language), a trie per language or region, a distributed batch pipeline (a stream of logs aggregated in a data warehouse), and a layer that personalises results on top of the shared trie.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 440" role="img" aria-label="Autocomplete architecture. Top row, the read path: browser with debounce and local cache, CDN edge cache, suggestion API, and sharded trie servers. Bottom, the build path: query logs, batch job with blocklist, trie builder, publishing snapshots to the trie servers.">
+      <defs><marker id="ar-m5-11" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="115" height="60" rx="8"/>
+        <rect x="165" y="40" width="115" height="60" rx="8"/>
+        <rect x="320" y="40" width="120" height="60" rx="8"/>
+        <rect x="480" y="40" width="145" height="60" rx="8"/>
+        <rect x="15" y="170" width="115" height="55" rx="8"/>
+        <rect x="165" y="170" width="115" height="55" rx="8"/>
+        <rect x="320" y="170" width="120" height="55" rx="8"/>
+        <rect x="165" y="295" width="115" height="55" rx="8"/>
+        <path d="M130 70 H163" marker-end="url(#ar-m5-11)"/>
+        <path d="M280 70 H318" marker-end="url(#ar-m5-11)"/>
+        <path d="M440 70 H478" marker-end="url(#ar-m5-11)"/>
+        <path d="M130 198 H163" marker-end="url(#ar-m5-11)"/>
+        <path d="M280 198 H318" marker-end="url(#ar-m5-11)"/>
+        <path d="M440 198 H552 V102" marker-end="url(#ar-m5-11)" stroke-dasharray="5 4"/>
+        <path d="M222 295 V227" marker-end="url(#ar-m5-11)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="72" y="64" font-size="14" font-weight="700">Browser</text>
+        <text x="72" y="82" font-size="13">debounce + cache</text>
+        <text x="222" y="64" font-size="14" font-weight="700">CDN / edge</text>
+        <text x="222" y="82" font-size="13">cache by prefix</text>
+        <text x="380" y="64" font-size="14" font-weight="700">Suggestion</text>
+        <text x="380" y="82" font-size="14" font-weight="700">API</text>
+        <text x="552" y="64" font-size="14" font-weight="700">Trie servers</text>
+        <text x="552" y="82" font-size="13">shards a-f, g-m, ...</text>
+        <text x="72" y="194" font-size="14" font-weight="700">Query logs</text>
+        <text x="72" y="212" font-size="13">submitted searches</text>
+        <text x="222" y="194" font-size="14" font-weight="700">Batch job</text>
+        <text x="222" y="212" font-size="13">count + filter</text>
+        <text x="380" y="194" font-size="14" font-weight="700">Trie builder</text>
+        <text x="380" y="212" font-size="13">top-5 per node</text>
+        <text x="222" y="319" font-size="14" font-weight="700">Blocklist</text>
+        <text x="222" y="337" font-size="13">bad terms</text>
+        <text x="147" y="62" font-size="13">1</text>
+        <text x="299" y="62" font-size="13">2</text>
+        <text x="459" y="62" font-size="13">3</text>
+        <text x="147" y="190" font-size="13">5</text>
+        <text x="299" y="190" font-size="13">6</text>
+        <text x="500" y="190" font-size="13">7 publish snapshot</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="385" font-size="13">Read path (top): 1-4 keystroke, pause, then cache, cache, API, trie walk returns saved top 5</text>
+        <text x="15" y="403" font-size="13">Build path (bottom): 5 logs, 6 batch count + blocklist, 7 new trie swapped in on the servers</text>
+        <text x="15" y="421" font-size="13">Most requests end at the browser or CDN and never reach the trie servers</text>
+      </g>
+    </svg>
+    <figcaption>Reads are served from memory and caches. The trie is rebuilt offline and swapped in, so the request path never waits for writes.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-11 autocomplete.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+design+search+autocomplete+system+trie" target="_blank" rel="noopener">YouTube search: "ByteByteGo design search autocomplete system trie"</a>
+      <span class="meta">Short. Watch the part showing a trie with the top results stored at each node.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+design+typeahead+autocomplete" target="_blank" rel="noopener">YouTube search: "Hello Interview design typeahead autocomplete"</a>
+      <span class="meta">Pick the full breakdown. Watch the sections on caching and on updating the data.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.postgresql.org/docs/current/indexes-opclass.html" target="_blank" rel="noopener">PostgreSQL docs: Operator classes and operator families</a>
+      <span class="meta">Read the paragraph that mentions <code>text_pattern_ops</code> and <code>LIKE</code>. That is the index you create below.</span></li>
+    <li><a href="https://roadmap.sh/system-design" target="_blank" rel="noopener">roadmap.sh: System design</a>
+      <span class="meta">Skim the map and find where typeahead and tries appear; use it to place this lesson in the bigger picture.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 25 for the SQL)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design search autocomplete" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes.</li>
+    <li>In the deep dives, draw a small trie for the words "to", "tea", "ten" and write the top-2 list at each node. Explain how a lookup for "te" reads the answer without scanning.</li>
+    <li>Stop the recording and save it as <code>m5-11 mock</code>, and the drawing as <code>m5-11 autocomplete-mock.excalidraw</code>. Compare with the lesson and note what you missed.</li>
+  </ol>
+
+  <h3>B. A prefix query and its index in the Supabase SQL Editor (20 to 25 minutes)</h3>
+  <p class="warn"><b>Use a scratch project.</b> This creates one table called <code>search_queries</code> and 200,000 filler rows (a few tens of MB). You drop the table at the end. Run each block on its own: select all the old text with <kbd>Ctrl</kbd> + <kbd>A</kbd>, paste the new text, and press <span class="ui">Run</span>.</p>
+  <ol class="steps">
+    <li>Open your Supabase dashboard in Chrome, open a project, click <span class="ui">SQL Editor</span> in the left sidebar and then <span class="ui">+ New query</span> (it may be a plus icon).</li>
+    <li>Create the table and a few real-looking rows. Paste this and press <span class="ui">Run</span> (or <kbd>Ctrl</kbd> + <kbd>Enter</kbd>). You should see <span class="ui">Success. No rows returned</span>:
+<pre><code>create table search_queries (
+  query text not null,
+  count int  not null
+);
+
+insert into search_queries (query, count) values
+  ('iphone 15', 9800), ('iphone 15 pro', 7600), ('iphone charger', 5200),
+  ('iphone 14', 4100), ('iphone case', 3900), ('iphone 13', 2500),
+  ('ipad air', 3000), ('instagram', 12000), ('samsung phone', 6000);
+
+alter table search_queries enable row level security;  -- good habit: no public API access</code></pre></li>
+    <li>Add 200,000 filler rows, so the table is big enough to make the difference visible. Every filler query starts with the word <code>filler</code>, so none of them matches "iph". Run:
+<pre><code>insert into search_queries (query, count)
+select 'filler ' || md5(g::text), (random() * 1000)::int
+from generate_series(1, 200000) as g;</code></pre>
+      You should see <span class="ui">Success. No rows returned</span>. (It may take a few seconds.)</li>
+    <li>Run the autocomplete query:
+<pre><code>select query, count
+from search_queries
+where query like 'iph%'
+order by count desc
+limit 5;</code></pre>
+      You should see five rows: <code>iphone 15</code> (9800), <code>iphone 15 pro</code> (7600), <code>iphone charger</code> (5200), <code>iphone 14</code> (4100), <code>iphone case</code> (3900). That is the answer a user typing "iph" should see. <code>iphone 13</code> is the sixth match and is cut off by <code>limit 5</code>.</li>
+    <li>Now ask Postgres <b>how</b> it would run this, with no index yet. Run:
+<pre><code>explain
+select query, count
+from search_queries
+where query like 'iph%'
+order by count desc
+limit 5;</code></pre>
+      The result is a few lines of text (one per row; if you see a table, read the <code>QUERY PLAN</code> column). You should see <code>Seq Scan on search_queries</code> and a line <code>Filter: (query ~~ 'iph%'::text)</code>. <b>Seq Scan</b> means "read every row of the table". With 200,000 rows it is fast enough to hide, but it reads them all for every keystroke of every user.</li>
+    <li>Create the index made for prefix search:
+<pre><code>create index search_queries_prefix_idx
+  on search_queries (query text_pattern_ops);
+
+analyze search_queries;</code></pre>
+      You should see <span class="ui">Success. No rows returned</span>. <code>text_pattern_ops</code> tells Postgres to order the index by plain character comparison, so a prefix like <code>iph%</code> becomes a range of the index (everything from <code>iph</code> up to just before <code>ipi</code>). <code>analyze</code> refreshes Postgres's statistics so it knows how big the table is. <b>Gotcha:</b> a normal index (without <code>text_pattern_ops</code>) is often <b>not</b> used for <code>LIKE 'x%'</code> when the database uses a language-aware sorting order, which is the common default; this special index class avoids that. (A <code>varchar</code> column would use <code>varchar_pattern_ops</code>.)</li>
+    <li>Run the <code>explain</code> from step 5 again. You should now see an <code>Index Scan using search_queries_prefix_idx</code> (or a <code>Bitmap Index Scan</code> followed by a <code>Bitmap Heap Scan</code>), and a line like <code>Index Cond: ((query ~&gt;=~ 'iph'::text) AND (query ~&lt;~ 'ipi'::text))</code>. Read that line as "from <code>iph</code> up to before <code>ipi</code>". Postgres jumps straight into the right place in the index instead of reading every row. Above it you will see a <code>Sort</code> (<code>Sort Key: count DESC</code>) and a <code>Limit</code>: after finding the 6 matching rows it sorts them by count and keeps 5. The exact cost numbers differ on your database; what matters is the node name.</li>
+    <li><b>When the index does not help.</b> Try a very short prefix that nearly all rows share. The filler rows all start with <code>f</code>:
+<pre><code>explain
+select query, count
+from search_queries
+where query like 'f%'
+order by count desc
+limit 5;</code></pre>
+      You should see a <code>Seq Scan</code> again (not the index), and a much larger cost number than before (in the thousands, against single digits for <code>iph%</code>). Postgres is right: the prefix <code>f</code> matches all 200,000 rows, so using the index would not save work, and then it must sort 200,000 rows by count just to pick 5. This is the exact problem of short prefixes like "i" or "s" in a real search box, and it is the reason big systems use a <b>trie with the top 5 stored at each node</b> instead of asking a database.</li>
+    <li><b>The plan depends on table size.</b> If you try the same thing on a table with only 9 rows, Postgres will pick a <code>Seq Scan</code> even when the index exists, because reading one small page is cheaper than visiting the index. That is why we added 200,000 rows. If you see <code>Seq Scan</code> in step 7, make sure you ran <code>analyze</code> and that you used <code>iph%</code> with the percent sign at the <b>end</b>.</li>
+    <li>One more: a wildcard at the <b>start</b> cannot use this index:
+<pre><code>explain
+select query from search_queries
+where query like '%phone'
+limit 5;</code></pre>
+      You should see <code>Seq Scan</code> with <code>Filter: (query ~~ '%phone'::text)</code>. A prefix index only works for words that <b>start</b> with the typed letters. That is fine for autocomplete.</li>
+    <li>Clean up. The editor may ask you to confirm a destructive query; confirm it:
+<pre><code>drop table search_queries;</code></pre>
+      Dropping the table also drops its index.</li>
+  </ol>
+  <p><b>Honest note:</b> in the steps above, "Seq Scan" versus "Index Scan" are what Postgres chose on this data; on your project the choice can differ in cost numbers and in "Bitmap" variants, but a prefix like <code>iph%</code> on 200,000 rows with this index should use the index.</p>
+
+  <h3>C. Variation questions</h3>
+  <details><summary>1. Add personalised suggestions: a user's own recent searches should come first. What changes?</summary>
+    <p>Keep the shared trie as it is. Add a small per-user list (their last 20 searches, stored on the device or in Redis keyed by user id). At request time (or on the client), merge: the user's matching recent searches first, then the global top-k, without duplicates. The shared answers stay cacheable at the CDN; only the small personal part is not.</p></details>
+  <details><summary>2. A new event happens and people search a brand-new name. Your trie is updated daily. What do you do?</summary>
+    <p>Add a small trending layer: a stream job counts searches in the last few minutes and publishes a short "trending now" list every minute. The suggestion API merges these few entries into the answer when their prefix matches. The big trie keeps its daily build, and the trending layer stays small and cheap.</p></details>
+  <details><summary>3. Support another language (Hindi, written in Devanagari). What changes?</summary>
+    <p>A trie works on any characters, so the structure stays. Build one trie per language or locale from that language's logs, route by the app's language setting or the typed script, and be careful with characters that are really combinations of code points (normalise the text the same way when building and when querying). Sizes per node and ranking are tuned per language.</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why store the top 5 at each node of the trie?</summary><p>So a lookup needs only to walk the prefix's few characters and read the answer. Without it you would have to visit every word below the node and rank them, which is slow for short prefixes.</p></details>
+  <details><summary>Why is the trie built offline from logs instead of updated on every search?</summary><p>Every search would touch the top-k of many nodes near the root, causing a flood of writes and locking, and spam could poison the results instantly. A batch build is simple, stable, easy to roll back, and applies the blocklist in one place. The cost is some delay.</p></details>
+  <details><summary>What breaks if the client sends a request on every keystroke with no debouncing?</summary><p>Requests multiply (two to three times more), many are wasted on prefixes the user has already typed past, and slow responses can arrive out of order and show suggestions for an old prefix. Debounce and ignore stale responses.</p></details>
+  <details><summary>What breaks if you use a plain btree index on <code>query</code> and run <code>LIKE 'iph%'</code> on a database with a language-aware collation?</summary><p>Postgres may not use the index for the prefix match, so it falls back to scanning the whole table. Create the index with <code>text_pattern_ops</code> (or <code>varchar_pattern_ops</code>), which compares plain characters.</p></details>
+  <details><summary>What breaks if a trending hateful phrase is not filtered?</summary><p>It appears as a public suggestion and harms users and the company. Filter in the batch job with a blocklist, keep a quick "remove now" list on the servers, and require a minimum number of distinct searchers for a query to appear.</p></details>
+  <details><summary>Would you use a trie service or just a database prefix query for a small shop's product search with 50,000 products? Why?</summary><p>A database prefix query with a <code>text_pattern_ops</code> index. At that size it answers in a millisecond or two and needs no new system. A trie service earns its place when the data and traffic are large and short prefixes match millions of rows.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Suggestions are read-only and need to be under 100 ms, so I would precompute them: a trie where each node stores the top 5 queries for that prefix, built offline from the query logs and loaded into memory on each suggestion server."</blockquote>
+  <blockquote>"Most traffic should never reach the servers: the client debounces keystrokes, and answers for a prefix are cached in the browser and at the CDN, because every user typing 'iph' gets the same result."</blockquote>
+  <p><b>Common follow-up question:</b> How do you keep suggestions fresh?</p>
+  <p>Rebuild the trie on a schedule (hourly or daily) from aggregated logs with time decay, and swap it in with no downtime. For breaking trends, merge in a small real-time trending list updated every few minutes.</p>
+  <p><b>Common follow-up question:</b> How do you scale it?</p>
+  <p>The data is small (a few GB), so replicate the trie across servers for traffic, cache at the CDN, and if it ever outgrows memory, shard by prefix ranges chosen from real traffic counts so that no shard is hot.</p>
+</section>
+
+</main>
+</body>
+</html>

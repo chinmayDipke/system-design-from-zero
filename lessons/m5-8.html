@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a food delivery app</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-8">
+<main class="lesson">
+
+<section class="story">
+  <h2>The dabbawala with a phone</h2>
+  <p>In Mumbai, a dabbawala picks up a hot tiffin from a home and carries it to an office. It works because everyone knows the route, the codes on the lid and who is where. Now imagine this is done with phones, for <b>any</b> restaurant and <b>any</b> hungry person, in minutes, not hours.</p>
+  <p>You say "I want biryani". The app must first find restaurants <b>near you</b> that serve biryani. You pay. The restaurant starts cooking. Meanwhile the app looks at all the delivery riders around that restaurant, picks one who is close and free, and tells him "go there". While he rides, you watch a little scooter move on your map.</p>
+  <p>Four hard things hide in this story: <b>finding things near a place</b>, <b>keeping thousands of moving riders on a map</b>, <b>matching one rider to one order</b> (never two riders for the same biryani), and <b>keeping money and food in step</b> when something fails halfway. And it all happens at 1 pm and 8 pm, when everyone is hungry together.</p>
+</section>
+
+<section class="explain">
+  <h2>Design a food delivery app (like Swiggy or Zomato)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. Decide: how will you find the nearest free rider fast, when 60,000 riders send their position every 5 seconds?</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. This design uses <a href="m2-14.html">search indexes</a>, <a href="m2-8.html">Redis</a>, <a href="m2-11.html">queues</a>, <a href="m3-4.html">idempotency</a> and <a href="m2-1.html">WebSockets</a>.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>A customer can <b>search restaurants and dishes near their location</b>, and open a menu.</li>
+    <li>The customer can <b>place an order</b> and <b>pay</b>.</li>
+    <li>The restaurant <b>accepts</b> the order and marks it <b>ready</b>.</li>
+    <li>The system <b>assigns a delivery partner</b> (rider) and the partner picks up and delivers.</li>
+    <li>The customer sees <b>live order status</b> and the <b>rider on a map</b>, with an <b>ETA</b>.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Search is fast</b> (under about 300 ms) and <b>location-aware</b>.</li>
+    <li><b>Never lose or duplicate an order or a payment.</b> Money and order state must be consistent (<a href="m2-3.html">ACID</a> inside one service, a saga across services).</li>
+    <li><b>One order gets exactly one rider</b>, and one rider carries only what he can carry.</li>
+    <li><b>Spiky:</b> most orders arrive in two meal windows. Live location can be a few seconds stale; the order state cannot be wrong.</li>
+  </ul>
+  <p><b>Out of scope:</b> restaurant onboarding and menu editing tools, ratings and reviews, offers and coupons, route-planning algorithms, rider payouts.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 2 million orders a day, 10 million daily active customers, 300,000 delivery partners online at peak.</p>
+  <ul>
+    <li><b>Orders:</b> 2,000,000 / 100,000 s = <b>20 a second</b> on average. But about 80% arrive in four meal hours (14,400 s): 1,600,000 / 14,400 = about <b>110 a second at peak</b>. Small! The order path is not the scary part.</li>
+    <li><b>Searches:</b> 10,000,000 users x 5 searches = 50,000,000 a day, divided by 100,000 s = <b>500 a second</b>; at meal-time peak (5x) about <b>2,500 a second</b>. Mostly reads, and cacheable.</li>
+    <li><b>Rider location writes:</b> 300,000 partners / 5 s = <b>60,000 writes a second</b>. This is the biggest write load in the system.</li>
+    <li><b>Active deliveries at once:</b> 110 orders a second x 30 minutes (1,800 s) = about <b>200,000 orders in flight</b> (orders per second times time spent in the system). Each customer watching the map gets an update every 5 s: <b>40,000 pushes a second</b>.</li>
+    <li><b>Rider location memory:</b> 300,000 x about 100 bytes = <b>30 MB</b>. It fits in one Redis machine. The cost is the write rate, not the size.</li>
+    <li><b>Order storage:</b> 2,000,000 x 2 KB = 4 GB a day, about <b>1.5 TB a year</b>. One sharded SQL database copes.</li>
+  </ul>
+  <p>Conclusion: <b>the order data is small; location traffic is large</b>. So keep live locations in memory and keep orders in a real database.</p>
+
+  <h3>3. API</h3>
+<pre><code>GET  /restaurants?lat=12.93&amp;lng=77.62&amp;q=biryani&amp;limit=20
+  200 -> { "restaurants": [ { "id": "r17", "name": "...", "dist_km": 1.4, "eta_min": 32 } ] }
+
+POST /orders                         Idempotency-Key: k1
+  { "restaurant_id": "r17", "items": [...], "address_id": "a3", "payment_method": "upi" }
+  201 -> { "order_id": "o900", "status": "PLACED" }
+
+GET  /orders/{id}                    -> { "status": "PICKED_UP", "partner": {...}, "eta_min": 14 }
+WS   /orders/{id}/live               server pushes status changes and partner location
+POST /restaurant/orders/{id}/accept  (restaurant app)
+POST /partner/location               { "lat": 12.93, "lng": 77.62 }  (partner app, every ~5 s; usually over MQTT or WebSocket)</code></pre>
+
+  <h3>4. Data model</h3>
+<pre><code>restaurants (restaurant_id, name, lat, lng, geohash, is_open, ...)
+menu_items  (item_id, restaurant_id, name, price_paise, available)
+orders      (order_id, customer_id, restaurant_id, partner_id, status,
+             total_paise, idempotency_key UNIQUE, created_at)
+order_events(order_id, status, at)                    -- the history of each order
+Redis       GEOADD partners:free lon lat partner_id   -- live locations of free partners
+Search idx  document per restaurant / dish with a geo_point field</code></pre>
+  <p><b>Why these stores:</b> orders, payments and menus are relational and need transactions, so <b>PostgreSQL</b> (sharded by city or region as it grows, see <a href="m2-10.html">sharding</a>). Restaurant and dish search needs text plus distance filters, which a <b>search index</b> (Elasticsearch / OpenSearch style, see <a href="m2-14.html">inverted indexes</a>) does well. Live partner positions change every 5 seconds and nobody needs history for matching, so they live in <b>Redis</b>, in memory.</p>
+
+  <h3>5. High-level design</h3>
+  <p>Numbers match the picture.</p>
+  <ol>
+    <li>The customer app sends a search with its location to the <b>search service</b>.</li>
+    <li>The search service asks the <b>search index</b> for open restaurants within a radius that match the words, sorted by a score (distance, rating, ETA). Menus and photos come from a cache and the CDN.</li>
+    <li>The customer places an order. The <b>order service</b> saves it as <code>PLACED</code> (idempotency key stops duplicates).</li>
+    <li>The order service asks the <b>payment service</b> to charge (see <a href="m5-7.html">the payment lesson</a>). Success moves the order to <code>PAID</code> and notifies the restaurant.</li>
+    <li>When the restaurant accepts, the order service puts an event on a <b>queue</b> for the <b>matching service</b>.</li>
+    <li>The matching service asks <b>Redis GEO</b> for free partners near the restaurant and claims one atomically.</li>
+    <li>Partners' apps send their position every few seconds to the <b>location gateway</b>, which updates Redis GEO. The same updates are pushed to the customer's app over a WebSocket, so the map moves.</li>
+  </ol>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: finding restaurants near you</h4>
+  <p>"Near me" is a <b>range query on two numbers</b> (latitude and longitude). A normal index on one column cannot do it well. Options:</p>
+  <table>
+    <tr><th>Option</th><th>Idea</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Geohash</b></td><td>Turn (lat, lng) into a short string like <code>tdr1v9</code>. Nearby places share a prefix. Search a cell and its neighbours with a normal index <code>LIKE 'tdr1v%'</code> (<a href="m5-9.html">next lesson</a> shows it step by step)</td><td>Works in any database; simple</td><td>Edge of a cell needs the neighbouring cells too; cells are boxes, not circles</td></tr>
+    <tr><td><b>Quadtree</b></td><td>Split the map into four squares; split a square again when it has too many places. Dense areas get small squares</td><td>Adapts to dense cities and empty countryside</td><td>A tree you must build and keep in memory; harder to update live</td></tr>
+    <tr><td><b>PostGIS</b> (Postgres extension)</td><td>A real geo index (GiST) with functions like "within 3 km"</td><td>Accurate, powerful, one database</td><td>Not built for 60,000 writes a second; use it for restaurants, not riders</td></tr>
+    <tr><td><b>Geo field in a search engine</b></td><td>Index restaurants and dishes with a <code>geo_point</code>; filter by distance and text in one query</td><td>Text + distance + ranking in one place</td><td>Another system to run; slightly delayed updates</td></tr>
+  </table>
+  <p><b>Pick:</b> a search index with a geo field for restaurant and dish search (restaurants move rarely, so an index that updates every minute is fine), and Redis GEO for partners. Dish search ("biryani") is the same inverted index idea as web search: each word points to the restaurants that serve it. Filter first by "open now" and "delivers to this area", since a restaurant 3 km away across a river may not deliver to you.</p>
+
+  <h4>Deep dive B: the order state machine and payment consistency</h4>
+  <p>An order moves through fixed states. Allow <b>only these moves</b> and reject all others, so a late message cannot take an order backwards:</p>
+<pre><code>PLACED -> PAID -> ACCEPTED -> PREPARING -> READY -> PICKED_UP -> DELIVERED
+   |        |         |
+   +--------+---------+--> CANCELLED  (with refund if already PAID)</code></pre>
+  <p>Each move is a conditional update: <code>UPDATE orders SET status='ACCEPTED' WHERE order_id=? AND status='PAID'</code>. If it changes zero rows, the move was not allowed (or it already happened, which makes retries safe). Every move also writes a row to <code>order_events</code>.</p>
+  <p>An order touches <b>several services</b>: orders, payment, restaurant, delivery. One database transaction cannot span all of them, so use a <b>saga</b>: a chain of local steps, and for each step a <b>compensating action</b> that undoes it.</p>
+  <table>
+    <tr><th>Step</th><th>If it fails, compensate with</th></tr>
+    <tr><td>Create order (PLACED)</td><td>Mark CANCELLED</td></tr>
+    <tr><td>Charge payment</td><td>Refund</td></tr>
+    <tr><td>Restaurant accepts (or does not answer in 3 minutes)</td><td>Cancel the order and refund</td></tr>
+    <tr><td>Assign partner (none found)</td><td>Keep searching for a few minutes, then cancel and refund</td></tr>
+  </table>
+  <p>Each step is retried safely using <a href="m3-4.html">idempotency keys</a>, and the order service is the <b>coordinator</b> that remembers which step it reached. If the restaurant says "out of stock" after the customer paid, the saga refunds automatically. Never leave money taken for food that will not come.</p>
+
+  <h4>Deep dive C: matching, live location and ETA</h4>
+  <p><b>Live location.</b> Each partner app sends a ping about every 5 seconds. A plain HTTP request per ping is heavy (new connection, headers). Use a <b>long-lived WebSocket or MQTT connection</b>, which keeps one open pipe and sends tiny messages (<a href="m2-1.html">WebSockets</a>). The gateway writes the position into <b>Redis GEO</b>: <code>GEOADD partners:free lon lat partner_id</code>. Newer position simply overwrites the old. If a partner stops pinging for 30 seconds, treat him as offline. You will try Redis GEO below.</p>
+  <p><b>Matching.</b> When an order is ready to assign, run <code>GEOSEARCH ... FROMLONLAT restaurant_lon restaurant_lat BYRADIUS 3 km ASC COUNT 10</code>. That gives the 10 nearest free partners. Then score them (distance, current load, rating, how long he waited) and <b>offer the order to the best one</b>. He has about 15 seconds to accept; if not, offer to the next. The key safety rule: <b>claim atomically</b>, e.g. <code>SET partner_lock:p7 order_900 NX EX 30</code> (<a href="m5-6.html">same idea as a seat hold</a>), or a conditional update in the database, so two orders cannot both pick partner p7. Remove the partner from <code>partners:free</code> once he accepts. Often the system also <b>batches</b>: it waits a few seconds to see several orders in the same area, then solves the best assignment together instead of grabbing greedily.</p>
+  <p><b>ETA.</b> Total time = restaurant preparation time + partner travel to restaurant + travel to customer. Travel time comes from a map and routing service (distance and traffic), not from straight-line distance. Preparation time is learned from history for each restaurant and the current queue of orders. Show a range, update it as things happen, and be a little pessimistic: a promise that is kept is better than a quick one that is broken.</p>
+
+  <h4>Deep dive D: the meal-time spike</h4>
+  <ul>
+    <li><b>Cache what is read a lot:</b> restaurant lists per area and menus, with short TTLs (<a href="m2-7.html">caching</a>). Most searches hit the cache.</li>
+    <li><b>Queue the work that can wait:</b> notifications, analytics, partner offers go through queues, which flatten the spike (<a href="m2-11.html">queues</a>).</li>
+    <li><b>Shed load gracefully:</b> when kitchens are overloaded, hide far-away or busy restaurants and raise delivery fees rather than accept orders nobody can fulfil. Pre-scale machines before 12 pm and 7 pm using the daily pattern.</li>
+    <li><b>Shard by city:</b> Bengaluru's riders and orders never interact with Delhi's, so each city or zone can be its own Redis and its own matching service.</li>
+  </ul>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Freshness against cost:</b> a rider's position that is 5 seconds old is fine for matching and for a map; sending it every second multiplies load 5x for little gain.</li>
+    <li><b>Greedy against batched matching:</b> greedy is fast and simple; batching gives better overall ETAs but adds a few seconds of wait.</li>
+    <li><b>Search index against database:</b> the index may lag the database by a minute (a restaurant just closed). Re-check "open now" in the order service before accepting the order.</li>
+    <li><b>Bottlenecks:</b> the 60,000 location writes a second (shard Redis by city), the search cluster at lunch, and the matching service when partners are scarce.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): order-to-pickup time, assignment time, percentage of orders with no partner, cancellation rate, search latency p99, location ping lag.</li>
+  </ul>
+  <p><b>At 10x scale:</b> a Redis GEO and matching service per city (or zone), partitioned queues keyed by city, regional data centres, a bigger search cluster with replicas, and a streaming pipeline (not a single database) for the full location history used for ETA learning.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 480" role="img" aria-label="Food delivery architecture. Top: customer app to search service to search index. Middle: customer app to order service to payment service and orders database. Bottom: partner app to location gateway to Redis GEO, and order service sends events through a queue to the matching service, which reads Redis GEO.">
+      <defs><marker id="ar-m5-8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="95" height="55" rx="8"/>
+        <rect x="150" y="40" width="110" height="55" rx="8"/>
+        <rect x="300" y="40" width="130" height="55" rx="8"/>
+        <rect x="470" y="40" width="155" height="55" rx="8"/>
+        <rect x="150" y="165" width="110" height="55" rx="8"/>
+        <rect x="300" y="165" width="130" height="55" rx="8"/>
+        <rect x="470" y="165" width="155" height="55" rx="8"/>
+        <rect x="15" y="300" width="95" height="55" rx="8"/>
+        <rect x="150" y="300" width="110" height="55" rx="8"/>
+        <rect x="300" y="300" width="130" height="55" rx="8"/>
+        <rect x="470" y="300" width="155" height="55" rx="8"/>
+        <path d="M110 67 H148" marker-end="url(#ar-m5-8)"/>
+        <path d="M260 67 H298" marker-end="url(#ar-m5-8)"/>
+        <path d="M430 67 H468" marker-end="url(#ar-m5-8)" stroke-dasharray="5 4"/>
+        <path d="M62 95 V192 H148" marker-end="url(#ar-m5-8)"/>
+        <path d="M260 192 H298" marker-end="url(#ar-m5-8)"/>
+        <path d="M430 192 H468" marker-end="url(#ar-m5-8)"/>
+        <path d="M205 220 V262 H547 V298" marker-end="url(#ar-m5-8)"/>
+        <path d="M110 327 H148" marker-end="url(#ar-m5-8)"/>
+        <path d="M260 327 H298" marker-end="url(#ar-m5-8)"/>
+        <path d="M468 327 H432" marker-end="url(#ar-m5-8)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="62" y="64" font-size="14" font-weight="700">Customer</text>
+        <text x="62" y="82" font-size="13">app</text>
+        <text x="205" y="64" font-size="14" font-weight="700">Search</text>
+        <text x="205" y="82" font-size="14" font-weight="700">service</text>
+        <text x="365" y="64" font-size="14" font-weight="700">Search index</text>
+        <text x="365" y="82" font-size="13">text + geo</text>
+        <text x="547" y="64" font-size="14" font-weight="700">Menu cache</text>
+        <text x="547" y="82" font-size="13">+ CDN images</text>
+        <text x="205" y="189" font-size="14" font-weight="700">Order</text>
+        <text x="205" y="207" font-size="14" font-weight="700">service</text>
+        <text x="365" y="189" font-size="14" font-weight="700">Payment</text>
+        <text x="365" y="207" font-size="14" font-weight="700">service</text>
+        <text x="547" y="189" font-size="14" font-weight="700">Orders DB</text>
+        <text x="547" y="207" font-size="13">PostgreSQL</text>
+        <text x="62" y="324" font-size="14" font-weight="700">Partner</text>
+        <text x="62" y="342" font-size="13">app</text>
+        <text x="205" y="324" font-size="14" font-weight="700">Location</text>
+        <text x="205" y="342" font-size="13">gateway</text>
+        <text x="365" y="324" font-size="14" font-weight="700">Redis GEO</text>
+        <text x="365" y="342" font-size="13">live partners</text>
+        <text x="547" y="324" font-size="14" font-weight="700">Matching</text>
+        <text x="547" y="342" font-size="14" font-weight="700">service</text>
+        <text x="129" y="60" font-size="13">1</text>
+        <text x="279" y="60" font-size="13">2</text>
+        <text x="87" y="184" font-size="13">3</text>
+        <text x="279" y="185" font-size="13">4</text>
+        <text x="365" y="256" font-size="13">5 event on a queue</text>
+        <text x="449" y="320" font-size="13">6</text>
+        <text x="129" y="320" font-size="13">7</text>
+        <text x="279" y="320" font-size="13">7</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="395" font-size="13">1-2. Search by location + words, answered by the index</text>
+        <text x="15" y="413" font-size="13">3. Order saved as PLACED (idempotency key)</text>
+        <text x="15" y="431" font-size="13">4. Payment charged; failure triggers refund (saga)</text>
+        <text x="15" y="449" font-size="13">5. Accepted order becomes an event for matching</text>
+        <text x="15" y="467" font-size="13">6. GEOSEARCH finds nearby free riders; one claimed atomically</text>
+        <text x="380" y="413" font-size="13">7. Riders ping every ~5 s over WebSocket or</text>
+        <text x="380" y="431" font-size="13">MQTT; the same updates are pushed to the</text>
+        <text x="380" y="449" font-size="13">customer's map</text>
+      </g>
+    </svg>
+    <figcaption>Search is a read path through an index. Orders are a transactional path with a saga. Rider locations are a fast in-memory path. The matching service joins them.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-8 food-delivery.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=system+design+food+delivery+app+Swiggy+Zomato+architecture" target="_blank" rel="noopener">YouTube search: "system design food delivery app Swiggy Zomato architecture"</a>
+      <span class="meta">Pick a recent walkthrough of 20 to 40 minutes. Watch the parts on restaurant search and on assigning delivery partners.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+design+uber+proximity+geospatial" target="_blank" rel="noopener">YouTube search: "Hello Interview design Uber proximity geospatial"</a>
+      <span class="meta">The same nearby-search and matching ideas. Watch how they choose the geo index and handle driver locations.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://redis.io/docs/latest/commands/geosearch/" target="_blank" rel="noopener">Redis docs: GEOSEARCH</a>
+      <span class="meta">Read the argument list and the example with WITHDIST. Note that longitude comes before latitude.</span></li>
+    <li><a href="https://medium.com/swiggy-bytes" target="_blank" rel="noopener">Swiggy Bytes (engineering blog)</a>
+      <span class="meta">Browse the titles for posts on delivery, search or ETA. Read one that interests you; you do not need to follow every detail.</span></li>
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: system design learning path</a>
+      <span class="meta">Look for the problem breakdowns on proximity search and ride matching; the geo parts transfer directly.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 20 for the Redis exercise)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design a food delivery app" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes.</li>
+    <li>In the deep-dive slot, pick two of: restaurant search, order state machine with saga, rider matching. For the saga, draw the five steps in a row and under each one the action that undoes it.</li>
+    <li>Stop the recording and save it as <code>m5-8 mock</code>, and the drawing as <code>m5-8 food-delivery-mock.excalidraw</code>. Compare with the lesson and note what you missed.</li>
+  </ol>
+
+  <h3>B. Find the nearest delivery partners with Redis GEO (15 to 20 minutes)</h3>
+  <p>You will put five riders on a map of Bengaluru and ask Redis who is closest to a restaurant. The coordinates are approximate points in the Koramangala area and nearby; real accuracy does not matter here. Commands may be written in any letter case.</p>
+  <ol class="steps">
+    <li>Open <code>console.upstash.com</code>, click your Redis database (create one as in <a href="m5-1.html">the URL shortener lesson</a> if you have none) and open the <span class="ui">CLI</span> tab (a terminal-like box on the page).</li>
+    <li>Add five partners. Type this single line and press <kbd>Enter</kbd>:
+<pre><code>GEOADD partners:free 77.6271 12.9352 p1 77.6200 12.9400 p2 77.6350 12.9279 p3 77.5946 12.9716 p4 77.6101 12.9250 p5</code></pre>
+      It should print <code>5</code> (five new members). <b>Longitude comes first, then latitude</b>: <code>77.6271</code> is the longitude (east) and <code>12.9352</code> the latitude (north). Mixing them up is the number one GEO mistake. Each triple is <code>longitude latitude name</code>.</li>
+    <li>The restaurant is at longitude <code>77.6245</code>, latitude <code>12.9352</code>. Ask for every free partner within 3 km, nearest first, with the distance:
+<pre><code>GEOSEARCH partners:free FROMLONLAT 77.6245 12.9352 BYRADIUS 3 km ASC WITHDIST</code></pre>
+      You should see four entries, each with a distance in km (the numbers may differ in the last decimals): <code>p1</code> about <code>0.28</code>, <code>p2</code> about <code>0.72</code>, <code>p3</code> about <code>1.40</code>, <code>p5</code> about <code>1.93</code>. Partner <code>p4</code> is missing because he is about 5.2 km away, outside the 3 km circle. (The console may show the list with numbers like <code>1)</code> and <code>2)</code>, or as a table.)</li>
+    <li>The matching service usually wants only the best few. Ask for the two nearest:
+<pre><code>GEOSEARCH partners:free FROMLONLAT 77.6245 12.9352 BYRADIUS 3 km ASC COUNT 2 WITHDIST</code></pre>
+      You should see only <code>p1</code> and <code>p2</code>.</li>
+    <li>A rider moves. <code>p5</code> rides toward the restaurant. Re-adding an existing name just overwrites its position:
+<pre><code>GEOADD partners:free 77.6240 12.9345 p5</code></pre>
+      It should print <code>0</code> (no new member, one updated). Run the search from step 3 again. <code>p5</code> should now be first, at about <code>0.10</code> km. This is exactly what the location gateway does 60,000 times a second.</li>
+    <li>A rider accepts an order and is no longer free. Remove him from the free set:
+<pre><code>ZREM partners:free p5</code></pre>
+      It prints <code>1</code>. (A GEO set is a sorted set underneath, so <code>ZREM</code> works.) Search again: <code>p5</code> is gone.</li>
+    <li>Try the claim step from the lesson. Type <code>SET partner_lock:p1 order_900 NX EX 30</code>. You should see <code>OK</code>. Type it again with <code>order_901</code> instead; you should see <code>null</code> (or <code>nil</code>), which means "someone else already has p1".</li>
+    <li>If you typed latitude first by mistake, Redis may answer with an error such as an invalid longitude/latitude pair (longitudes beyond about 180 or latitudes beyond about 85 are refused). A swapped pair that is still valid gives a wrong place silently, so check your order every time.</li>
+    <li>Clean up: <code>DEL partners:free partner_lock:p1</code>. It prints <code>2</code>.</li>
+  </ol>
+
+  <h3>C. Variation questions</h3>
+  <details><summary>1. The restaurant accepts, but no partner is found within 3 km. What do you do?</summary>
+    <p>Widen the radius in steps (3 km, then 5 km), and offer an incentive to nearby partners. Meanwhile keep the order in a "finding partner" state with a timer. If nothing works within a few minutes, run the compensation: cancel the order, refund, and tell the customer honestly. Alert operations if this happens often in one area.</p></details>
+  <details><summary>2. A partner's phone goes offline mid-delivery. What happens?</summary>
+    <p>No pings arrive, so after about 30 seconds the system marks the partner as "lost signal" but does not cancel. The customer's map shows the last known position. If the partner is silent for several minutes, support calls him, and the order may be reassigned. Deliveries are tracked in the orders database, so nothing is lost; Redis holds only positions.</p></details>
+  <details><summary>3. Add "batching": one rider picks up two orders from the same area. What changes?</summary>
+    <p>Matching must treat a rider as having capacity, not simply free or busy. Keep riders who have room in the searchable set, and score a candidate by the extra detour for the new order. Orders wait a few seconds to be grouped. The state machine is per order, so it does not change; the assignment table now allows several orders per partner.</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why keep live rider locations in Redis rather than the orders database?</summary><p>They change every 5 seconds (60,000 writes a second), nobody needs the old values for matching, and matching needs fast "who is near here" queries. Redis GEO does both in memory. The orders database is for data that must never be lost.</p></details>
+  <details><summary>What breaks if two orders are offered to the same rider at once and there is no atomic claim?</summary><p>Both orders believe they have the rider, one customer waits for a rider who is carrying the other order, and the rider may get conflicting instructions. Claim the partner with an atomic step (<code>SET ... NX</code> or a conditional update) before offering.</p></details>
+  <details><summary>What breaks if payment succeeds but the restaurant rejects the order, and you have no compensation step?</summary><p>The customer's money is taken for food that will never arrive. The saga must run the compensating action, a refund, whenever a later step fails.</p></details>
+  <details><summary>Why use a WebSocket or MQTT connection for rider pings instead of a normal HTTP request each time?</summary><p>One open connection sends tiny messages cheaply. A fresh HTTP request every 5 seconds from 300,000 phones wastes connection setup and headers, and costs battery and server work.</p></details>
+  <details><summary>In <code>GEOADD</code> and <code>GEOSEARCH</code>, which comes first, latitude or longitude?</summary><p>Longitude first, then latitude. This is the opposite of how people usually say coordinates, and swapping them silently puts the point in the wrong place.</p></details>
+  <details><summary>Would you choose a geohash column in Postgres, PostGIS, or a search index for restaurant search at a small startup with 500 restaurants? Why?</summary><p>PostGIS or even a simple distance calculation in Postgres, because 500 rows need no extra system. A separate search index pays off when you need fast text search and ranking over hundreds of thousands of dishes.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Order traffic is small, about 100 a second at peak, so orders live in a transactional database with a state machine. The big load is 60,000 rider location pings a second, which go into an in-memory geo store like Redis GEO."</blockquote>
+  <blockquote>"Across payment, restaurant and delivery I would use a saga: every step has a compensating action, such as a refund, so a failure halfway never leaves money taken without food coming."</blockquote>
+  <p><b>Common follow-up question:</b> How do you assign a rider to an order?</p>
+  <p>Query the nearest free riders around the restaurant from the geo store, score them by distance, load and rating, and offer the order to the best one with a short timeout. Claim the rider atomically so that no two orders can take the same person, and move to the next candidate if he declines.</p>
+  <p><b>Common follow-up question:</b> How do you handle lunch and dinner peaks?</p>
+  <p>Cache search results and menus, put non-urgent work on queues, scale machines before known peaks, shard riders and matching by city, and shed load by hiding overloaded restaurants or raising fees instead of accepting orders that cannot be delivered.</p>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a ride sharing app</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-9">
+<main class="lesson">
+
+<section class="story">
+  <h2>The auto stand that never sleeps</h2>
+  <p>Picture an auto-rickshaw stand outside a railway station. A passenger walks up and says "Indiranagar, please". The stand manager looks at the autos waiting in line and sends the first one. Easy, because the manager can <b>see every auto</b>.</p>
+  <p>Now make the whole city one giant stand with a million autos that keep <b>moving</b>. Every few seconds each driver shouts his position to the manager. A passenger in Koramangala asks for a ride. The manager must find the autos <b>within a kilometre of that passenger</b>, ask the nearest one, and if he says no, ask the next. Two passengers must never be given the same driver. And when it rains and everyone wants a ride, the price goes up a little, so more drivers come out.</p>
+  <p>That is the whole problem: <b>a flood of position updates</b>, a fast "who is near this point?" question, a careful <b>one driver, one rider</b> rule, and a trip that moves through clear stages from "asked" to "paid".</p>
+</section>
+
+<section class="explain">
+  <h2>Design a ride sharing app (like Uber or Ola)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. In your own words: how can you find "drivers within 1 km" without checking all million of them?</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. If you have read <a href="m5-8.html">the food delivery lesson</a>, the location parts will feel familiar; here they are the heart of the problem. We also use <a href="m2-1.html">WebSockets</a>, <a href="m2-8.html">Redis</a> and <a href="m2-10.html">sharding</a>.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>A rider enters pickup and drop locations and sees <b>fare estimate and ETA</b>.</li>
+    <li>The rider <b>requests a ride</b>; the system <b>matches a nearby driver</b> who can accept or decline.</li>
+    <li>Both rider and driver see the <b>live location</b> of the other during pickup and the trip.</li>
+    <li>The trip is <b>started, completed and paid</b>. Either side can cancel at allowed stages.</li>
+    <li>Both can see <b>trip history</b>.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Handle a huge stream of driver location updates</b> without falling behind.</li>
+    <li><b>Match quickly</b> (a few seconds). A rider who waits 30 seconds for "finding a driver" leaves.</li>
+    <li><b>A driver is never assigned to two riders at once.</b> Correctness for trip state and money; locations may be a few seconds old.</li>
+    <li><b>High availability</b> in each city, and <b>real-time push</b> to phones.</li>
+  </ul>
+  <p><b>Out of scope:</b> route planning and turn-by-turn navigation, carpooling and pooled rides, driver onboarding and documents, the payment system internals (see <a href="m5-7.html">the payment lesson</a>), fraud detection.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 10 million trips a day and 1 million drivers online at peak.</p>
+  <ul>
+    <li><b>Location writes:</b> each online driver sends a position every 5 seconds. 1,000,000 / 5 s = <b>200,000 writes a second</b>. This is the number that shapes the design.</li>
+    <li><b>Bandwidth in:</b> 200,000 x about 100 bytes = 20,000,000 bytes a second = <b>20 MB a second</b>. Large in message count, small in bytes.</li>
+    <li><b>Live location memory:</b> 1,000,000 drivers x about 100 bytes = <b>100 MB</b>. It fits in the memory of one machine; we shard it for throughput, not size.</li>
+    <li><b>Trips:</b> 10,000,000 / 100,000 s = <b>100 trips a second</b>; peak at 3x = <b>300 a second</b>. If a trip needs about 3 requests on average (some riders cancel or find no driver), that is about 300 ride requests a second on average. Tiny compared with locations.</li>
+    <li><b>Trip storage:</b> 10,000,000 x 1 KB = 10 GB a day, about <b>3.6 TB a year</b> for trip rows.</li>
+    <li><b>GPS trail storage</b> (the full path of each trip): a 20-minute trip is 1,200 s, divided by 5 s = 240 points x about 30 bytes = about 7 KB. 10,000,000 x 7 KB = 70 GB a day, about <b>25 TB a year</b>. That goes in cheap storage, not the main database.</li>
+  </ul>
+  <p>Conclusion: <b>writes of locations dominate</b> (200,000 a second) while trips are few. So keep live locations in memory and keep trips in a transactional database. Never write every location ping to the trips database.</p>
+
+  <h3>3. API</h3>
+<pre><code>POST /fare-estimate    { "pickup": {"lat":..,"lng":..}, "drop": {...} }
+  200 -> { "fare_paise": 18500, "surge": 1.2, "eta_min": 4 }
+
+POST /rides            Idempotency-Key: k1
+  { "pickup": {...}, "drop": {...}, "fare_quote_id": "q9" }
+  201 -> { "trip_id": "t100", "status": "REQUESTED" }
+
+GET  /rides/{id}       -> { "status": "DRIVER_ASSIGNED", "driver": {...}, "eta_min": 3 }
+POST /rides/{id}/cancel
+POST /drivers/location { "lat":.., "lng":.., "ts":... }     (every ~5 s, over a socket)
+POST /drivers/offers/{id}/accept     (driver app)
+WS   /live             push: offers to drivers; status and driver position to riders</code></pre>
+
+  <h3>4. Data model</h3>
+<pre><code>trips   (trip_id, rider_id, driver_id, status, pickup, drop, fare_paise,
+         requested_at, started_at, ended_at, idempotency_key UNIQUE)   -- SQL
+drivers (driver_id, name, vehicle, status [offline|available|on_trip], rating)
+Redis   drivers:{city} = geo set (driver_id -> position)               -- live
+Redis   driver_claim:{driver_id} = trip_id  (expires in 15 s)          -- atomic claim
+GPS trail: batches of (trip_id, ts, lat, lng) in object storage or a time-series store</code></pre>
+  <p><b>Why:</b> trips are money and state, so a <b>relational database</b> with transactions. Live positions are many, small and short-lived: <b>in-memory geo index</b>. Trails are append-only and rarely read: <b>cheap bulk storage</b>.</p>
+
+  <h3>5. High-level design</h3>
+  <ol>
+    <li>The rider app keeps a <b>WebSocket</b> connection to a <b>gateway</b> and sends a ride request.</li>
+    <li>The gateway passes it to the <b>trip service</b>.</li>
+    <li>The trip service creates the trip as <code>REQUESTED</code> in the <b>trip database</b> (idempotency key stops duplicates).</li>
+    <li>It calls the <b>matching service</b> (and the <b>pricing service</b> for fare and surge).</li>
+    <li>The matching service asks the <b>location index</b> for available drivers near the pickup and scores them.</li>
+    <li>It claims the best driver atomically and <b>pushes an offer</b> to that driver through the gateway. On accept, the trip moves to <code>DRIVER_ASSIGNED</code> and the rider is told.</li>
+    <li>Drivers' apps send positions every ~5 s to the <b>location ingest</b> service...</li>
+    <li>...which updates the <b>location index</b> (and appends to the trail store). The rider's map is fed from the same updates during pickup and trip.</li>
+  </ol>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: the geo index (geohash, S2, H3)</h4>
+  <p>We need "available drivers within about 1 km of a point" in a few milliseconds, with 200,000 updates a second. The trick in all methods: <b>cut the map into cells</b>, give each cell a name, and keep a list of drivers per cell. To search, look up the rider's cell and the cells around it, then compute exact distances for the few drivers in them.</p>
+  <table>
+    <tr><th>Method</th><th>Idea</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Geohash</b></td><td>Squares named by a string. Longer string = smaller square. Nearby points share a prefix</td><td>Very simple; works with plain strings and any key-value store; you try it below</td><td>Squares distort near the poles; neighbours across a boundary can have very different prefixes</td></tr>
+    <tr><td><b>S2</b> (Google)</td><td>Projects the Earth's surface on a cube, cells follow a space-filling curve and have an id number</td><td>Cells are well-behaved everywhere on the globe; good for covering shapes with cells</td><td>More complex; needs a library</td></tr>
+    <tr><td><b>H3</b> (Uber)</td><td>Hexagon cells at several sizes</td><td>Every neighbour of a hexagon is the same distance away, which suits "spread to nearby areas" ideas like surge pricing</td><td>Needs a library; hexagons do not nest perfectly</td></tr>
+    <tr><td><b>Quadtree</b></td><td>Split a square into 4 when it holds too many drivers</td><td>Adapts to dense and empty areas</td><td>A tree to maintain under 200,000 updates a second</td></tr>
+  </table>
+  <p><b>Pick:</b> at interview level, say "cells with a fixed size, such as geohash or H3, held in an in-memory store, sharded by city", and name one. Each driver update does two steps: remove the driver from his old cell if the cell changed, add to the new one. Most pings stay in the same cell, so most updates are cheap. Redis GEO (used in <a href="m5-8.html">the food delivery lesson</a>) hides this detail by storing positions as a geohash score.</p>
+  <p><b>The edge-of-cell problem.</b> Two drivers 80 metres apart can sit on either side of a cell's edge and have quite different cell names. Searching only the rider's own cell would miss the driver just across the line. So always search the <b>rider's cell plus its 8 neighbours</b>, then filter by exact distance. You will see this with real numbers below.</p>
+
+  <h4>Deep dive B: matching and never double-assigning a driver</h4>
+  <p>Matching is a read of the index, then a <b>claim</b>. The danger: two riders near each other both pick driver 7 at the same moment (a read-then-write race, like two people booking the last seat in <a href="m5-6.html">the ticket lesson</a>).</p>
+  <table>
+    <tr><th>Option</th><th>How</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Atomic claim per driver</b></td><td><code>SET driver_claim:7 trip_100 NX EX 15</code> in Redis, or <code>UPDATE drivers SET status='offered' WHERE id=7 AND status='available'</code> in a database. Only one caller wins</td><td>Simple, fast, no waiting; expiry frees the driver if he ignores the offer</td><td>Redis is a second source of truth, so keep the trip table as final authority</td></tr>
+    <tr><td><b>Distributed lock</b></td><td>Take a lock on the driver, check, update, release</td><td>Familiar</td><td>More steps and more ways to fail; locks that never release block drivers</td></tr>
+    <tr><td><b>One matcher per area</b></td><td>All requests for one city zone go to a single-threaded matcher (partitioned by cell)</td><td>No races at all inside the zone</td><td>Hot zones become bottlenecks; borders between zones need care</td></tr>
+  </table>
+  <p><b>Pick:</b> the atomic claim. Flow: find the 10 nearest available drivers, rank by pickup ETA and rating, try to claim the first. If the claim fails, try the next. If it succeeds, push the offer; the driver has about 15 seconds. On decline or timeout, <b>release</b> the claim and move to the next. After a few rounds without a match, widen the search radius. The trip table's conditional update (<code>... WHERE status='REQUESTED'</code>) is the final guard against two drivers being attached to one trip.</p>
+
+  <h4>Deep dive C: the trip state machine, push and surge</h4>
+<pre><code>REQUESTED -> DRIVER_ASSIGNED -> DRIVER_ARRIVED -> IN_PROGRESS -> COMPLETED -> PAID
+     |              |                 |
+     +--------------+-----------------+--> CANCELLED   (fees depend on the stage)</code></pre>
+  <p>Only these moves are allowed, each as a conditional update, so a late message cannot move a trip backwards. A cancel after the driver has arrived may carry a fee. Every move is stored as an event, which makes disputes ("the driver never came") answerable.</p>
+  <p><b>Push to phones.</b> Offers, status changes and the other side's position must arrive without the app asking. Keep a <b>WebSocket</b> per active phone, held by a gateway fleet. The service needs to know which gateway holds which user's connection (a small lookup table in Redis: <code>user_id -> gateway_id</code>), so it can route the push there. When the connection drops, the app reconnects and fetches the current trip state, so a missed push is harmless. For background phones, fall back to a mobile push notification (see <a href="m5-3.html">notifications</a>).</p>
+  <p><b>Surge pricing, just the idea.</b> Count ride requests and available drivers in each cell every minute. If demand is much higher than supply, show a price multiplier (say 1.5x) for that cell. Higher prices cut demand a little and attract more drivers. Smooth the multiplier over time so the price does not jump wildly, show it to the rider <b>before</b> they confirm, and keep it fixed once quoted (<code>fare_quote_id</code>). This is a streaming computation over cells, a good use for H3 hexagons and a queue.</p>
+
+  <h4>Deep dive D: storing trip history</h4>
+  <p>Active trips need fast reads and writes and live in the main trip database, sharded by <code>trip_id</code> or city. Completed trips are read rarely (a rider's history list, receipts, support), so after a while move them to cheaper storage and keep only a summary row (index by <code>rider_id</code> and <code>started_at</code>) in the database. The 25 TB a year of GPS trails goes in object storage in compressed batches, keyed by trip id, used only for disputes and route analysis (<a href="m2-13.html">object storage</a>).</p>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Update rate against load:</b> every 5 seconds costs 200,000 writes a second; every second costs 1,000,000. Some apps send less often when the driver is parked, or more often near pickup.</li>
+    <li><b>Memory against durability for locations:</b> if the location index loses its data, drivers re-send within 5 seconds and it heals itself. That is why it can be in memory only. Trips must never be handled that way.</li>
+    <li><b>Greedy against global matching:</b> grabbing the nearest driver is fast; solving the best assignment for many riders and drivers together gives better overall ETAs, at the cost of a short wait.</li>
+    <li><b>Bottlenecks:</b> the location write stream (shard the index by city, then by cell), a hot spot like an airport or stadium after an event, and the gateway fleet holding millions of sockets.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): match time, percentage of requests with no driver, offer accept rate, location ping lag, push delivery lag, trips stuck in one state.</li>
+  </ul>
+  <p><b>At 10x scale</b> (100 million trips a day): one independent stack per city or region (index, matcher, gateways), a streaming pipeline (a log such as Kafka) between ingest and the index, a regional trip database with archiving, and a global layer only for accounts and payments.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 500" role="img" aria-label="Ride sharing architecture. Rider app to WebSocket gateway to trip service, which writes the trip database, calls the pricing service and the matching service. The matching service reads the location index and pushes offers back through the gateway. Driver app sends positions to location ingest, which updates the location index and the GPS trail storage.">
+      <defs><marker id="ar-m5-9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="95" height="55" rx="8"/>
+        <rect x="150" y="40" width="120" height="55" rx="8"/>
+        <rect x="310" y="40" width="110" height="55" rx="8"/>
+        <rect x="470" y="40" width="155" height="55" rx="8"/>
+        <rect x="310" y="170" width="110" height="55" rx="8"/>
+        <rect x="470" y="170" width="155" height="55" rx="8"/>
+        <rect x="15" y="300" width="95" height="55" rx="8"/>
+        <rect x="150" y="300" width="120" height="55" rx="8"/>
+        <rect x="310" y="300" width="110" height="55" rx="8"/>
+        <rect x="470" y="300" width="155" height="55" rx="8"/>
+        <path d="M110 67 H148" marker-end="url(#ar-m5-9)"/>
+        <path d="M270 67 H308" marker-end="url(#ar-m5-9)"/>
+        <path d="M420 67 H468" marker-end="url(#ar-m5-9)"/>
+        <path d="M365 95 V168" marker-end="url(#ar-m5-9)"/>
+        <path d="M365 225 V298" marker-end="url(#ar-m5-9)"/>
+        <path d="M308 197 H210 V97" marker-end="url(#ar-m5-9)" stroke-dasharray="5 4"/>
+        <path d="M420 197 H468" marker-end="url(#ar-m5-9)"/>
+        <path d="M110 327 H148" marker-end="url(#ar-m5-9)"/>
+        <path d="M270 327 H308" marker-end="url(#ar-m5-9)"/>
+        <path d="M210 355 V390 H547 V357" marker-end="url(#ar-m5-9)" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="62" y="64" font-size="14" font-weight="700">Rider</text>
+        <text x="62" y="82" font-size="13">app</text>
+        <text x="210" y="64" font-size="14" font-weight="700">WebSocket</text>
+        <text x="210" y="82" font-size="14" font-weight="700">gateway</text>
+        <text x="365" y="64" font-size="14" font-weight="700">Trip</text>
+        <text x="365" y="82" font-size="14" font-weight="700">service</text>
+        <text x="547" y="64" font-size="14" font-weight="700">Trip DB</text>
+        <text x="547" y="82" font-size="13">SQL, state machine</text>
+        <text x="365" y="194" font-size="14" font-weight="700">Matching</text>
+        <text x="365" y="212" font-size="14" font-weight="700">service</text>
+        <text x="547" y="194" font-size="14" font-weight="700">Pricing</text>
+        <text x="547" y="212" font-size="13">fare + surge</text>
+        <text x="62" y="324" font-size="14" font-weight="700">Driver</text>
+        <text x="62" y="342" font-size="13">app</text>
+        <text x="210" y="324" font-size="14" font-weight="700">Location</text>
+        <text x="210" y="342" font-size="14" font-weight="700">ingest</text>
+        <text x="365" y="324" font-size="14" font-weight="700">Location</text>
+        <text x="365" y="342" font-size="13">index (cells)</text>
+        <text x="547" y="324" font-size="14" font-weight="700">GPS trails</text>
+        <text x="547" y="342" font-size="13">object storage</text>
+        <text x="129" y="60" font-size="13">1</text>
+        <text x="289" y="60" font-size="13">2</text>
+        <text x="444" y="60" font-size="13">3</text>
+        <text x="379" y="138" font-size="13" text-anchor="start">4</text>
+        <text x="379" y="268" font-size="13" text-anchor="start">5</text>
+        <text x="260" y="190" font-size="13">6 offer</text>
+        <text x="129" y="320" font-size="13">7</text>
+        <text x="289" y="320" font-size="13">8</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="425" font-size="13">1-2. Rider's request travels over the socket to the trip service</text>
+        <text x="15" y="443" font-size="13">3. Trip saved as REQUESTED; 4. matching and pricing called</text>
+        <text x="15" y="461" font-size="13">5. Nearby available drivers read from the cell index; best one claimed atomically</text>
+        <text x="15" y="479" font-size="13">6. Offer pushed to the driver; accept moves the trip to DRIVER_ASSIGNED</text>
+        <text x="392" y="364" font-size="13">7-8. Pings every ~5 s</text>
+      </g>
+    </svg>
+    <figcaption>Trips are a small transactional path on the top. Driver locations are a huge, fast, in-memory path on the bottom. The matching service reads the bottom and writes the top.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-9 ride-sharing.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+design+uber+ride+sharing+system+design" target="_blank" rel="noopener">YouTube search: "Hello Interview design Uber ride sharing system design"</a>
+      <span class="meta">Pick the full breakdown. Watch the parts on driver location updates and on avoiding double assignment.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+proximity+service+geohash+quadtree" target="_blank" rel="noopener">YouTube search: "ByteByteGo proximity service geohash quadtree"</a>
+      <span class="meta">Short. Watch where they explain geohash cells and why you also check neighbouring cells.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://h3geo.org/" target="_blank" rel="noopener">H3: hexagonal hierarchical geospatial indexing</a>
+      <span class="meta">Read the home page and look at the hexagon picture. You only need the idea, not the API.</span></li>
+    <li><a href="https://www.uber.com/blog/engineering/" target="_blank" rel="noopener">Uber Engineering blog</a>
+      <span class="meta">Browse titles on marketplace, dispatch or H3. Pick one post and read the introduction.</span></li>
+    <li><a href="https://en.wikipedia.org/wiki/Geohash" target="_blank" rel="noopener">Wikipedia: Geohash</a>
+      <span class="meta">Read "Algorithm and example" and the part on limitations (edge cases) that matches what you do below.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 25 for the geohash exercise)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design a ride sharing app" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes.</li>
+    <li>In estimation, say the 200,000 location writes a second out loud with the working (1,000,000 drivers divided by 5 seconds). In the deep dives, explain the geo index and the atomic driver claim.</li>
+    <li>Stop the recording and save it as <code>m5-9 mock</code>, and the drawing as <code>m5-9 ride-sharing-mock.excalidraw</code>. Compare with the lesson and note what you missed.</li>
+  </ol>
+
+  <h3>B. Geohash on paper (20 to 25 minutes)</h3>
+  <p>You will look at real geohashes on a map, see that nearby points share a prefix, and then meet the edge-of-cell problem. The cell names below were computed with the standard geohash algorithm. The map site is free and runs in the browser.</p>
+  <p><b>Part 1: nearby points share a prefix</b></p>
+  <ol class="steps">
+    <li>Open <a href="https://geohash.softeng.co/tdr1v9q" target="_blank" rel="noopener">geohash.softeng.co/tdr1v9q</a> in Chrome. You should see a map with a rectangle in central Bengaluru. (If the page looks different or does not load, search Google for <a href="https://www.google.com/search?q=geohash+map+online+viewer" target="_blank" rel="noopener">geohash map online viewer</a> and use any site that lets you type a geohash.)</li>
+    <li>Write this table in your notes. The hash grows by one character each time, and each extra character makes the box smaller:
+<pre><code>Point A (central Bengaluru, 12.9716, 77.5946)
+  length 1: t      (a huge area)
+  length 2: td
+  length 3: tdr
+  length 4: tdr1
+  length 5: tdr1v   (a box about 5 km by 5 km)
+  length 6: tdr1v9  (about 1.2 km by 0.6 km)
+  length 7: tdr1v9q (about 150 m by 150 m)</code></pre>
+      Sizes are approximate. In the map site, type each of these hashes one by one in its search or hash box and watch the rectangle shrink. Each time, the new rectangle sits <b>inside</b> the old one. That nesting is why a prefix means "somewhere in this bigger box".</li>
+    <li>Point B is about 60 metres from A, at 12.9719, 77.5951. Its hash is <code>tdr1v9r</code>. Type it into the map site. You should see a box right next to A's box. Compare the two strings:
+<pre><code>A  tdr1v9q
+B  tdr1v9r
+   ^^^^^^   first 6 characters are the same</code></pre>
+      They share 6 characters, so they are in the same 1 km-sized box. That is the main idea: <b>the longer the shared prefix, the closer the points</b>.</li>
+    <li>Point C is about 5 km away, at 12.9352, 77.6245. Its hash is <code>tdr1w6u</code>. Compare with A: <code>tdr1v9q</code> and <code>tdr1w6u</code> share only <code>tdr1</code>, 4 characters. Point D is New Delhi (28.6139, 77.2090), hash <code>ttnfucj</code>. It shares only <code>t</code> with A. Far points share short prefixes.</li>
+    <li>Write one sentence: "To find drivers near a rider, compute the rider's hash at length 6 and look up every driver whose hash starts with it." In a database that is <code>LIKE 'tdr1v9%'</code>; in Redis it is one key per cell.</li>
+  </ol>
+  <p><b>Part 2: the edge-of-cell problem</b></p>
+  <ol class="steps">
+    <li>Take two points on the same street, both at latitude 12.9700. Point P is at longitude 77.6070 and point Q at longitude 77.6078. The difference is 0.0008 degrees of longitude. At this latitude, one degree of longitude is about 108.5 km, so 0.0008 x 108.5 km = about 0.087 km, which is <b>about 87 metres apart</b>. A rider standing at P would happily accept a driver at Q.</li>
+    <li>Now look at their geohashes, to 8 characters:
+<pre><code>P  tdr1vcpe
+Q  tdr1y107
+   ^^^^      only 4 characters in common</code></pre>
+      Even at length 5 they differ: P is in cell <code>tdr1v</code> and Q is in cell <code>tdr1y</code>. They are 87 metres apart but in different 5 km boxes. (Open <code>tdr1v</code> and <code>tdr1y</code> on the map site and you will see the two rectangles touching, with the line between them running right between P and Q. Their shared edge is at longitude 77.60742.)</li>
+    <li>So if the matching service searched only the rider's own cell <code>tdr1v</code>, it would <b>miss the driver at Q</b>. The short common prefix does not mean "far"; it can mean "just across a line".</li>
+    <li>The fix: search the rider's cell and its 8 neighbours. The 8 neighbours of <code>tdr1v</code> are:
+<pre><code>tdr4h   tdr4j   tdr4n
+tdr1u  [tdr1v]  tdr1y
+tdr1s   tdr1t   tdr1w</code></pre>
+      Find <code>tdr1y</code>, which is on the right of the centre cell. That is where Q lives, so the search finds him. (Notice the top row starts with <code>tdr4</code>, not <code>tdr1</code>. The upper edge of <code>tdr1v</code> is also the edge of a bigger box, so the cells above even differ in the 4th character. Neighbours are <b>not</b> always "same prefix, different last letter". Use a geohash library to compute neighbours; never do it by hand in real code.)</li>
+    <li>Finally, because cells are rectangles and the search area is a circle, the 9 cells hold a few drivers who are too far. So the last step is always an <b>exact distance check</b> on the few drivers found, then sort by distance.</li>
+    <li>Write in your notes: "Cells give a quick shortlist. Neighbours fix the edge. Exact distance gives the final answer." Then answer aloud: why is a smaller cell (length 7) cheaper to search but needs more neighbour lookups?
+      <details><summary>Show answer</summary><p>A smaller cell has fewer drivers in it, so each lookup is small. But a 1 km search circle covers many 150 m cells, so you must look up a lot of them. A bigger cell needs few lookups but returns many drivers to filter. Pick the cell size close to the search radius, so that about 9 cells cover the circle.</p></details></li>
+  </ol>
+
+  <h3>C. Variation questions</h3>
+  <details><summary>1. Two riders in the same street request a ride at the same instant, and driver 7 is the best match for both. What happens?</summary>
+    <p>Both matching attempts try to claim driver 7 atomically. One <code>SET ... NX</code> (or conditional update) wins; the other gets "already claimed" and moves to the next-best driver. The winner's trip stays attached to driver 7; the loser gets driver 3. Nobody is double-assigned and nobody waits on a lock.</p></details>
+  <details><summary>2. A driver accepts an offer and then his phone dies. What should the system do?</summary>
+    <p>His location pings stop, so after some seconds the system treats him as unreachable. The trip, still in <code>DRIVER_ASSIGNED</code>, is reassigned: release the claim, put the trip back to <code>REQUESTED</code> (with an event noting what happened), and run matching again. Tell the rider why the ETA changed. The state machine's events make this auditable.</p></details>
+  <details><summary>3. Add "scheduled rides" for tomorrow 6 am. What changes?</summary>
+    <p>Store the trip as <code>SCHEDULED</code> with a time. A scheduler (a delayed queue or a periodic job) wakes up about 10 to 20 minutes before pickup and starts normal matching, widening the search as time gets close. The state machine gets one new state at the start; the rest does not change.</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why do locations go into an in-memory index and not the trips database?</summary><p>Locations arrive at about 200,000 writes a second, they are only useful for a few seconds, and losing them is harmless because drivers re-send. The trips database holds money and state and should not be flooded.</p></details>
+  <details><summary>What is the edge-of-cell problem, and how do you solve it?</summary><p>Two points close together can be in different cells, with different names, so searching only one cell misses nearby drivers. Search the rider's cell plus its 8 neighbours, then filter by exact distance.</p></details>
+  <details><summary>What breaks if two riders can both claim the same driver?</summary><p>One driver receives two trips, and one rider waits for a car that is not coming. Make the claim atomic (<code>SET NX</code> with expiry, or a conditional update) and keep a conditional update on the trip row as the final guard.</p></details>
+  <details><summary>What breaks if the location index is lost, and what do you do?</summary><p>Matching sees no drivers for a few seconds. Drivers send a new ping every 5 seconds, so the index refills on its own. Run a replica or standby so that the gap is shorter, and never store anything in it that cannot be rebuilt.</p></details>
+  <details><summary>What breaks if surge multipliers are recalculated every second and shown live?</summary><p>The price would flicker, riders would feel cheated, and the quoted fare could change between the estimate and the booking. Smooth the value over minutes and fix it in a quote that is valid for a short time.</p></details>
+  <details><summary>Would you choose geohash or H3 for a small startup's first version? Why?</summary><p>Geohash, because it is just a string you can store in any database or Redis with no special library. H3 helps when you need neat hexagon neighbourhoods, for example for surge analytics, which is a later need.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"One million online drivers pinging every 5 seconds is 200,000 writes a second, so locations go into an in-memory cell index sharded by city, not the trips database. Trips are only about 100 a second and live in SQL with a state machine."</blockquote>
+  <blockquote>"To match, I search the rider's cell and its 8 neighbours, rank candidates by pickup ETA, and claim the best driver atomically with SET NX and a 15 second expiry, so a driver is never double-assigned."</blockquote>
+  <p><b>Common follow-up question:</b> Why check neighbouring cells?</p>
+  <p>Cell names split the map with hard lines. A driver 80 metres away can be across such a line and have a different cell. Checking the 8 neighbours covers those cases, and an exact distance filter removes the ones that are too far.</p>
+  <p><b>Common follow-up question:</b> How do you keep push messages reliable?</p>
+  <p>Treat push as a hint. Keep the source of truth in the trip database; when a phone reconnects or opens the app, it fetches the current trip state. Use a WebSocket while the app is open and a mobile push notification when it is not.</p>
+</section>
+
+</main>
+</body>
+</html>

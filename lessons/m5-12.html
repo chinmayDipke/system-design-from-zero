@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a web crawler</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-12">
+<main class="lesson">
+
+<section class="story">
+  <h2>The postman who reads every notice board</h2>
+  <p>Imagine you want to make a big list of every notice pinned on every notice board in a huge city. You start with a few boards you know. On each board you read the notices, and some notices say "see also the board at the temple" or "the school board has more". You write those new boards on your to-do list and go there next. A board you already visited you must not visit again, or you will walk in circles for ever.</p>
+  <p>But you cannot be rude. Some boards have a sign: "Please do not read the left side" (the robots.txt rule). And if you ask the same watchman a hundred questions in a minute, he will get angry and throw you out. So you wait a little between visits to the same board (politeness).</p>
+  <p>That is a web crawler: a never-ending to-do list of web pages, a rule-follower, and a very good memory so it never repeats itself. Search engines use one to find the pages they later let you search.</p>
+</section>
+
+<section class="explain">
+  <h2>Design a web crawler</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. Decide: how will your crawler remember a billion pages it has already seen, without using a huge amount of memory?</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. This design uses <a href="m2-11.html">queues</a>, <a href="m2-13.html">object storage</a>, <a href="m2-10.html">sharding</a>, <a href="m2-7.html">caching</a> and the <a href="m2-14.html">search index</a> idea as the consumer of what we collect.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>Start from a list of <b>seed URLs</b> and <b>discover more pages</b> by following links.</li>
+    <li><b>Download</b> each page and <b>store</b> it (for a search index or other use).</li>
+    <li>Do not crawl the same URL twice, and avoid storing the same content many times.</li>
+    <li><b>Re-crawl</b> pages to keep them fresh (news pages often, old pages rarely).</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Polite:</b> obey <code>robots.txt</code> and never overload one site.</li>
+    <li><b>Scalable and robust:</b> handle billions of pages, survive broken sites, slow servers and crawler crashes.</li>
+    <li><b>Extensible:</b> later we may add images or PDFs, so keep the parts replaceable.</li>
+    <li>Throughput matters more than latency; nobody waits for one page.</li>
+  </ul>
+  <p><b>Out of scope:</b> building the search index and ranking, pages that need login, running JavaScript to render pages (we mention it in trade-offs), and the legal side of scraping.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume we crawl 1 billion pages a month, with an average HTML page size of 100 KB.</p>
+  <ul>
+    <li><b>Pages a second:</b> 1,000,000,000 / 30 = 33 million a day, divided by 100,000 s = about <b>330 a second</b>. Say <b>about 400 a second</b> to leave room for retries.</li>
+    <li><b>Bandwidth:</b> 400 x 100 KB = 40,000 KB a second = <b>40 MB a second</b>, about 320 Mbps. Fine for a few machines.</li>
+    <li><b>Storage per month:</b> 1,000,000,000 x 100 KB = 100,000,000,000 KB = <b>100 TB</b> raw. Compressed about 3 to 1, that is about 33 TB a month, or about 400 TB a year.</li>
+    <li><b>Concurrency:</b> if one fetch takes about half a second, we need 400 x 0.5 = <b>200 fetches in flight</b> at once. A few machines, each with many connections.</li>
+    <li><b>Links found:</b> about 50 links on a page gives 400 x 50 = <b>20,000 URLs a second</b> that need a "seen before?" check.</li>
+    <li><b>Memory for "seen":</b> after a while we know 10 billion URLs. Storing them as text (about 100 bytes each) needs 10,000,000,000 x 100 B = 1 TB. A Bloom filter at 10 bits per URL needs 10,000,000,000 x 10 bits = 100 billion bits = 12.5 GB (100 billion divided by 8 is 12.5 billion bytes). That is the reason we use one.</li>
+  </ul>
+  <p>Conclusion: bandwidth and storage are moderate; <b>the hard parts are remembering what we have seen, being polite to every site, and not getting lost in endless pages</b>.</p>
+
+  <h3>3. API</h3>
+  <p>A crawler is mostly a pipeline of internal services rather than a public API. These are the useful interfaces:</p>
+<pre><code>POST /crawl/seeds         { "urls": ["https://example.com/"] }     (add starting points)
+GET  /frontier/next?worker=w7&amp;n=100
+  200 -> [ { "url": "...", "priority": 3, "host": "example.com" }, ... ]   (a worker asks for work)
+POST /pages               { "url": "...", "status": 200, "html_ref": "s3://...", "checksum": "ab12..." }
+POST /frontier/urls       { "urls": [ ... discovered links ... ] }       (after parsing)
+GET  /pages?url=...       -> stored page (used by the indexer)</code></pre>
+
+  <h3>4. Data model</h3>
+<pre><code>url_state  (url_hash PK, url, host, last_crawled_at, next_crawl_at, change_rate,
+            http_status, content_checksum, depth)
+host_state (host PK, robots_txt, robots_fetched_at, crawl_delay_s, next_allowed_fetch_at)
+Page store: object storage, key = url_hash, value = compressed HTML (+ headers)
+Frontier:   per-host queues in a message system, with priority</code></pre>
+  <p><b>Why:</b> the pages are big blobs, which belong in <b>object storage</b>. <code>url_state</code> is a huge key-value table (keyed by a hash of the URL), so a wide-column or key-value store that scales by key (see <a href="m5-13.html">the key-value store lesson</a>) fits; a single SQL database would be hard to scale to 10 billion rows. <code>host_state</code> is small and read often, so cache it.</p>
+
+  <h3>5. High-level design</h3>
+  <p>Numbers match the picture.</p>
+  <ol>
+    <li><b>Seeds</b> (and URLs due for a re-crawl) are put into the <b>URL frontier</b>.</li>
+    <li>A <b>fetcher</b> takes a URL from the frontier. The frontier makes sure not to hand out too many URLs of the same host at once.</li>
+    <li>The fetcher checks the host's <b>robots.txt</b> (cached) and resolves the host name with a cached <b>DNS</b> lookup.</li>
+    <li>It downloads the page and saves the raw page in the <b>page store</b>.</li>
+    <li>A <b>parser</b> reads the page, extracts text and links. A <b>content dedup</b> step computes a checksum (or simhash) and notes whether the content is a duplicate.</li>
+    <li>Extracted links are sent to the <b>URL dedup</b> step: normalise each URL, then check a Bloom filter and the URL table.</li>
+    <li>New URLs go into the frontier, and the loop repeats. A <b>recrawl scheduler</b> keeps adding old URLs back when they are due.</li>
+  </ol>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: the URL frontier (priority and politeness)</h4>
+  <p>The frontier is not a simple list. It must answer two questions: <b>which URL is most important?</b> (priority) and <b>is it polite to fetch from this host now?</b> (politeness).</p>
+  <table>
+    <tr><th>Design</th><th>How</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>One FIFO queue</b></td><td>Take URLs in the order they were found</td><td>Trivial</td><td>One giant site can fill the queue so that all workers hit it at once (impolite); no importance order</td></tr>
+    <tr><td><b>Priority queues</b></td><td>Several queues (high, medium, low). A "prioritiser" scores each URL (site quality, link depth, how often it changes) and puts it in the right queue; workers pick from high first</td><td>Important pages get crawled first</td><td>Does not stop many workers hitting one host</td></tr>
+    <tr><td><b>Priority + per-host queues</b></td><td>After priority, route URLs to a <b>queue per host</b> (the same host always goes to the same queue). Each host queue has a "next allowed time". A worker only takes from a host queue whose time has come, then pushes the time forward by the crawl delay (for example 1 second)</td><td>Polite and prioritised; a slow host does not block others</td><td>More moving parts; a lot of small queues to manage</td></tr>
+  </table>
+  <p><b>Pick:</b> priority queues in front and per-host queues behind (the classic design). A worker assigned to a set of hosts takes the next URL from each host in rotation, never faster than that host's delay. Persist the frontier on disk (not only memory), or a crash loses the to-do list. Because of the huge size, keep the hot front part in memory and the rest on disk.</p>
+
+  <h4>Deep dive B: robots.txt, DNS and being a good citizen</h4>
+  <ul>
+    <li><b>robots.txt:</b> every site may publish a plain text file at <code>/robots.txt</code> that says which paths a crawler may not visit (<code>Disallow: /private/</code>) and sometimes a <code>Crawl-delay</code>. Before crawling a host, fetch and <b>cache its robots.txt</b> (refresh every day or so) and check every URL against it. If the file is missing, the site allows crawling. If the fetch fails with a server error, be careful: wait and retry rather than crawl blindly. You will read some in the exercise below.</li>
+    <li><b>Identify yourself:</b> send a clear <code>User-Agent</code> with a contact link so owners know who you are.</li>
+    <li><b>DNS caching:</b> turning a host name into an IP address is a network call (<a href="m1-2.html">DNS</a>) that can take tens of milliseconds, and we make hundreds of requests a second to the same few thousand hosts. Cache results (respecting their TTL) in the fetcher, or run our own resolver, so DNS does not become the bottleneck.</li>
+    <li><b>Timeouts and limits:</b> set a short connection and read timeout, a maximum page size (skip 1 GB files), and only accept wanted content types. Retry a failed fetch a few times with backoff (<a href="m3-4.html">retries</a>), then give up on it.</li>
+  </ul>
+
+  <h4>Deep dive C: dedup of URLs and of content</h4>
+  <p><b>URL dedup.</b> The same page can have many addresses: <code>http://Example.com/a</code>, <code>https://example.com/a/</code>, <code>https://example.com/a#section</code>, <code>https://example.com/a?utm_source=x</code>. First <b>normalise</b> the URL: lowercase the host, remove the <code>#fragment</code>, remove default ports and tracking parameters, sort the query parameters, resolve <code>../</code>, and settle on a trailing-slash rule. Then check if we have seen it.</p>
+  <p><b>The Bloom filter, explained simply.</b> Imagine a long row of empty light switches (bits), all off. To "remember" a URL, run it through 2 or more scrambling functions (hash functions); each one gives a switch number; turn those switches on. To ask "have I seen this URL?", compute its switch numbers and look: if <b>any</b> is off, the URL is <b>definitely new</b>. If <b>all</b> are on, it was <b>probably seen</b> (other URLs might have switched those same lights on, a "false positive"). It never forgets something it has seen (no false negatives), and it uses only about 10 bits per URL. When the filter says "probably seen" we can confirm in the URL table, or simply skip the URL: skipping a page by mistake once in a while is acceptable for a crawler. The worked example below does this on paper.</p>
+  <table>
+    <tr><th>Option for "seen?"</th><th>Memory for 10 billion URLs</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td>Hash set in memory</td><td>about 1 TB (or 80 GB if you store only 8-byte hashes)</td><td>Exact</td><td>Large; many machines</td></tr>
+    <tr><td>Database lookup for each URL</td><td>on disk</td><td>Exact, durable</td><td>20,000 lookups a second is heavy</td></tr>
+    <tr><td><b>Bloom filter</b> (then a database check only for "probably seen")</td><td>about 12.5 GB (with enough hash functions, around 1% false positives)</td><td>Tiny and very fast</td><td>Cannot delete; false positives; must be sized for the expected number of URLs</td></tr>
+  </table>
+  <p><b>Content dedup.</b> Different URLs often carry the same page (mirrors, copied articles). Compute a <b>checksum</b> (for example SHA-256) of the cleaned content; identical checksums mean identical pages, so store once. For <b>near-duplicates</b> (same article with a different advertisement or date), use <b>simhash</b>: a fingerprint built so that pages with similar text get fingerprints that differ in only a few bits, so you can compare cheaply. You only need the idea at interview level.</p>
+
+  <h4>Deep dive D: traps, depth, recrawl and scale</h4>
+  <ul>
+    <li><b>Crawler traps:</b> a site can generate infinite pages, such as a calendar with a "next month" link for ever, or URLs that keep growing (<code>/a/b/a/b/a/b...</code>). Defences: a <b>maximum depth</b> from the seed, a <b>maximum URL length</b>, a cap on the number of pages per host, skipping URLs that look like repeating patterns or session ids, and watching for hosts that give endless new URLs with the same content (content dedup spots this).</li>
+    <li><b>Recrawl scheduling:</b> pages change at different rates. Track whether a page changed since the last visit (compare checksums or use the HTTP <code>ETag</code> and <code>Last-Modified</code> headers; a "304 Not Modified" answer costs almost nothing). Pages that changed often get a shorter interval, pages that never change a longer one, up to a maximum. News home pages might be every few minutes, an old blog post every few months. A scheduler picks URLs whose <code>next_crawl_at</code> has passed and feeds them back into the frontier with the right priority.</li>
+    <li><b>Storage:</b> raw pages go to object storage in compressed files; keep an index from URL hash to file location. Keep the parsed text and link graph for the indexer in another place. Keep older versions only if needed.</li>
+    <li><b>Scaling out:</b> split work by host. Hash the host name to pick which fetcher machine owns it, using <a href="m2-10.html">consistent hashing</a>, so one machine handles all politeness for a host without needing to coordinate with others. If a machine dies, its hosts move to others.</li>
+  </ul>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Breadth-first against importance:</b> plain breadth-first is simple but wastes time on junk. A priority score finds valuable pages sooner, but needs signals to compute it.</li>
+    <li><b>Freshness against politeness and cost:</b> re-crawling everything daily is impossible and impolite. Spend crawl budget on pages that change and matter.</li>
+    <li><b>Bloom filter against exactness:</b> we accept a small chance of skipping a new URL to save about 100 times the memory.</li>
+    <li><b>JavaScript pages:</b> fetching raw HTML is cheap; running a headless browser to render JavaScript pages is 10 to 100 times more expensive, so do it only for sites that need it.</li>
+    <li><b>Bottlenecks:</b> the frontier (a very big structure with many small queues), DNS, and a few huge hosts.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): pages per second, error rate by host, frontier size, queue age, duplicate rate, robots.txt blocks, share of new versus unchanged pages.</li>
+  </ul>
+  <p><b>At 10x scale</b> (10 billion pages a month): many crawler clusters across regions (crawl sites from a nearby region), a distributed frontier split by host hash, a partitioned Bloom filter (one per shard), a distributed key-value store for URL state, and a smarter change-prediction model for recrawling.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 490" role="img" aria-label="Web crawler architecture. Seeds and recrawl URLs feed the URL frontier with priority and per-host queues. Fetchers take URLs, consult a DNS and robots.txt cache, download pages to the page store. A parser extracts links, which go through URL dedup with a Bloom filter back to the frontier. A content dedup step checks checksums. A recrawl scheduler adds old URLs back to the seeds.">
+      <defs><marker id="ar-m5-12" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="85" height="55" rx="8"/>
+        <rect x="150" y="40" width="115" height="55" rx="8"/>
+        <rect x="305" y="40" width="115" height="55" rx="8"/>
+        <rect x="470" y="40" width="155" height="55" rx="8"/>
+        <rect x="150" y="170" width="115" height="55" rx="8"/>
+        <rect x="305" y="170" width="115" height="55" rx="8"/>
+        <rect x="470" y="170" width="155" height="55" rx="8"/>
+        <rect x="150" y="300" width="115" height="55" rx="8"/>
+        <rect x="470" y="300" width="155" height="55" rx="8"/>
+        <path d="M100 67 H148" marker-end="url(#ar-m5-12)"/>
+        <path d="M265 67 H303" marker-end="url(#ar-m5-12)"/>
+        <path d="M420 67 H468" marker-end="url(#ar-m5-12)"/>
+        <path d="M362 95 V168" marker-end="url(#ar-m5-12)"/>
+        <path d="M362 225 V327 H267" marker-end="url(#ar-m5-12)"/>
+        <path d="M420 197 H468" marker-end="url(#ar-m5-12)"/>
+        <path d="M207 300 V227" marker-end="url(#ar-m5-12)"/>
+        <path d="M207 170 V97" marker-end="url(#ar-m5-12)"/>
+        <path d="M547 355 V392 H58 V97" marker-end="url(#ar-m5-12)" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="57" y="64" font-size="14" font-weight="700">Seeds</text>
+        <text x="57" y="82" font-size="13">+ recrawl</text>
+        <text x="207" y="62" font-size="14" font-weight="700">URL frontier</text>
+        <text x="207" y="80" font-size="13">priority + per-host</text>
+        <text x="362" y="64" font-size="14" font-weight="700">Fetchers</text>
+        <text x="362" y="82" font-size="13">polite, many in parallel</text>
+        <text x="547" y="64" font-size="14" font-weight="700">DNS + robots.txt</text>
+        <text x="547" y="82" font-size="13">caches</text>
+        <text x="207" y="194" font-size="14" font-weight="700">URL dedup</text>
+        <text x="207" y="212" font-size="13">normalise + Bloom</text>
+        <text x="362" y="194" font-size="14" font-weight="700">Page store</text>
+        <text x="362" y="212" font-size="13">object storage</text>
+        <text x="547" y="194" font-size="14" font-weight="700">Content dedup</text>
+        <text x="547" y="212" font-size="13">checksum / simhash</text>
+        <text x="207" y="324" font-size="14" font-weight="700">Parser</text>
+        <text x="207" y="342" font-size="13">text + links</text>
+        <text x="547" y="324" font-size="14" font-weight="700">Recrawl</text>
+        <text x="547" y="342" font-size="14" font-weight="700">scheduler</text>
+        <text x="124" y="60" font-size="13">1</text>
+        <text x="284" y="60" font-size="13">2</text>
+        <text x="444" y="60" font-size="13">3</text>
+        <text x="376" y="138" font-size="13" text-anchor="start">4</text>
+        <text x="444" y="190" font-size="13">5</text>
+        <text x="314" y="318" font-size="13">5</text>
+        <text x="221" y="270" font-size="13" text-anchor="start">6</text>
+        <text x="221" y="140" font-size="13" text-anchor="start">7</text>
+        <text x="300" y="410" font-size="13">8 due pages are put back into the frontier</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="435" font-size="13">1-2. Frontier hands out URLs, never too fast for one host; 3. robots.txt allowed? IP from DNS cache</text>
+        <text x="15" y="453" font-size="12">4. Page saved; 5. parsed and checked for duplicate content; 6. links normalised and checked in the Bloom filter</text>
+        <text x="15" y="471" font-size="13">7. Only new URLs enter the frontier; the loop never ends (traps and depth limits keep it sane)</text>
+      </g>
+    </svg>
+    <figcaption>A crawler is a loop: take a URL, fetch it politely, store it, extract links, drop the ones already seen, and feed the rest back in.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-12 web-crawler.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+design+a+web+crawler+system+design" target="_blank" rel="noopener">YouTube search: "ByteByteGo design a web crawler system design"</a>
+      <span class="meta">Short. Watch the parts on the URL frontier and on avoiding duplicate URLs.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+design+web+crawler" target="_blank" rel="noopener">YouTube search: "Hello Interview design web crawler"</a>
+      <span class="meta">Pick the full breakdown. Watch how they handle politeness and fault tolerance.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://developers.google.com/search/docs/crawling-indexing/robots/intro" target="_blank" rel="noopener">Google Search Central: Introduction to robots.txt</a>
+      <span class="meta">Read what a robots.txt file is, and what it can and cannot do. Look at the short example.</span></li>
+    <li><a href="https://github.com/donnemartin/system-design-primer/tree/master/solutions/system_design/web_crawler" target="_blank" rel="noopener">System Design Primer: web crawler solution</a>
+      <span class="meta">Read how they use a queue of links and a way to avoid duplicates.</span></li>
+    <li><a href="https://en.wikipedia.org/wiki/Bloom_filter" target="_blank" rel="noopener">Wikipedia: Bloom filter</a>
+      <span class="meta">Read the first two sections, "Algorithm description" and the example picture, to confirm what you do on paper below.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 25 for the exercises)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design a web crawler" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes.</li>
+    <li>In the deep dives, draw the frontier as two stages: priority queues on the left, per-host queues on the right with a "next allowed time" on each. Explain how a worker avoids hitting one host too fast.</li>
+    <li>Stop the recording and save it as <code>m5-12 mock</code>, and the drawing as <code>m5-12 web-crawler-mock.excalidraw</code>. Compare with the lesson and note what you missed.</li>
+  </ol>
+
+  <h3>B. Read two real robots.txt files (10 minutes)</h3>
+  <p>Websites change these files from time to time, so what you see may differ a little from what is written here. That is fine: you are learning to read the rules.</p>
+  <ol class="steps">
+    <li>Open Chrome and go to <a href="https://www.google.com/robots.txt" target="_blank" rel="noopener">https://www.google.com/robots.txt</a>. You should see plain text, with no pictures or buttons.</li>
+    <li>Find the first block. It begins with <code>User-agent: *</code>. The star means "all crawlers". Below it are lines starting with <code>Disallow:</code> and <code>Allow:</code>. When we checked, it included <code>Disallow: /search</code> and then <code>Allow: /search/about</code>. Read it as: "do not crawl pages under /search, except /search/about". The more specific rule wins.</li>
+    <li>Scroll down. You will see other blocks starting with names such as <code>User-agent: Yandex</code> or <code>User-agent: AdsBot-Google</code>. These are rules for particular crawlers. A crawler obeys the block that matches its own name, or the <code>*</code> block if there is none.</li>
+    <li>Scroll to the end and look for lines starting with <code>Sitemap:</code>. It points to a file listing the URLs the site wants found. A crawler can use it as a source of seed URLs.</li>
+    <li>Now open an Indian site's file: <a href="https://www.flipkart.com/robots.txt" target="_blank" rel="noopener">https://www.flipkart.com/robots.txt</a>. (If it will not open, try <code>https://www.swiggy.com/robots.txt</code> or <code>https://www.bookmyshow.com/robots.txt</code>.) When we checked, the block for <code>User-agent: *</code> blocked the cart page with <code>Disallow: /viewcart</code>, and other blocks named specific crawlers. Write down what kinds of pages the owner keeps crawlers away from. You will often see carts, payments, login or search results, which are private, personal or endless.</li>
+    <li>Answer in your notes: (a) if your crawler is not named in the file, which block applies to you? (b) A URL is <code>https://www.google.com/search?q=cats</code>. Is it allowed? (c) Why would a site disallow its search result pages? Check yourself with the answers below.
+      <details><summary>Show answers</summary><p>(a) The <code>User-agent: *</code> block. (b) Not allowed: it starts with <code>/search</code>, and the exceptions only cover <code>/search/about</code> and similar. (c) Search results are an endless set of pages (every possible query), they are low value, and a crawler would be a heavy load on the site. It is also a typical crawler trap.</p></details></li>
+    <li>Remember: <code>robots.txt</code> is a request that polite crawlers follow. It is <b>not</b> a security lock; never rely on it to hide private data.</li>
+  </ol>
+
+  <h3>C. A Bloom filter on paper (10 to 15 minutes)</h3>
+  <p>We use a tiny filter with <b>10 bits</b> (positions 0 to 9) and <b>2 hash functions</b>. Real filters are millions of bits, but the idea is the same. To keep the arithmetic easy we use short words in place of URLs, and these two made-up hash functions:</p>
+  <ul>
+    <li>Letter value: a = 1, b = 2, c = 3, ... z = 26. The <b>sum</b> of a word is the total of its letter values.</li>
+    <li><b>h1</b> = sum mod 10 (the remainder after dividing by 10, so just the last digit of the sum).</li>
+    <li><b>h2</b> = (sum x 3 + 1) mod 10.</li>
+  </ul>
+  <ol class="steps">
+    <li>Draw 10 boxes in a row and write 0 to 9 above them. Put a 0 in every box. This is the empty filter: <code>0 0 0 0 0 0 0 0 0 0</code>.</li>
+    <li><b>Insert "cat".</b> c = 3, a = 1, t = 20, so sum = 24. h1 = 24 mod 10 = <b>4</b>. h2 = (24 x 3 + 1) mod 10 = 73 mod 10 = <b>3</b>. Set boxes 3 and 4 to 1.</li>
+    <li><b>Insert "dog".</b> d = 4, o = 15, g = 7, so sum = 26. h1 = 6. h2 = (26 x 3 + 1) mod 10 = 79 mod 10 = <b>9</b>. Set boxes 6 and 9 to 1.</li>
+    <li><b>Insert "owl".</b> o = 15, w = 23, l = 12, so sum = 50. h1 = 0. h2 = (50 x 3 + 1) mod 10 = 151 mod 10 = <b>1</b>. Set boxes 0 and 1 to 1.</li>
+    <li>The filter now looks like this (positions 0 to 9). Check yours matches:
+<pre><code>position: 0 1 2 3 4 5 6 7 8 9
+bit:      1 1 0 1 1 0 1 0 0 1</code></pre>
+      Six of the 10 bits are on.</li>
+    <li><b>Ask about "cat".</b> Its positions are 4 and 3. Both are 1, so the answer is "probably seen". Correct, we did insert it.</li>
+    <li><b>Ask about "hen".</b> h = 8, e = 5, n = 14, so sum = 27. h1 = 7. h2 = (27 x 3 + 1) mod 10 = 82 mod 10 = <b>2</b>. Box 7 is 0, so the answer is <b>"definitely not seen"</b>. We can stop as soon as any one box is 0. Correct: we never inserted it. So we crawl it and then insert it: set boxes 7 and 2 to 1.</li>
+    <li><b>Ask about "bat" (this one fools the filter).</b> b = 2, a = 1, t = 20, so sum = 23. h1 = 3. h2 = (23 x 3 + 1) mod 10 = 70 mod 10 = <b>0</b>. Box 3 is 1 (set by "cat") and box 0 is 1 (set by "owl"). Both are on, so the filter says "probably seen". But we never inserted "bat". This is a <b>false positive</b>. Our crawler would wrongly skip it. Other words switched on exactly the boxes that "bat" looks at.</li>
+    <li><b>How often does this happen?</b> With 6 of the 10 bits on (as in step 5), for a new word, the chance that one position is on is about 6/10, and for two positions (assuming they are independent) about (6/10) x (6/10) = 36/100 = <b>36%</b>. That is high because our filter is tiny and already crowded: 3 words in 10 bits is only about 3 bits per word. Real filters use about 10 bits per item and about 7 hash functions, which brings the false positive rate to around 1%.</li>
+    <li>Write down three facts: a "no" is always right; a "yes" is only "probably"; you cannot take a word out, because that would turn off bits that other words also use.</li>
+    <li>Explain out loud why this suits a crawler. <details><summary>Show answer</summary><p>Checking is very cheap and uses very little memory for billions of URLs. An occasional skipped page is acceptable, but crawling the same page again and again would waste a lot. Never forgetting a URL we have seen is exactly the guarantee the filter gives.</p></details></li>
+  </ol>
+
+  <h3>D. Variation questions</h3>
+  <details><summary>1. A site has a calendar with a "next month" link for ever. How does your crawler avoid it?</summary>
+    <p>A maximum depth from the seed, a cap on pages per host per day, a URL length limit, and pattern detection (many URLs that differ only in a date, and pages with the same content). The content checksum catches the case where every month shows the same empty page.</p></details>
+  <details><summary>2. Add a "crawl this page now" button for site owners. What changes?</summary>
+    <p>Add a very high priority queue in the frontier. A request puts the URL there, bypassing the normal recrawl schedule, but it still goes through per-host politeness so that a flood of requests cannot overload one site. Rate limit who may use it.</p></details>
+  <details><summary>3. A fetcher machine crashes while holding 10,000 URLs. What happens to them?</summary>
+    <p>The frontier must not delete a URL when it hands it out; it marks it "in progress" with a lease time. If the worker does not confirm within a few minutes, the lease expires and the URL goes back to the queue. Fetching a page twice is harmless because storing is idempotent (same key).</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why does the frontier need per-host queues and not just one big queue?</summary><p>To be polite. A single queue may hand many URLs of one site to many workers at once and overload it. A queue per host, with a next-allowed-time, spaces out the requests to each site.</p></details>
+  <details><summary>What breaks if the crawler ignores robots.txt?</summary><p>It crawls pages that owners asked it not to visit, including heavy or private areas, so the crawler gets blocked (or worse, legally challenged), and it may fall into endless search-result pages.</p></details>
+  <details><summary>What breaks if you do not normalise URLs before the dedup check?</summary><p>The same page under many spellings (different case, a fragment, tracking parameters, a trailing slash) looks like many pages, so it is crawled again and again, and the Bloom filter fills faster.</p></details>
+  <details><summary>A Bloom filter says "probably seen". How sure can you be, and what do you do?</summary><p>Not completely: there is a small chance of a false positive. For a crawler we usually just skip the URL, accepting that a rare new page is missed. If exactness matters, confirm in the URL table.</p></details>
+  <details><summary>What breaks if the crawler has no depth or per-host limit?</summary><p>A crawler trap (an infinite calendar or generated links) could keep it busy for ever on a single site, filling storage with junk and starving the rest of the web.</p></details>
+  <details><summary>Would you recrawl every page every day? Why or why not?</summary><p>No. Most pages rarely change, so it would waste bandwidth, storage and the sites' resources. Use change history and conditional requests (<code>ETag</code>, 304 Not Modified) to give frequently changing pages short intervals and static pages long ones.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"The heart of a crawler is the URL frontier: priority queues for importance, then a queue per host with a next-allowed-time for politeness. Fetchers check a cached robots.txt, use a DNS cache, download the page and store it in object storage."</blockquote>
+  <blockquote>"To avoid repeats I normalise URLs and check a Bloom filter, about 12 GB for 10 billion URLs instead of a terabyte, and I dedupe content with checksums or simhash. Depth and per-host limits protect against crawler traps."</blockquote>
+  <p><b>Common follow-up question:</b> How do you decide when to recrawl a page?</p>
+  <p>Track how often each page changed in past visits (compare checksums, or use ETag and Last-Modified). Frequently changing pages get a short interval, stable pages a long one with a cap. A scheduler puts due URLs back into the frontier with a priority based on page importance.</p>
+  <p><b>Common follow-up question:</b> How do you scale the crawler to many machines?</p>
+  <p>Partition by host. Hash the host name to choose the machine that owns it, so that one machine handles all politeness for that host. Use consistent hashing so that adding or losing a machine moves only a few hosts. The page store and the URL table are partitioned by URL hash.</p>
+</section>
+
+</main>
+</body>
+</html>

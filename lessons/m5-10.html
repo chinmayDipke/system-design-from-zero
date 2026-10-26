@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a video streaming service</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-10">
+<main class="lesson">
+
+<section class="story">
+  <h2>The cinema reel and the chai stall</h2>
+  <p>Long ago, a film came to a village cinema as heavy metal reels. The projector man could not send one giant reel to every village. So the film was cut into reels of about 20 minutes each and sent in a box, one reel at a time.</p>
+  <p>Now imagine a video site. Someone films a wedding on a phone and uploads a huge file. Your friend watches it on a slow mobile network and you watch it on fibre. One file cannot suit both. So the site makes <b>several copies</b> of the video in different sizes, chops each copy into <b>small pieces of a few seconds</b>, and keeps a list of the pieces (a menu card). Your phone reads the list and fetches piece after piece. If your network gets slow, it quietly switches to the small copy for the next piece. No buffering wheel.</p>
+  <p>The pieces are not kept in one far-away godown. Popular films are kept in many <b>chai stalls near your home</b> (the CDN), so they arrive fast. That is the whole lesson: <b>upload big, process into many small pieces, serve from nearby</b>.</p>
+</section>
+
+<section class="explain">
+  <h2>Design a video streaming service (like YouTube)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. Decide: where does the uploaded file go, and who makes it playable on a slow phone?</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. This design uses <a href="m2-13.html">object storage</a>, <a href="m2-11.html">queues</a>, <a href="m2-8.html">a CDN</a>, <a href="m2-7.html">caching</a> and <a href="m2-14.html">search</a>.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>A creator can <b>upload a video</b> (very large files, flaky networks) with a title and description.</li>
+    <li>The video is processed and then <b>plays smoothly</b> on phones, laptops and TVs, on fast and slow networks.</li>
+    <li>Viewers can <b>search and open</b> videos and see <b>view counts</b>. Each video has a <b>thumbnail</b>.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Playback starts fast</b> (about 2 seconds) and rarely buffers.</li>
+    <li><b>Read-heavy:</b> far more watching than uploading. <b>Bandwidth</b> is the main cost.</li>
+    <li><b>Never lose an uploaded video.</b> Highly durable storage. View counts may be slightly off.</li>
+    <li><b>Highly available</b> playback. A new upload may take some minutes to become playable; that is acceptable.</li>
+  </ul>
+  <p><b>Out of scope:</b> live streaming, recommendations, comments and likes, ads, copyright detection, DRM, and the internals of video codecs.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 100 million daily active viewers, each watching 5 videos and 40 minutes a day, and 500,000 uploads a day of about 5 minutes each.</p>
+  <ul>
+    <li><b>Video starts:</b> 100,000,000 x 5 = 500,000,000 a day, divided by 100,000 s = <b>5,000 a second</b>; peak at 3x = <b>15,000 a second</b>. A small number of "open video" calls, but each one then fetches hundreds of segments.</li>
+    <li><b>Concurrent viewers:</b> 100,000,000 x 40 min x 60 = 240,000,000,000 viewer-seconds a day, divided by 100,000 s = about <b>2.4 million watching at any moment</b>.</li>
+    <li><b>Bandwidth out:</b> 2,400,000 viewers x 3 Mbps (an average quality) = 7,200,000 Mbps = <b>7.2 Tbps</b>; peak at 2x is about 14 Tbps. No origin can serve this. A <b>CDN is not optional</b>.</li>
+    <li><b>Uploads:</b> 500,000 / 100,000 s = <b>5 a second</b>. Raw size: 5 minutes of phone video is about 500 MB, so 500,000 x 500 MB = 250,000,000 MB = <b>250 TB a day</b> of originals.</li>
+    <li><b>Processed copies:</b> make 4 versions with bitrates 0.4, 1, 2.5 and 5 Mbps (about 240p, 480p, 720p, 1080p). Sum = 8.9 Mbps. For 300 seconds: 300 x 8.9 = 2,670 megabits = about 334 MB per video (divide by 8 to turn bits to bytes). 500,000 x 334 MB = about <b>167 TB a day</b>, which is roughly <b>61 PB a year</b>. Storage grows fast, so use cheap object storage, and move old unpopular videos to a colder tier.</li>
+    <li><b>Metadata:</b> 500,000 x 1 KB = 0.5 GB a day. Trivial. Thumbnails: 10 per video x 20 KB x 500,000 = 100 GB a day.</li>
+  </ul>
+  <p>Conclusion: <b>the bytes are in blob storage and CDN; the database is tiny</b>. The design is about moving big files cheaply and processing them in the background.</p>
+
+  <h3>3. API</h3>
+<pre><code>POST /videos/upload-init   { "title": "...", "size_bytes": 524288000 }
+  201 -> { "video_id": "v77", "upload_id": "u1", "part_urls": [ ...pre-signed URLs... ] }
+
+PUT  &lt;pre-signed URL for part n&gt;     (goes straight to object storage, not our servers)
+POST /videos/{id}/upload-complete  { "parts": [ {"n":1,"etag":"..."}, ... ] }
+  202 -> { "status": "PROCESSING" }
+
+GET  /videos/{id}        -> { "title": "...", "status": "READY", "manifest_url": "https://cdn.../v77/master.m3u8", "views": 1204 }
+GET  /search?q=biryani   -> list of videos
+POST /videos/{id}/view   (beacon from the player; counted in batches)</code></pre>
+
+  <h3>4. Data model</h3>
+<pre><code>videos   (video_id, owner_id, title, description, status [UPLOADING|PROCESSING|READY|FAILED],
+          duration_s, raw_key, manifest_key, created_at)          -- SQL (or a sharded store)
+renditions (video_id, resolution, bitrate, playlist_key)           -- one row per quality
+Object storage:  raw/{video_id}              the original upload
+                 hls/{video_id}/720p/seg_0001.ts ...  the pieces
+                 hls/{video_id}/master.m3u8           the manifest (menu card)
+Counters (Redis, then flushed):  views:{video_id}</code></pre>
+  <p><b>Why:</b> the <b>metadata</b> (title, owner, status) is small, relational and needs to be right, so a SQL database (sharded by <code>video_id</code> when it grows). The <b>video bytes</b> are huge and never edited in place, so they go to <b>object storage</b>, which is cheap, durable and works with CDNs. Never store videos in a database.</p>
+
+  <h3>5. High-level design</h3>
+  <p>Numbers match the picture.</p>
+  <ol>
+    <li>The creator's app asks the <b>upload service</b> to start an upload. It creates a <code>videos</code> row (<code>UPLOADING</code>) and returns pre-signed URLs.</li>
+    <li>The app uploads the file in parts <b>directly to object storage</b> using those URLs. Our servers never carry the bytes.</li>
+    <li>When the upload completes, storage (or the upload service) puts a "video uploaded" event on a <b>queue</b>.</li>
+    <li><b>Transcoding workers</b> take the job from the queue.</li>
+    <li>They cut the video into segments in several resolutions and write them, with a manifest, back to storage. They also make thumbnails and then set the status to <code>READY</code> in the database.</li>
+    <li>A viewer opens a video. The <b>playback API</b> returns metadata and the manifest URL.</li>
+    <li>The player fetches the manifest and then the segments from the <b>CDN</b>.</li>
+    <li>On a cache miss, the CDN fetches the segment from the <b>origin</b> (object storage) once and keeps it for the next viewers. The player also sends view events, counted in batches.</li>
+  </ol>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: the upload path</h4>
+  <p>A 500 MB upload over a mobile network will fail halfway sometimes. And pushing it through our web servers would tie up their connections and bandwidth.</p>
+  <table>
+    <tr><th>Option</th><th>How</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Upload through our servers</b></td><td>App posts the file to an API server, which writes it to storage</td><td>Simple; full control</td><td>Servers carry every byte; slow; ties up connections; timeouts on big files</td></tr>
+    <tr><td><b>Pre-signed URL, single PUT</b></td><td>Server gives a time-limited URL; the app uploads straight to object storage</td><td>No load on our servers; storage handles the bytes</td><td>One failure means starting over</td></tr>
+    <tr><td><b>Pre-signed, chunked / resumable (multipart)</b></td><td>Split the file into parts (for example 8 MB). Upload each with its own URL. If the network drops, send only the missing parts. Finish by telling storage to assemble the parts</td><td>Survives bad networks; parts can go in parallel</td><td>More API calls; need to track which parts arrived</td></tr>
+  </table>
+  <p><b>Pick:</b> pre-signed <b>multipart</b>. The app remembers which parts are done (and the server can list them), so a resume after a dropped connection starts where it stopped. Pre-signed URLs expire in minutes and are tied to one object key, so a user cannot overwrite someone else's video.</p>
+
+  <h4>Deep dive B: transcoding, adaptive bitrate and the manifest</h4>
+  <p><b>Why transcode?</b> The uploaded file may be huge, in an odd format, and at one quality. Players need standard formats and several sizes. <b>Transcoding</b> converts the file into a set of standard versions (for example 240p to 1080p), each with a bitrate.</p>
+  <p><b>The pipeline.</b> Transcoding is heavy (minutes of CPU for a single video), so it is done in the background: upload event goes on a <a href="m2-11.html">queue</a>, a pool of <b>workers</b> pulls jobs, and we add workers as the queue grows. To go faster, first split the video into chunks of some seconds, transcode chunks in parallel on many workers, and stitch the results. A failed job is retried (<a href="m3-4.html">idempotent</a>, so a retry just overwrites the same output keys), and after several failures lands in a dead-letter queue and the video is marked <code>FAILED</code>.</p>
+  <p><b>Adaptive bitrate streaming (HLS or DASH).</b> The output of each version is chopped into small <b>segments</b>, usually 2 to 10 seconds each, which are plain files fetched over normal HTTP. A <b>manifest</b> (HLS: a text file ending <code>.m3u8</code>; DASH: an <code>.mpd</code> file) lists the versions and their segments. The player:</p>
+  <ol>
+    <li>downloads the top-level (master) manifest, which lists the available qualities;</li>
+    <li>picks one by guessing the network speed, and downloads that quality's list of segments;</li>
+    <li>downloads segment by segment, measuring how fast each arrives;</li>
+    <li>switches to a lower or higher quality for the <b>next</b> segment when the speed changes.</li>
+  </ol>
+  <p>This is why video can start quickly (small first segments) and rarely stalls. You will see it in DevTools below. HLS segments are traditionally <code>.ts</code> files; newer setups use <code>.m4s</code> or <code>.mp4</code> fragments, and DASH uses <code>.m4s</code>. Because everything is ordinary HTTP files, <b>a normal CDN can serve it</b>.</p>
+
+  <h4>Deep dive C: delivery, the CDN and the long tail</h4>
+  <p>Video views follow a steep curve: a small share of videos (new, viral) gets most of the views, and a very long tail of old videos gets a few views each. That shapes the caching:</p>
+  <ul>
+    <li><b>Hot videos</b> sit in the CDN edge caches close to viewers. After the first viewer in a city fetches a segment, the next thousand are served nearby.</li>
+    <li><b>Warm videos</b> live in a regional (second-level) CDN cache, so the origin sees fewer requests.</li>
+    <li><b>The long tail</b> is served from the origin object storage (slower, a cache miss is fine). Do not try to cache everything at the edge: it would be wasted space, since most of the tail is rarely watched again.</li>
+    <li><b>Pre-warm</b> a big expected release by pushing its first segments to the edges.</li>
+    <li>Segments are immutable (never edited), so give them <b>long cache lifetimes</b>. Only the manifest of a live or changing video needs a short one.</li>
+  </ul>
+  <p>Large video companies go further and place their own cache servers inside internet providers' networks. At interview level, say "CDN with tiered caching" and stop.</p>
+
+  <h4>Deep dive D: view counts and thumbnails</h4>
+  <p>A viral video may get 100,000 views a second. If every view does <code>UPDATE videos SET views = views + 1</code>, that one row becomes a bottleneck (<a href="m2-3.html">row locks</a>). Instead:</p>
+  <ul>
+    <li><b>Batching:</b> the player sends a view event; a service increments an in-memory counter (Redis <code>INCR</code>) and a job writes the totals to the database every few seconds, one update per video instead of thousands.</li>
+    <li><b>Approximate is fine:</b> the number a viewer sees can lag by seconds or minutes. For counts of <i>unique</i> viewers, use an approximate counting structure like HyperLogLog, which counts millions of distinct items in a few KB with about 1% error.</li>
+    <li><b>Count a view only once per real watch:</b> require the player to have played for some seconds, and de-duplicate by session, so a refresh does not count twice. Fraud filtering happens later in a batch.</li>
+  </ul>
+  <p><b>Thumbnails:</b> the transcoding workers grab a few frames (say at 10%, 50%, 90%) and store small images in object storage, served through the same CDN. The creator may choose one. Use the same pre-signed upload for custom thumbnails. Search runs on titles and descriptions in a <a href="m2-14.html">search index</a> fed from the metadata database.</p>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Storage against quality:</b> more renditions (and newer codecs) save viewers' bandwidth but cost storage and CPU. Often only popular videos get the expensive extra versions; the long tail gets a few.</li>
+    <li><b>Segment length:</b> short segments (2 s) adapt quickly and start fast but mean more requests and a bigger manifest; long segments (10 s) are efficient but adapt slowly.</li>
+    <li><b>Speed to publish against cost:</b> parallel transcoding publishes sooner but uses more machines for a short time.</li>
+    <li><b>Bottlenecks:</b> the transcoding queue after a burst of uploads, CDN cost, and origin load from cold videos. The metadata database is not one.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): time from upload to READY, queue depth, failed transcodes, playback start time, rebuffering rate, CDN hit rate.</li>
+  </ul>
+  <p><b>At 10x scale:</b> a multi-CDN setup or own edge caches in ISPs, auto-scaling transcoding fleets with spot (cheap, interruptible) machines, tiered storage that moves cold videos to cheaper classes, regional metadata databases, and a streaming pipeline for view and watch-time analytics.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 480" role="img" aria-label="Video streaming architecture. Upload path on top: creator app asks the upload service for a pre-signed URL, uploads directly to raw object storage, an event goes onto a queue, transcoding workers write segments and manifests to processed storage. Playback path at the bottom: viewer app asks the playback API, which reads the metadata database, and fetches segments from the CDN, which on a miss reads processed storage.">
+      <defs><marker id="ar-m5-10" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="50" width="95" height="55" rx="8"/>
+        <rect x="150" y="50" width="110" height="55" rx="8"/>
+        <rect x="300" y="50" width="120" height="55" rx="8"/>
+        <rect x="470" y="50" width="155" height="55" rx="8"/>
+        <rect x="150" y="175" width="110" height="55" rx="8"/>
+        <rect x="300" y="175" width="120" height="55" rx="8"/>
+        <rect x="470" y="175" width="155" height="55" rx="8"/>
+        <rect x="15" y="305" width="95" height="55" rx="8"/>
+        <rect x="150" y="305" width="110" height="55" rx="8"/>
+        <rect x="300" y="305" width="120" height="55" rx="8"/>
+        <path d="M110 77 H148" marker-end="url(#ar-m5-10)"/>
+        <path d="M62 50 V28 H360 V48" marker-end="url(#ar-m5-10)"/>
+        <path d="M420 77 H468" marker-end="url(#ar-m5-10)"/>
+        <path d="M547 105 V173" marker-end="url(#ar-m5-10)"/>
+        <path d="M468 202 H422" marker-end="url(#ar-m5-10)"/>
+        <path d="M205 105 V173" marker-end="url(#ar-m5-10)" stroke-dasharray="5 4"/>
+        <path d="M110 332 H148" marker-end="url(#ar-m5-10)"/>
+        <path d="M205 305 V232" marker-end="url(#ar-m5-10)"/>
+        <path d="M62 360 V395 H360 V362" marker-end="url(#ar-m5-10)"/>
+        <path d="M360 305 V232" marker-end="url(#ar-m5-10)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="62" y="74" font-size="14" font-weight="700">Creator</text>
+        <text x="62" y="92" font-size="13">app</text>
+        <text x="205" y="74" font-size="14" font-weight="700">Upload</text>
+        <text x="205" y="92" font-size="14" font-weight="700">service</text>
+        <text x="360" y="74" font-size="14" font-weight="700">Raw storage</text>
+        <text x="360" y="92" font-size="13">originals</text>
+        <text x="547" y="74" font-size="14" font-weight="700">Queue</text>
+        <text x="547" y="92" font-size="13">"video uploaded"</text>
+        <text x="205" y="199" font-size="14" font-weight="700">Metadata</text>
+        <text x="205" y="217" font-size="13">DB (SQL)</text>
+        <text x="360" y="199" font-size="14" font-weight="700">Processed</text>
+        <text x="360" y="217" font-size="13">segments + manifest</text>
+        <text x="547" y="199" font-size="14" font-weight="700">Transcoding</text>
+        <text x="547" y="217" font-size="14" font-weight="700">workers</text>
+        <text x="62" y="329" font-size="14" font-weight="700">Viewer</text>
+        <text x="62" y="347" font-size="13">player</text>
+        <text x="205" y="329" font-size="14" font-weight="700">Playback</text>
+        <text x="205" y="347" font-size="14" font-weight="700">API</text>
+        <text x="360" y="329" font-size="14" font-weight="700">CDN</text>
+        <text x="360" y="347" font-size="13">edge caches</text>
+        <text x="129" y="70" font-size="13">1</text>
+        <text x="211" y="20" font-size="13">2 direct upload (pre-signed URL)</text>
+        <text x="444" y="70" font-size="13">3</text>
+        <text x="561" y="145" font-size="13" text-anchor="start">4</text>
+        <text x="445" y="195" font-size="13">5</text>
+        <text x="129" y="325" font-size="13">6</text>
+        <text x="211" y="285" font-size="13" text-anchor="start">metadata</text>
+        <text x="210" y="412" font-size="13">7 manifest and segments</text>
+        <text x="374" y="270" font-size="13" text-anchor="start">8 on a miss</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="440" font-size="12">Upload path (top): 1 init, 2 parts go straight to storage, 3 event, 4 worker picks job, 5 writes pieces, status READY</text>
+        <text x="15" y="458" font-size="12">Playback path (bottom): 6 API gives manifest URL, 7 player fetches pieces from the CDN, 8 miss goes to the origin</text>
+        <text x="15" y="476" font-size="13">The player switches quality between segments depending on network speed</text>
+      </g>
+    </svg>
+    <figcaption>The big bytes never pass through our API servers: they go straight into storage on the way in and straight out of the CDN on the way out.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-10 video-streaming.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+how+does+youtube+stream+video+system+design" target="_blank" rel="noopener">YouTube search: "ByteByteGo how does youtube stream video system design"</a>
+      <span class="meta">Short. Watch the part on the upload flow and the transcoding pipeline.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+design+youtube+video+streaming" target="_blank" rel="noopener">YouTube search: "Hello Interview design YouTube video streaming"</a>
+      <span class="meta">Pick the full breakdown. Watch the parts on adaptive bitrate streaming and on the CDN.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.cloudflare.com/learning/video/what-is-http-live-streaming/" target="_blank" rel="noopener">Cloudflare Learning Center: What is HTTP Live Streaming (HLS)?</a>
+      <span class="meta">Read how video is split into segments and listed in a playlist. This is what you will see in DevTools.</span></li>
+    <li><a href="https://developer.apple.com/streaming/" target="_blank" rel="noopener">Apple: HTTP Live Streaming overview</a>
+      <span class="meta">Skim the overview page for the idea of multiple renditions. You do not need the specification.</span></li>
+    <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html" target="_blank" rel="noopener">AWS docs: Uploading and copying objects using multipart upload</a>
+      <span class="meta">Read the first sections on why and how large files are uploaded in parts. The idea works on any object store.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 25 for the streaming exercise)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design a video streaming service" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes. Draw upload and playback as two separate rows.</li>
+    <li>In the deep dives, explain the pre-signed multipart upload and the transcoding queue, then the manifest and segments.</li>
+    <li>Stop the recording and save it as <code>m5-10 mock</code>, and the drawing as <code>m5-10 video-streaming-mock.excalidraw</code>. Compare with the lesson and note what you missed.</li>
+  </ol>
+
+  <h3>B. Watch adaptive streaming happen in DevTools (15 minutes)</h3>
+  <p>You will open a public test stream and watch the browser fetch the manifest and then segment after segment. Which file types appear depends on the site: a plain HLS stream shows <code>.m3u8</code> and <code>.ts</code> (or <code>.m4s</code>) requests; big video sites often use their own request names. Both cases are covered below.</p>
+  <ol class="steps">
+    <li>Open Chrome and go to <a href="https://hls-js.netlify.app/demo/" target="_blank" rel="noopener">hls-js.netlify.app/demo</a>. This is a free demo page for a popular HLS player library. You should see a video player and a box near the top holding a stream URL (it may be pre-filled with a sample).</li>
+    <li>Press <kbd>F12</kbd> to open DevTools and click the <span class="ui">Network</span> tab. Make sure the red record dot at the top left is on (red). Click the clear button (a circle with a line) so the list is empty. In the <span class="ui">Filter</span> box, type <code>m3u8</code>.</li>
+    <li>Click into the stream URL box on the page, select the old text with <kbd>Ctrl</kbd> + <kbd>A</kbd>, and paste this public test stream, then press <kbd>Enter</kbd> or click the page's load or play button (the label may differ):
+<pre><code>https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8</code></pre>
+      This is a freely available test video (a cartoon film). In the Network list, you should see a request named <code>x36xhzz.m3u8</code>. That is the <b>master manifest</b>.</li>
+    <li>Click that request, then open the <span class="ui">Response</span> tab (or <span class="ui">Preview</span>). You should see a text file with five blocks. Each one says <code>BANDWIDTH=</code>, a <code>RESOLUTION=</code> and then a link to another <code>.m3u8</code>. The five bandwidths are about 246,000, 461,000, 836,000, 2,149,000 and 6,222,000 bits per second, at resolutions from 320x184 up to 1920x1080. That is the "menu card" of qualities.</li>
+    <li>Now change the filter: select the filter text, delete it, and type <code>.ts</code>. You should see requests such as <code>193039199_mp4_h264_aac_..._7.ts</code> appearing one after another, about every few seconds while the video plays. Each one is a <b>segment</b>. (If you see no <code>.ts</code> lines, try the filter <code>m4s</code>, or clear the filter and click the <span class="ui">Media</span> button next to it.)</li>
+    <li>Click one <code>.ts</code> request and look at the <span class="ui">Headers</span> tab: the <span class="ui">Request URL</span> shows which quality folder it came from, and the response size is around a few hundred KB to a few MB. The <span class="ui">Size</span> and <span class="ui">Time</span> columns show how fast it downloaded.</li>
+    <li><b>Change the quality.</b> On the demo page, find the quality or level control below the player (it may be a drop-down, or buttons labelled by resolution or "auto"). Pick a fixed low level (for example the smallest number). Watch the Network list: new segment requests now come from a different folder, with smaller sizes. Then pick a high level and compare: the segments become larger. If you cannot find such a control, use the next step instead.</li>
+    <li><b>Force the player to adapt.</b> In DevTools, find the <span class="ui">No throttling</span> drop-down (in the Network tab, near the top) and choose a slow preset such as <span class="ui">Slow 4G</span> or <span class="ui">Slow 3G</span> (the names vary by Chrome version). Reload the demo and play again. The player should start with a low quality and the segments are smaller. Set it back to <span class="ui">No throttling</span> when done.</li>
+    <li><b>Look at a media playlist.</b> Open Command Prompt (press <kbd>Win</kbd>, type <code>cmd</code>, press <kbd>Enter</kbd>) and run:
+<pre><code>curl.exe https://test-streams.mux.dev/x36xhzz/url_0/193039199_mp4_h264_aac_hd_7.m3u8</code></pre>
+      You should see a list of lines like <code>#EXTINF:10.000,</code> each followed by the name of a <code>.ts</code> file, ending with <code>#EXT-X-ENDLIST</code>. There are about 64 segments of roughly 10 seconds each. This is the list of pieces for one quality.</li>
+    <li><b>Try a big site.</b> Open any video on YouTube, press <kbd>F12</kbd>, go to <span class="ui">Network</span>, type <code>videoplayback</code> in the filter, and play. You will see many requests that fetch pieces of the video. On big sites you may not see <code>.m3u8</code> at all (they often use their own delivery format), and that is normal. Then click the gear icon in the player, choose <span class="ui">Quality</span> and change it, and watch new requests start. Note that the data is the same idea: small pieces, fetched one by one.</li>
+    <li>Write down three sentences: what a manifest is, what a segment is, and why the player can switch quality without restarting.</li>
+  </ol>
+
+  <h3>C. Storage estimate exercise (5 minutes)</h3>
+  <ol class="steps">
+    <li>A service gets 100,000 uploads a day. Each video is 10 minutes long. It makes four versions at 0.4, 1, 2.5 and 5 Mbps. How much processed storage does it add per day and per year? Work it out on paper first, then open the answer.
+      <details><summary>Show the working</summary><p>Sum of bitrates: 0.4 + 1 + 2.5 + 5 = 8.9 Mbps. Length: 10 x 60 = 600 s. Size: 600 x 8.9 = 5,340 megabits; divide by 8 to get megabytes: 5,340 / 8 = 667.5 MB per video. Per day: 100,000 x 667.5 MB = 66,750,000 MB = 66.75 TB. Per year: 66.75 TB x 365 = about 24,364 TB, which is about 24 PB. (Remember: bitrates are in bits; storage is in bytes, so divide by 8.)</p></details></li>
+    <li>Now add the originals at 1 GB each: 100,000 x 1 GB = 100 TB a day. Notice the originals are larger than all the processed versions together. That is why many services archive or delete the original after some time. Write that down as a trade-off.</li>
+  </ol>
+
+  <h3>D. Variation questions</h3>
+  <details><summary>1. Add "resume watching where I stopped". What changes?</summary>
+    <p>Store the playback position per user and video, written every 10 to 30 seconds by the player (batched, because it is small and frequent). A key-value store (Redis plus a database behind it) keyed by user and video id is enough. On opening, the app asks for the position and tells the player to seek there. Video storage and CDN do not change.</p></details>
+  <details><summary>2. A video goes viral an hour after upload. What happens to your system?</summary>
+    <p>The first viewers cause cache misses, so the origin sees a burst. The CDN's request coalescing (many requests for the same segment become one origin fetch) and tiered caches protect the origin. After a few minutes the segments are in the edges. The view counter would be a hot key, so use batched, in-memory counting.</p></details>
+  <details><summary>3. Transcoding takes 20 minutes for a 1-hour video. How do you speed it up?</summary>
+    <p>Split the source into chunks (say 10 to 60 seconds), transcode the chunks in parallel on many workers, and stitch the manifest. Use more workers when the queue is long. Publish the lowest quality first so that the video can be played sooner, and add the higher qualities when they finish.</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why upload with a pre-signed URL instead of through our API server?</summary><p>The bytes go straight from the user's device into object storage, so our servers do not carry or hold open a 500 MB transfer. The URL is time-limited and scoped to one object key, so it is safe.</p></details>
+  <details><summary>What is a manifest and what is a segment?</summary><p>A segment is a small piece of the video (a few seconds) stored as an ordinary file. A manifest (<code>.m3u8</code> for HLS) is a text file that lists the available qualities and the segments of each, so the player knows what to fetch next.</p></details>
+  <details><summary>What breaks if you serve all video directly from the origin storage without a CDN?</summary><p>The origin would have to deliver terabits a second (about 7 Tbps in our estimate), far beyond one place's capacity, and viewers far away would see slow starts and buffering. The CDN serves from nearby edge caches and protects the origin.</p></details>
+  <details><summary>What breaks if every view updates one database row directly?</summary><p>A viral video has one hot row updated thousands of times a second. The row lock becomes a queue and the database slows for everyone. Count in memory, flush in batches, and accept a count that is a little behind.</p></details>
+  <details><summary>What breaks if a transcoding worker crashes halfway through a video?</summary><p>If the job message is only removed from the queue after success, the queue hands the job to another worker, which restarts it. The job must be idempotent (same output keys, overwritten), and after several failures it goes to a dead-letter queue and the video is marked FAILED.</p></details>
+  <details><summary>Would you choose to keep every video in the CDN edge cache for ever? Why or why not?</summary><p>No. Most videos are in the long tail and are watched rarely, so edge space would be wasted. Cache what is popular, let old and cold videos fall out, and serve them from the origin on the rare request.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Uploads go straight to object storage using pre-signed multipart URLs. An event on a queue triggers transcoding workers that produce several resolutions as small segments plus a manifest, and the status becomes READY in the metadata database."</blockquote>
+  <blockquote>"Playback uses adaptive bitrate streaming: the player reads the manifest, fetches segments from a CDN and switches quality between segments based on network speed. The CDN absorbs most traffic because a few videos get most of the views."</blockquote>
+  <p><b>Common follow-up question:</b> How do you count views for a video watched 100,000 times a second?</p>
+  <p>Do not update the database on every view. Increment an in-memory counter (Redis INCR) and flush totals to the database every few seconds. Accept a delay. For unique viewers, use an approximate structure such as HyperLogLog, and filter bots in a later batch job.</p>
+  <p><b>Common follow-up question:</b> Why split the video into small segments?</p>
+  <p>Segments let the player start after downloading only a few seconds, switch quality between segments, resume or seek by fetching only the needed pieces, and they are ordinary HTTP files, which any CDN can cache.</p>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a news feed</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-5">
+<main class="lesson">
+
+<section class="story">
+  <h2>The newspaper boy and the celebrity</h2>
+  <p>In a colony, a newspaper boy delivers a morning paper to each flat. Now imagine every neighbour writes a tiny letter each day, and every flat wants the letters of just <b>their own friends</b>, newest on top. There are two ways to do it.</p>
+  <p><b>Way 1 (deliver in advance):</b> the moment a neighbour writes a letter, a helper runs and slips a copy into the box of every friend. When you wake up, your box is already full and sorted. Reading is instant, but writing makes lots of running around.</p>
+  <p><b>Way 2 (collect when asked):</b> letters stay with the writer. When you want your news, a helper goes to each of your friends and collects their latest letters. Writing is easy, but reading is slow if you have 500 friends.</p>
+  <p>Now one neighbour is a film star with 10 million fans. With Way 1, one letter means 10 million slips. So for the star we switch: fans collect the star's letters when they ask. A news feed uses <b>both</b> ways at once. That is the whole lesson.</p>
+</section>
+
+<section class="explain">
+  <h2>Design a news feed (like Instagram or Twitter)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. Decide in your own words: when someone posts, do you do the work now or when a follower opens the app?</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. This design uses <a href="m2-7.html">caching</a>, <a href="m2-11.html">queues</a>, <a href="m2-10.html">sharding</a> and <a href="m2-13.html">object storage with a CDN</a>.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>A user can <b>create a post</b> (text and images or video).</li>
+    <li>A user can <b>follow</b> and unfollow other users.</li>
+    <li>The <b>home feed</b> shows recent posts from people you follow, newest (or most relevant) first, with <b>infinite scroll</b>.</li>
+    <li>Posts show their images quickly.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Feed loads fast</b> (under about 200 ms for the first page). It is the main screen.</li>
+    <li><b>Very read-heavy:</b> far more people read the feed than post.</li>
+    <li><b>Highly available.</b> <b>Eventual consistency is fine</b>: a new post may show up for followers a few seconds late (<a href="m3-2.html">consistency</a>).</li>
+    <li>Must cope with <b>celebrities</b> who have millions of followers.</li>
+  </ul>
+  <p><b>Out of scope:</b> likes and comments, search, ads, stories, direct messages, and the machine-learning details of ranking.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 200 million daily active users. Each opens the feed 10 times a day. 10% of users post once a day. Average followers: 200.</p>
+  <ul>
+    <li><b>Feed reads:</b> 200,000,000 x 10 = 2,000,000,000 a day, divided by 100,000 s = <b>20,000 a second</b>. Peak at 3x: <b>60,000 a second</b>.</li>
+    <li><b>Posts:</b> 200,000,000 x 10% = 20,000,000 a day, divided by 100,000 s = <b>200 a second</b>; peak about 600.</li>
+    <li><b>Fan-out writes</b> (if we push to every follower): 20,000,000 x 200 = 4,000,000,000 feed inserts a day, which is <b>40,000 a second</b>. Large, but each is a tiny write.</li>
+    <li><b>The celebrity:</b> one post by a user with 10 million followers would need 10,000,000 writes at once. At 40,000 a second that is over four minutes of the whole system's write capacity for one post. This is why pure push fails.</li>
+    <li><b>Feed cache size:</b> keep the latest 500 post ids per user. An entry (id plus score) is about 16 bytes, so 500 x 16 B = 8 KB per user. 200,000,000 x 8 KB = <b>1.6 TB</b> of memory across a Redis cluster (for example 25 machines with 64 GB each). We only keep feeds for active users.</li>
+    <li><b>Storage:</b> 20,000,000 posts a day x 1 KB of text and metadata = 20 GB a day, about 7 TB a year. Media: if half the posts have a 2 MB image, that is 10,000,000 x 2 MB = 20 TB a day, in object storage and CDN.</li>
+  </ul>
+  <p>Conclusion: reads dominate, so <b>precompute the feed</b> and keep it in memory; but protect the write path from celebrities.</p>
+
+  <h3>3. API</h3>
+<pre><code>POST /posts                 { "text": "...", "media_ids": ["m1"] }
+  201 -> { "post_id": "p_8841", "created_at": "..." }
+
+POST /users/{id}/follow     DELETE /users/{id}/follow
+
+GET  /feed?limit=20&amp;cursor=p_8790
+  200 -> { "posts": [ ... 20 posts ... ], "next_cursor": "p_8741" }
+
+GET  /users/{id}/posts?limit=20&amp;cursor=...     (a profile page)
+POST /media/upload-url      -> pre-signed URL for uploading an image</code></pre>
+  <p>The feed uses a <b>cursor</b>, not "page 2" (see deep dive B).</p>
+
+  <h3>4. Data model</h3>
+<pre><code>users    (user_id, name, ...)
+follows  (follower_id, followee_id, created_at)     PK (follower_id, followee_id)
+                                                    INDEX (followee_id)  -- "who follows X?"
+posts    (post_id, author_id, text, media_keys, created_at)
+                                                    INDEX (author_id, post_id DESC)
+Redis    feed:{user_id}  = sorted set of post_id, score = post time / id</code></pre>
+  <p><b>Post ids</b> should be <b>time-sortable</b> (Snowflake-style ids from <a href="m5-1.html">the URL shortener lesson</a>), so sorting by id is sorting by time. <b>Why these stores:</b> users and follows are relational, but at hundreds of millions of rows they are sharded by user id (<a href="m2-10.html">sharding</a>). Posts are append-mostly and read by author, so they shard by <code>author_id</code>. The precomputed feed is a cache, and losing it is fine because it can be rebuilt from follows and posts. We want the follow index in both directions: "who do I follow?" (reading) and "who follows me?" (fan-out).</p>
+
+  <h3>5. High-level design</h3>
+  <p><b>Write path</b> (creating a post):</p>
+  <ol>
+    <li>The client posts text and the keys of images already uploaded to object storage.</li>
+    <li>The <b>post service</b> saves the post in the posts database.</li>
+    <li>It publishes a "post created" event to a <b>queue</b>.</li>
+    <li><b>Fan-out workers</b> read the event and ask the follow database for the author's followers.</li>
+    <li>They add the post id to each follower's feed in <b>Redis</b> (skipping celebrities, see below).</li>
+  </ol>
+  <p><b>Read path</b> (opening the feed):</p>
+  <ol start="6">
+    <li>The app calls <code>GET /feed</code>.</li>
+    <li>The <b>feed service</b> reads the user's list of post ids from Redis.</li>
+    <li>It adds the latest posts of any <b>celebrities</b> the user follows (pulled live), and fetches the post details and author names for all ids (from a post cache, then the database).</li>
+    <li>It ranks, trims to 20 posts, and returns them with a <code>next_cursor</code>. Images load from the <b>CDN</b> by URL.</li>
+  </ol>
+  <p>The two paths are separate on purpose. The write path may take a few seconds and nobody waits for it; the read path must be fast.</p>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: fan-out on write, on read, or both</h4>
+  <table>
+    <tr><th>Approach</th><th>On a post</th><th>On opening the feed</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Fan-out on write (push)</b></td><td>Copy the post id into every follower's feed</td><td>Just read your list</td><td>Very fast reads; simple read path</td><td>Celebrity posts cause millions of writes; wasted work for followers who never log in</td></tr>
+    <tr><td><b>Fan-out on read (pull)</b></td><td>Only save the post</td><td>Fetch recent posts from everyone you follow and merge</td><td>Cheap writes; no wasted work</td><td>Slow reads (500 lookups per feed); heavy load at 60,000 reads a second</td></tr>
+    <tr><td><b>Hybrid</b></td><td>Push for normal users; skip celebrities</td><td>Read your pushed list and merge in the recent posts of celebrities you follow</td><td>Fast reads and bounded write cost</td><td>Two code paths; needs a rule for "who is a celebrity"</td></tr>
+  </table>
+  <p><b>Pick the hybrid.</b> Use a follower threshold (say above 100,000 followers, tuned by watching real numbers) to mark a celebrity. For everyone else, push. At read time, merge: most users follow only a few celebrities, so that is a handful of cheap lookups, each served from a cache. Also, only push to <b>recently active</b> users: if someone has not opened the app in 30 days, skip them and rebuild their feed on their next visit.</p>
+
+  <h4>Deep dive B: the feed cache and cursor pagination</h4>
+  <p>The feed for each user is a <b>Redis sorted set</b>: key <code>feed:{user_id}</code>, member the <code>post_id</code>, score the post's time or id. <code>ZADD</code> inserts, and range commands read the newest first (<a href="m2-8.html">Redis</a>). After each insert, trim the set to the newest 500 or so, so memory stays bounded. If a user scrolls past 500, fall back to pulling from the database.</p>
+  <p><b>Why a cursor, not "page 2"?</b> With offset pagination ("skip 20, take 20"), new posts arriving between page 1 and page 2 push everything down, so the user sees the same post twice. Large offsets are also slow. A <b>cursor</b> says "give me 20 posts older than this id", which is stable however many new posts arrive, and is fast with an index. The response returns <code>next_cursor</code> = the id of the last post sent. You will try this in Redis below.</p>
+  <p>Fetching details: the sorted set holds only ids, so the feed service uses a <b>multi-get</b> to load the 20 post objects from a post cache (fast), falling back to the database, and loads author data the same way. This "hydration" step is often the real latency cost, so cache it hard.</p>
+
+  <h4>Deep dive C: ranking and media</h4>
+  <ul>
+    <li><b>Ranking, just the idea:</b> the simplest feed is newest first. A ranked feed scores each candidate post (how recent, how much you interact with this author, how many likes) and sorts by score. The feed service gathers candidates (your pushed ids plus celebrity posts), a ranking service scores them, and we return the top 20. Start simple; add ranking when the product needs it. Ranking must be fast, so it uses precomputed features.</li>
+    <li><b>Media through a CDN:</b> the phone uploads the image straight to object storage with a pre-signed URL; the post stores only the file key. A background worker makes smaller sizes and thumbnails. The feed returns CDN URLs with long cache times, so image bytes never pass through our servers (<a href="m2-8.html">CDN</a>).</li>
+    <li><b>Unfollow and delete:</b> removing entries from millions of feeds is expensive, so filter on read: the feed service drops ids whose post is deleted or whose author you no longer follow.</li>
+  </ul>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Write cost against read speed:</b> push moves work to the write side so the read side stays fast. The hybrid caps the damage from celebrities.</li>
+    <li><b>Freshness:</b> a post may appear a few seconds late, and feeds for celebrities' followers are slightly different in timing. Acceptable for a feed, not for money.</li>
+    <li><b>Memory cost:</b> 1.6 TB of Redis is real money, so keep feeds only for active users.</li>
+    <li><b>Bottlenecks:</b> fan-out queue lag after a big post, hot celebrity post rows (cache them), the follow database.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): feed latency p99, fan-out queue lag, cache hit rate, delay between "post created" and "visible in followers' feeds".</li>
+  </ul>
+  <p><b>At 10x scale</b> (2 billion DAU): shard the feed cache by user id with <a href="m2-10.html">consistent hashing</a>, partition the fan-out queue by author, lower the celebrity threshold, cache hydrated posts per region, and serve feeds from regional data centres close to users.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 520" role="img" aria-label="News feed architecture with two paths. Write path: client, post service, posts database, queue, fan-out workers, follows database, and Redis feed cache. Read path: client, feed service, Redis feed cache, posts database, ranked page returned with a cursor. Media comes from a CDN.">
+      <defs><marker id="ar-m5-5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="90" height="50" rx="8"/>
+        <rect x="135" y="40" width="110" height="55" rx="8"/>
+        <rect x="275" y="40" width="90" height="55" rx="8"/>
+        <rect x="395" y="40" width="115" height="55" rx="8"/>
+        <rect x="535" y="40" width="90" height="55" rx="8"/>
+        <rect x="135" y="150" width="110" height="55" rx="8"/>
+        <rect x="395" y="225" width="115" height="60" rx="8"/>
+        <rect x="15" y="340" width="90" height="50" rx="8"/>
+        <rect x="135" y="340" width="110" height="55" rx="8"/>
+        <rect x="535" y="340" width="90" height="60" rx="8"/>
+        <path d="M105 65 H133" marker-end="url(#ar-m5-5)"/>
+        <path d="M190 95 V148" marker-end="url(#ar-m5-5)"/>
+        <path d="M245 67 H273" marker-end="url(#ar-m5-5)"/>
+        <path d="M365 67 H393" marker-end="url(#ar-m5-5)"/>
+        <path d="M510 67 H533" marker-end="url(#ar-m5-5)"/>
+        <path d="M452 95 V223" marker-end="url(#ar-m5-5)"/>
+        <path d="M105 367 H133" marker-end="url(#ar-m5-5)"/>
+        <path d="M245 367 H452 V287" marker-end="url(#ar-m5-5)"/>
+        <path d="M190 340 V207" marker-end="url(#ar-m5-5)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="60" y="70" font-size="14" font-weight="700">Client</text>
+        <text x="190" y="64" font-size="14" font-weight="700">Post</text>
+        <text x="190" y="82" font-size="14" font-weight="700">service</text>
+        <text x="320" y="68" font-size="14" font-weight="700">Queue</text>
+        <text x="452" y="64" font-size="14" font-weight="700">Fan-out</text>
+        <text x="452" y="82" font-size="14" font-weight="700">workers</text>
+        <text x="580" y="64" font-size="14" font-weight="700">Follows</text>
+        <text x="580" y="82" font-size="13">DB</text>
+        <text x="190" y="174" font-size="14" font-weight="700">Posts DB</text>
+        <text x="190" y="192" font-size="13">+ post cache</text>
+        <text x="452" y="250" font-size="14" font-weight="700">Redis feed</text>
+        <text x="452" y="268" font-size="13">feed:{user}</text>
+        <text x="60" y="370" font-size="14" font-weight="700">Client</text>
+        <text x="190" y="364" font-size="14" font-weight="700">Feed</text>
+        <text x="190" y="382" font-size="14" font-weight="700">service</text>
+        <text x="580" y="366" font-size="14" font-weight="700">CDN +</text>
+        <text x="580" y="384" font-size="13">media</text>
+        <text x="119" y="60" font-size="13">1</text>
+        <text x="203" y="125" font-size="13" text-anchor="start">2</text>
+        <text x="259" y="60" font-size="13">3</text>
+        <text x="379" y="60" font-size="13">4</text>
+        <text x="466" y="165" font-size="13" text-anchor="start">5</text>
+        <text x="119" y="360" font-size="13">6</text>
+        <text x="330" y="360" font-size="13">7</text>
+        <text x="203" y="280" font-size="13" text-anchor="start">8</text>
+        <text x="320" y="20" font-size="14" font-weight="700">WRITE PATH (top)</text>
+        <text x="320" y="325" font-size="14" font-weight="700">READ PATH (bottom)</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="432" font-size="13">1. User posts (text + media key)</text>
+        <text x="15" y="450" font-size="13">2. Post service saves to Posts DB</text>
+        <text x="15" y="468" font-size="13">3. Event goes onto the queue</text>
+        <text x="15" y="486" font-size="13">4. Workers fetch the followers</text>
+        <text x="15" y="504" font-size="13">5. Workers ZADD id into each feed</text>
+        <text x="330" y="432" font-size="13">6. User opens app: GET /feed</text>
+        <text x="330" y="450" font-size="13">7. Feed service reads ids from Redis</text>
+        <text x="330" y="468" font-size="13">8. Fetch post details + celebrity posts</text>
+        <text x="330" y="486" font-size="13">9. Rank, return 20 + next_cursor</text>
+        <text x="330" y="504" font-size="13">Images load straight from the CDN</text>
+      </g>
+    </svg>
+    <figcaption>Top: the write path pushes the post id into followers' feeds (except celebrities). Bottom: the read path reads a ready-made list, merges celebrity posts and hydrates the details.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-5 news-feed.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+design+a+news+feed+system" target="_blank" rel="noopener">YouTube search: "ByteByteGo design a news feed system"</a>
+      <span class="meta">Short. Watch it all and find where they explain push versus pull.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+design+news+feed+instagram" target="_blank" rel="noopener">YouTube search: "Hello Interview design news feed Instagram"</a>
+      <span class="meta">Pick the full breakdown. Watch the part about celebrities and the hybrid approach.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#design-the-twitter-timeline-and-search-or-facebook-feed-and-search" target="_blank" rel="noopener">System Design Primer: Twitter timeline and search (or Facebook feed)</a>
+      <span class="meta">Read the sections on the home timeline and how fan-out works.</span></li>
+    <li><a href="https://redis.io/docs/latest/develop/data-types/sorted-sets/" target="_blank" rel="noopener">Redis docs: Sorted sets</a>
+      <span class="meta">Read the first examples of ZADD and ZRANGE. This is the data type behind the feed cache.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 20 for the Redis exercise)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design a news feed" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes. Draw the write path and read path as two separate rows.</li>
+    <li>In deep dives, explain push, pull and hybrid, using one celebrity with 10 million followers as your example, and show your numbers.</li>
+    <li>Stop the recording and save it as <code>m5-5 mock</code>, and the drawing as <code>m5-5 news-feed-mock.excalidraw</code>. Compare with the lesson and note what you missed.</li>
+  </ol>
+
+  <h3>B. Feel a feed cache and a cursor in Upstash (15 to 20 minutes)</h3>
+  <p>You will use a Redis sorted set as a tiny feed. This uses your Upstash account (the free plan is fine). Commands may be written in any letter case.</p>
+  <ol class="steps">
+    <li>Open <code>console.upstash.com</code>, click your Redis database (create one as in <a href="m5-1.html">the URL shortener lesson</a> if you have none) and open the <span class="ui">CLI</span> tab (you may see a terminal-like box at the bottom of the page).</li>
+    <li>Type this line and press <kbd>Enter</kbd>. It puts 7 posts into the feed of user 42, using the post id as the score (bigger id means newer):
+<pre><code>ZADD feed:42 1001 p1001 1002 p1002 1003 p1003 1004 p1004 1005 p1005 1006 p1006 1007 p1007</code></pre>
+      It should print <code>7</code> (seven new members).</li>
+    <li>Read "page 1" (the newest 3):
+<pre><code>ZREVRANGE feed:42 0 2</code></pre>
+      You should see <code>p1007</code>, <code>p1006</code>, <code>p1005</code>, newest first.</li>
+    <li>A new post arrives while the user is reading page 1:
+<pre><code>ZADD feed:42 1008 p1008</code></pre></li>
+    <li><b>Offset-style page 2</b> (skip 3, take 3). This is the buggy way:
+<pre><code>ZREVRANGE feed:42 3 5</code></pre>
+      You should see <code>p1005</code>, <code>p1004</code>, <code>p1003</code>. Look: <code>p1005</code> was already on page 1. The new post pushed everything down, so the user sees a <b>duplicate</b>.</li>
+    <li><b>Cursor-style page 2</b> ("older than the last post I saw, which was 1005"). The round bracket means "not including 1005":
+<pre><code>ZRANGE feed:42 (1005 -inf BYSCORE REV LIMIT 0 3</code></pre>
+      You should see <code>p1004</code>, <code>p1003</code>, <code>p1002</code>. No duplicate, no gap. (If the console says the command is unknown, use the older spelling <code>ZREVRANGEBYSCORE feed:42 (1005 -inf LIMIT 0 3</code>, which gives the same answer.)</li>
+    <li>Now trim the feed to the newest 5 so memory stays bounded:
+<pre><code>ZREMRANGEBYRANK feed:42 0 -6</code></pre>
+      It prints <code>3</code> (three old entries removed). Check with <code>ZCARD feed:42</code>, which should print <code>5</code>, and <code>ZREVRANGE feed:42 0 -1</code>, which should show <code>p1008</code> down to <code>p1004</code>.</li>
+    <li>Clean up: <code>DEL feed:42</code>. It prints <code>1</code>.</li>
+    <li>Write two sentences in your notes: "A cursor is stable when new items arrive; an offset is not." and "The feed cache is a sorted set of ids, trimmed to a fixed size."</li>
+  </ol>
+
+  <h3>C. Variation questions</h3>
+  <details><summary>1. A user with 5,000 followers becomes a celebrity with 500,000 overnight. What happens?</summary>
+    <p>A follower count threshold flips the user to "pull" mode. New posts stop being pushed. Posts already pushed stay in existing feeds (harmless). From then on, followers' feed services merge this author's recent posts at read time. The threshold check runs in the post service when it decides whether to publish a fan-out event.</p></details>
+  <details><summary>2. How do you delete a post that is already in 10,000 feeds?</summary>
+    <p>Mark it deleted in the posts database and post cache. The feed service drops any id whose post is deleted when it hydrates, so the stale id in the sorted sets does nothing. A background job may clean the ids later. Do not try to scrub 10,000 feeds synchronously.</p></details>
+  <details><summary>3. Add "show posts ranked by what I like most". What changes?</summary>
+    <p>Only the read path: after collecting candidate ids, a ranking step scores them with precomputed features (author affinity, recency, engagement) and sorts by score. The cursor now must encode the score as well as the id, or the app asks for a fixed-size ranked batch and pages within it. The write path does not change.</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is fan-out on write, and what is its main benefit?</summary><p>When a user posts, copy the post id into every follower's precomputed feed. The benefit is a very fast read, because the feed is already built.</p></details>
+  <details><summary>What breaks if you use pure fan-out on write and a user with 50 million followers posts?</summary><p>One post triggers 50 million feed writes, which floods the queue and workers and delays everyone else's posts. Use the hybrid: do not push for celebrities, and merge their posts when a follower reads.</p></details>
+  <details><summary>What breaks if you use pure fan-out on read for 60,000 feed reads a second?</summary><p>Each read must query hundreds of followed authors and merge them, so the database gets millions of lookups a second and the feed becomes slow. Precompute feeds for normal users.</p></details>
+  <details><summary>Why is cursor pagination better than offset for a feed?</summary><p>New posts shift offsets, causing duplicates or skipped items, and big offsets are slow. A cursor ("older than id X") is stable and uses the index.</p></details>
+  <details><summary>The Redis feed cache loses all its data. What happens, and what should you do?</summary><p>Feeds are only a cache, so no data is lost. Rebuild each feed on demand from follows and posts (fan-out on read for that user) and refill the cache. Expect a database spike, so rebuild gradually and limit concurrent rebuilds.</p></details>
+  <details><summary>Would you choose push, pull or hybrid for a small company-internal app with 2,000 users? Why?</summary><p>Pull is enough: at that size a join over a few hundred posts is fast and there is no celebrity problem. Hybrid solves a scale problem you do not have yet.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Reads outnumber writes about 100 to 1, so I would precompute feeds: when a user posts, workers push the post id into each follower's Redis sorted set. For celebrities I skip the push and merge their recent posts at read time, a hybrid."</blockquote>
+  <blockquote>"The feed is paginated with a cursor, the id of the last post seen, because offsets shift when new posts arrive. Images are uploaded to object storage and served through a CDN."</blockquote>
+  <p><b>Common follow-up question:</b> How do you decide who counts as a celebrity?</p>
+  <p>A follower count threshold (for example 100,000), tuned from real fan-out cost. It can also consider posting frequency. The post service checks it when deciding to fan out, and the feed service uses the same rule when deciding whose posts to pull.</p>
+  <p><b>Common follow-up question:</b> How do you keep the feed from growing forever in memory?</p>
+  <p>Trim each sorted set to a fixed length (say 500 ids), keep feeds only for recently active users, and fall back to pulling from the posts database when someone scrolls beyond the cached part.</p>
+</section>
+
+</main>
+</body>
+</html>

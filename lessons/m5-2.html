@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a rate limiter</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-2">
+<main class="lesson">
+
+<section class="story">
+  <h2>Five buckets per family</h2>
+  <p>In a colony the water tanker comes once a day. There are 200 families and not enough water for everyone to take as much as they like. So the colony secretary stands at the tap with a notebook: <b>each family may fill 5 buckets</b>. When a family comes for the sixth, the secretary says, "Sorry, your turn is over. Come back after the next round."</p>
+  <p>A rate limiter is that secretary for a website. It counts how many requests each person has made in a short time, and says "no, slow down" when someone asks too often. It protects the tap (your servers) from one greedy person or a broken script, so everyone else still gets water.</p>
+  <p>The hard part is not the counting. The hard part is when <b>many secretaries</b> stand at <b>many taps</b> and must still agree on one notebook.</p>
+</section>
+
+<section class="explain">
+  <h2>Design a distributed rate limiter</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. If you only know "count requests in Redis", try to find the bug in that idea before you read the deep dive.</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. The ideas of limiting were introduced in <a href="m2-12.html">rate limiting</a>; here we design the whole service.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>Limit requests per <b>client</b>: by user id, by IP address, or by API key.</li>
+    <li>Different rules for different endpoints and plans (for example 5 per minute to create a link; 1,000 per minute to read; paid users get more).</li>
+    <li>When over the limit, reject with HTTP <code>429 Too Many Requests</code> and tell the client when to retry.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Very low added latency:</b> a few milliseconds at most. It runs on every request.</li>
+    <li><b>Distributed:</b> the limit must hold even though requests hit many servers (the "5 per minute" must not become "5 per minute per server").</li>
+    <li><b>Highly available:</b> the limiter must not become the reason the whole API is down (<a href="m3-3.html">availability</a>).</li>
+    <li><b>Reasonably accurate.</b> A few extra requests slipping through is acceptable. Letting through ten times the limit is not.</li>
+    <li>Rules are changeable without redeploying the app.</li>
+  </ul>
+  <p><b>Out of scope:</b> network-level DDoS protection (that belongs at a CDN or firewall), billing quotas (monthly usage caps), and bot detection.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 10 million daily active users, each making 100 API calls a day.</p>
+  <ul>
+    <li><b>Total calls:</b> 10,000,000 x 100 = 1,000,000,000 a day. At about 100,000 seconds a day that is <b>10,000 requests a second</b>. Peak at 3x: <b>30,000 a second</b>.</li>
+    <li><b>Limiter operations:</b> one check per request, so 30,000 Redis operations a second at peak. A single Redis node handles on the order of 100,000 simple operations a second, so one node is enough to start; we shard for headroom.</li>
+    <li><b>Memory:</b> a counter or token bucket is small, about 100 bytes with the key. 10,000,000 clients x 100 B = <b>1 GB</b>. A sliding window <i>log</i> (one timestamp per request, say 100 per window at 8 bytes) is 10,000,000 x 800 B = <b>8 GB</b>, eight times more. That is one reason to avoid the log version.</li>
+  </ul>
+  <p>Conclusion: the load is small enough for Redis; the real challenges are correctness under concurrency and what to do when Redis fails.</p>
+
+  <h3>3. API</h3>
+  <p>The limiter is not called by users; it sits inside the request path. Its "API" is the decision and the headers the client sees:</p>
+<pre><code>Internal:  allow(key, rule) -> { allowed, remaining, reset_at }
+
+Allowed response (from the real API) carries:
+  X-RateLimit-Limit: 5
+  X-RateLimit-Remaining: 3
+
+Rejected response:
+  HTTP/1.1 429 Too Many Requests
+  Retry-After: 37                 (seconds until the client may try again)
+  X-RateLimit-Limit: 5
+  X-RateLimit-Remaining: 0
+
+Admin:     PUT /rules/{rule_id}   { "match": "POST /shorten", "limit": 5, "window": "60s", "by": "ip" }</code></pre>
+  <p><code>Retry-After</code> is a standard HTTP header (see MDN in the reading list). The <code>X-RateLimit-*</code> names are a very common convention, not a rule every API follows exactly.</p>
+
+  <h3>4. Data model</h3>
+  <ul>
+    <li><b>Counters</b> live in <b>Redis</b>: key <code>rl:{rule}:{client}</code> (for example <code>rl:shorten:203.0.113.7</code>), value a number (or two numbers for a token bucket), and a <b>TTL equal to the window</b> so old entries delete themselves. Why Redis: in-memory, very fast, atomic operations, built-in expiry (<a href="m2-8.html">Redis</a>). The data is temporary, so losing it only means counters restart.</li>
+    <li><b>Rules</b> live in a normal database or config store: <code>rule_id, match (endpoint, plan), limit, window, key_by (ip | user | api_key), algorithm</code>. They change rarely, so every gateway keeps a cached copy and refreshes it every minute.</li>
+  </ul>
+
+  <h3>5. High-level design</h3>
+  <ol>
+    <li>A request arrives at the <b>API gateway</b> (or middleware in the app; see below).</li>
+    <li>The limiter builds the <b>key</b>: the API key if present, else the user id, else the client IP.</li>
+    <li>It reads the matching <b>rule</b> from its local rule cache.</li>
+    <li>It makes <b>one atomic call to Redis</b>: "check and count this request".</li>
+    <li>(a) Allowed: forward to the app server. (b) Over the limit: reply <code>429</code> with <code>Retry-After</code> immediately; the app server never sees it.</li>
+    <li>On the way back the gateway adds the <code>X-RateLimit-*</code> headers to the response.</li>
+  </ol>
+  <p><b>Where does it live?</b></p>
+  <table>
+    <tr><th>Place</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>API gateway / edge</b> (<a href="m2-6.html">gateways</a>)</td><td>One place, any language behind it, rejected traffic never reaches your servers</td><td>Another hop; the gateway must scale and stay up</td></tr>
+    <tr><td><b>Middleware in each app</b></td><td>No extra hop; easy rules that need app knowledge (user plan)</td><td>Each service re-implements it; rejected requests already cost you a server</td></tr>
+    <tr><td><b>In the client</b></td><td>Polite clients behave</td><td>Never trust it; attackers skip it</td></tr>
+  </table>
+  <p>A common answer: the gateway for coarse limits (per IP, per key), plus app middleware for fine ones (per user per action).</p>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: which algorithm?</h4>
+  <table>
+    <tr><th>Algorithm</th><th>How it works</th><th>Pros</th><th>Cons</th></tr>
+    <tr><td><b>Fixed window counter</b></td><td>Count requests per clock minute; reset at the next minute</td><td>Simplest; tiny memory</td><td>Boundary burst: 5 requests at 12:00:59 and 5 more at 12:01:00 is 10 in two seconds</td></tr>
+    <tr><td><b>Sliding window log</b></td><td>Keep a timestamp for each request; count those in the last 60 s</td><td>Exact</td><td>Memory grows with the limit (8 GB in our estimate)</td></tr>
+    <tr><td><b>Sliding window counter</b></td><td>Blend this window's count with a weighted share of the previous window's count</td><td>Smooth, tiny memory, good approximation</td><td>Approximate, slightly harder to explain</td></tr>
+    <tr><td><b>Token bucket</b></td><td>A bucket holds up to B tokens and refills at R per second; each request takes one</td><td>Allows short bursts but enforces the average rate; two numbers per client</td><td>Two parameters to tune; needs atomic read-modify-write</td></tr>
+    <tr><td><b>Leaky bucket</b></td><td>Requests enter a queue and leave at a fixed rate</td><td>Perfectly smooth output</td><td>Bursts wait or are dropped; queue adds delay</td></tr>
+  </table>
+  <p><b>Pick:</b> token bucket for an API where short bursts are normal (a mobile app fires 3 calls when a screen opens). Pick the <b>sliding window counter</b> when you want "no more than N in any 60 seconds" to look strict and simple. The build project uses a sliding window through a library.</p>
+
+  <h4>Deep dive B: the atomicity problem in Redis</h4>
+  <p>The tempting code is: <code>count = GET key</code>; if <code>count &lt; 5</code> then <code>SET key count+1</code>. It is broken. Say the count is 4 and two servers handle two requests at the same instant:</p>
+  <ol>
+    <li>Server A reads 4. Server B reads 4 (before A writes).</li>
+    <li>A sees "4 is under 5", allows, and writes 5. B does the same and writes 5.</li>
+    <li>Two requests were let through, but the counter says 5. The sixth <i>and</i> seventh request were allowed. Under load, many extra slip through.</li>
+  </ol>
+  <p>This is a <b>race condition</b>: the read and the write are two steps, and another request can slip between them. The fix is to make check-and-update <b>one indivisible step</b>:</p>
+  <ul>
+    <li><b><code>INCR</code></b> adds 1 and returns the new value in one atomic command. Allow if the returned number is within the limit. For a fixed window: <code>INCR key</code>, and if the result is 1, also <code>EXPIRE key 60</code>. Careful: if the server crashes between those two commands, the key has no expiry and the client is blocked forever. Use one Lua script, or <code>SET key 0 EX 60 NX</code> first.</li>
+    <li><b>A Lua script</b> run inside Redis is atomic: Redis runs it start to finish before anything else. Token bucket (read tokens, refill, subtract, write) needs this, because it is a read-modify-write.</li>
+    <li><b>A library</b> that already did this correctly. <code>@upstash/ratelimit</code> sends such scripts for you, which is why the build project does not need to write any.</li>
+  </ul>
+  <p class="warn">The bug only shows up under concurrency. It passes every test you run by hand, one request at a time. Interviewers love it for that reason.</p>
+
+  <h4>Deep dive C: failure, many regions, and who is the client</h4>
+  <ul>
+    <li><b>Fail-open or fail-closed?</b> If Redis is unreachable, either <i>allow</i> everything (fail-open) or <i>block</i> everything (fail-closed). For a normal API, fail-open: a short window without limits is better than a total outage, and you alert loudly. For sensitive actions (login attempts, OTP sending) fail-closed, or fall back to a rough in-memory limit per server, because an open door lets attackers guess passwords or run up your SMS bill.</li>
+    <li><b>Many regions:</b> a single global Redis means every request in Mumbai waits for a round trip to Virginia, which is far too slow. Common choices: a Redis per region with the limit split between regions (accurate per region, loose globally), or regions sharing counts asynchronously (smoother globally, slightly stale). State the trade-off: <b>accuracy versus latency</b>. Most teams accept "limit is approximate across regions".</li>
+    <li><b>Who is the client?</b> Logged-in traffic: user id or API key. Anonymous traffic: IP. But many people share one IP (an office, a college, a mobile carrier's NAT), so an IP limit can punish innocent users: keep IP limits generous, and add per-user limits after login. Behind a proxy, read the client IP from <code>X-Forwarded-For</code>, and only trust it if your own proxy set it, since a client can send a fake one.</li>
+    <li><b>Layered limits:</b> use a short window to stop bursts (10 a second) plus a longer one to stop sustained abuse (1,000 an hour).</li>
+  </ul>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>Accuracy versus speed:</b> exact logs cost memory; approximations are cheap and good enough.</li>
+    <li><b>Strict versus friendly:</b> token buckets are kinder to normal bursts; strict windows are easier to reason about.</li>
+    <li><b>Bottleneck:</b> the Redis node. Shard counters by key (<a href="m2-10.html">consistent hashing</a>); a client's counter always lives on one shard.</li>
+    <li><b>Observe</b> (<a href="m3-7.html">observability</a>): rate of 429s per rule, Redis latency and errors, and top limited keys. A sudden jump in 429s is either an attack or a rule set too low.</li>
+    <li>Tell clients clearly: <code>Retry-After</code> lets well-behaved clients back off instead of hammering. Good clients also add random jitter to their retries (<a href="m3-4.html">retries</a>).</li>
+  </ul>
+  <p><b>At 10x scale</b> (300,000 checks a second): shard Redis across many nodes, keep a small in-memory pre-check in each gateway to reject obvious abusers without calling Redis, do the coarse per-IP limits at the CDN edge, and accept approximate counts across regions.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 440" role="img" aria-label="Rate limiter architecture. A client sends a request to an API gateway that includes the limiter. The gateway reads rules from a cached config store and makes an atomic check in Redis. Allowed requests go to app servers. Rejected requests get a 429 response with Retry-After.">
+      <defs><marker id="ar-m5-2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="60" width="100" height="50" rx="8"/>
+        <rect x="190" y="60" width="150" height="60" rx="8"/>
+        <rect x="430" y="60" width="140" height="50" rx="8"/>
+        <rect x="110" y="200" width="170" height="50" rx="8"/>
+        <rect x="400" y="200" width="190" height="50" rx="8"/>
+        <path d="M115 85 H188" marker-end="url(#ar-m5-2)"/>
+        <path d="M340 85 H428" marker-end="url(#ar-m5-2)"/>
+        <path d="M235 120 V198" marker-end="url(#ar-m5-2)"/>
+        <path d="M400 225 H315 V122" marker-end="url(#ar-m5-2)"/>
+        <path d="M265 60 V32 H65 V58" marker-end="url(#ar-m5-2)" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="65" y="90" font-size="14" font-weight="700">Client</text>
+        <text x="265" y="86" font-size="14" font-weight="700">API gateway</text>
+        <text x="265" y="104" font-size="13">+ limiter</text>
+        <text x="500" y="90" font-size="14" font-weight="700">App servers</text>
+        <text x="195" y="220" font-size="14" font-weight="700">Redis counters</text>
+        <text x="195" y="238" font-size="13">atomic check + count</text>
+        <text x="495" y="220" font-size="14" font-weight="700">Rules (config store)</text>
+        <text x="495" y="238" font-size="13">cached in the gateway</text>
+        <text x="152" y="78" font-size="13">1</text>
+        <text x="384" y="78" font-size="13">5a</text>
+        <text x="250" y="165" font-size="13">4</text>
+        <text x="358" y="217" font-size="13">3</text>
+        <text x="165" y="24" font-size="13">5b  429 + Retry-After</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="300" font-size="13">1. Request arrives (IP or API key)</text>
+        <text x="15" y="320" font-size="13">2. Gateway builds key: rl:shorten:IP</text>
+        <text x="15" y="340" font-size="13">3. Reads the rule (cached copy)</text>
+        <text x="15" y="360" font-size="13">4. One atomic call to Redis</text>
+        <text x="15" y="380" font-size="13">5a. Allowed: forward to app server</text>
+        <text x="15" y="400" font-size="13">5b. Over limit: reply 429 at once</text>
+        <text x="15" y="420" font-size="13">6. Add X-RateLimit headers to reply</text>
+        <text x="380" y="300" font-size="13" font-weight="700">If Redis is down:</text>
+        <text x="380" y="320" font-size="13">Normal API: fail open</text>
+        <text x="380" y="340" font-size="13">Login / OTP: fail closed</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 to 6 are the request path. The dashed arrow is the rejection. The safe default for Redis failure depends on how dangerous the endpoint is.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-2 rate-limiter.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+design+a+rate+limiter" target="_blank" rel="noopener">YouTube search: "ByteByteGo design a rate limiter"</a>
+      <span class="meta">Short. Watch it all, and note which algorithms they compare.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+rate+limiter+system+design" target="_blank" rel="noopener">YouTube search: "Gaurav Sen rate limiter system design"</a>
+      <span class="meta">Pick the main result. Watch the part about token bucket and doing it across many servers.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://upstash.com/docs/redis/sdks/ratelimit-ts/overview" target="_blank" rel="noopener">Upstash docs: Ratelimit (TypeScript)</a>
+      <span class="meta">Read the overview and the list of algorithms (fixed window, sliding window, token bucket).</span></li>
+    <li><a href="https://redis.io/docs/latest/commands/incr/" target="_blank" rel="noopener">Redis docs: INCR</a>
+      <span class="meta">Read the "Pattern: Rate limiter" section and see why the first version has a race.</span></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429" target="_blank" rel="noopener">MDN: 429 Too Many Requests</a>
+      <span class="meta">Short. Notice the Retry-After header it mentions.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes for the mock, 30 to 45 for the build)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span>, press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code>, blank canvas. Say "Design a rate limiter" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes.</li>
+    <li>In your 14-minute deep-dive slot, <b>write the GET-then-SET race on the canvas as two lanes</b> (server A, server B) and show how <code>INCR</code> fixes it. This is the part most people cannot draw.</li>
+    <li>Stop recording, save it as <code>m5-2 mock</code> and the drawing as <code>m5-2 rate-limiter-mock.excalidraw</code>. Compare with this lesson and write the two things you missed.</li>
+  </ol>
+
+  <h3>B. Variation questions</h3>
+  <details><summary>1. Free users get 5 requests a minute, paid users get 100. What changes?</summary>
+    <p>The rule depends on the plan, so the key or rule lookup uses the plan: gateway reads the user's plan (from the token or a cached lookup), picks the matching rule, and counts under a key such as <code>rl:shorten:user:42</code>. Rules stay in config, so changing a plan's limit needs no deploy. Use the user id, not the IP, once the user is logged in.</p></details>
+  <details><summary>2. Limit login attempts: 5 wrong passwords per 15 minutes. How?</summary>
+    <p>Count failures per account <i>and</i> per IP (an attacker may try one password on many accounts, or many on one). Use a 15-minute window, make the check fail-closed (if the limiter is down, do not allow unlimited guesses), and return a generic message. Consider a short lock or a CAPTCHA after the limit rather than blocking the real owner forever.</p></details>
+  <details><summary>3. How would you test that your limiter really is atomic?</summary>
+    <p>Fire many concurrent requests at the same key (for example 50 in parallel against a limit of 5) and assert that exactly 5 are allowed. A GET-then-SET version will let several extra through; an <code>INCR</code> or Lua version will not.</p></details>
+
+  <h3>Build it (optional, about 30 to 45 minutes)</h3>
+  <p>You will add a real limiter to the link shortener from <a href="m5-1.html">the last lesson</a>: <code>POST /api/shorten</code> allows <b>5 requests a minute per IP</b> and then answers <code>429</code> with <code>Retry-After</code>. You need the finished project from lesson m5-1, with its <code>.env.local</code> and Upstash database. The steps were tested with Next.js 16 and <code>@upstash/ratelimit</code> 2.2 (with <code>@upstash/redis</code> 1.40).</p>
+
+  <h3>Build step 1: add the library</h3>
+  <ol class="steps">
+    <li>Open VS Code, choose <span class="ui">File</span> then <span class="ui">Open Folder</span> and open your <code>shortener</code> folder from lesson m5-1.</li>
+    <li>Open a terminal with <kbd>Ctrl</kbd> + <kbd>`</kbd> and run:
+<pre><code>npm install @upstash/ratelimit</code></pre>
+      It finishes with a line like <code>added 1 package</code> (the number may differ). The library reuses the Upstash Redis connection you already have in <code>lib/clients.ts</code>, so no new environment variable is needed.</li>
+  </ol>
+
+  <h3>Build step 2: the limiter file</h3>
+  <ol class="steps">
+    <li>In the file list, right-click the <code>lib</code> folder, choose <span class="ui">New File</span> and name it <code>ratelimit.ts</code>. Paste:
+<pre><code>import { Ratelimit } from "@upstash/ratelimit";
+import { redis } from "@/lib/clients";
+
+// At most 5 requests per 60 seconds, counted separately for each key (we use the IP)
+export const shortenLimiter = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(5, "60 s"),
+  prefix: "rl:shorten",
+});
+
+export function clientIp(req: Request): string {
+  // Behind Vercel (or any proxy) the real client address is the first item here
+  const forwarded = req.headers.get("x-forwarded-for");
+  return forwarded?.split(",")[0]?.trim() || "local";
+}</code></pre>
+      <code>Ratelimit.slidingWindow(5, "60 s")</code> means 5 requests in any rolling 60 seconds. The library does the atomic Redis work for you. Press <kbd>Ctrl</kbd> + <kbd>S</kbd>.</li>
+  </ol>
+
+  <h3>Build step 3: use it in the route</h3>
+  <ol class="steps">
+    <li>Open <code>app/api/shorten/route.ts</code>. Select everything with <kbd>Ctrl</kbd> + <kbd>A</kbd> and replace it with this complete file. New parts are the import, the block at the top of <code>POST</code>, and the <code>headers</code> on the 201 reply:
+<pre><code>import { NextResponse } from "next/server";
+import { supabase } from "@/lib/clients";
+import { makeCode } from "@/lib/code";
+import { clientIp, shortenLimiter } from "@/lib/ratelimit";
+
+export async function POST(req: Request) {
+  // Rate limit first, before doing any real work
+  const { success, limit, remaining, reset } = await shortenLimiter.limit(clientIp(req));
+  const limitHeaders = {
+    "X-RateLimit-Limit": String(limit),
+    "X-RateLimit-Remaining": String(remaining),
+  };
+  if (!success) {
+    const retryAfter = Math.max(1, Math.ceil((reset - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: "Too many requests. Try again later." },
+      { status: 429, headers: { ...limitHeaders, "Retry-After": String(retryAfter) } }
+    );
+  }
+
+  let body: { url?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Send JSON like {\"url\":\"https://...\"}" }, { status: 400 });
+  }
+
+  // Accept only real http or https URLs
+  let target: URL;
+  try {
+    target = new URL(String(body.url));
+    if (target.protocol !== "http:" &amp;&amp; target.protocol !== "https:") throw new Error("bad scheme");
+  } catch {
+    return NextResponse.json({ error: "url must be a valid http or https URL" }, { status: 400 });
+  }
+
+  // Try a few times: if a random code is already taken, the database says
+  // "duplicate key" (error code 23505) and we simply draw another code.
+  for (let attempt = 0; attempt &lt; 3; attempt++) {
+    const code = makeCode();
+    const { error } = await supabase.from("links").insert({ code, url: target.toString() });
+    if (!error) {
+      const origin = new URL(req.url).origin;
+      return NextResponse.json({ code, shortUrl: `${origin}/${code}` }, { status: 201, headers: limitHeaders });
+    }
+    if (error.code !== "23505") {
+      console.error("insert failed", error);
+      return NextResponse.json({ error: "Could not save the link" }, { status: 500 });
+    }
+  }
+  return NextResponse.json({ error: "Could not find a free code, try again" }, { status: 503 });
+}</code></pre>
+      Press <kbd>Ctrl</kbd> + <kbd>S</kbd>.</li>
+    <li>The limiter runs <b>before</b> anything else, so a blocked caller costs us almost nothing: no parsing, no database. The 429 carries <code>Retry-After</code> in seconds, worked out from the <code>reset</code> time the library returns.</li>
+  </ol>
+
+  <h3>Build step 4: test with a loop of curl calls</h3>
+  <ol class="steps">
+    <li>In the VS Code terminal run <code>npm run dev</code> and wait for <span class="ui">Ready</span>.</li>
+    <li>Open a <b>Command Prompt</b> (Start menu, type <code>cmd</code>, press <kbd>Enter</kbd>). Paste this single line. It sends 7 requests and prints only the request number and the HTTP status:
+<pre><code>for /L %i in (1,1,7) do @curl.exe -s -o NUL -w "request %i: HTTP %{http_code}\n" -X POST http://localhost:3000/api/shorten -H "Content-Type: application/json" -d "{\"url\":\"https://example.com\"}"</code></pre>
+      You should see <code>request 1: HTTP 201</code> up to <code>request 5: HTTP 201</code>, then <code>request 6: HTTP 429</code> and <code>request 7: HTTP 429</code>. (If you ran the lesson m5-1 tests within the last minute, they do not count: only this route is limited, and only the last 60 seconds.)</li>
+    <li>See the headers of a rejected request. Run one more call with <code>-i</code>:
+<pre><code>curl.exe -i -X POST http://localhost:3000/api/shorten -H "Content-Type: application/json" -d "{\"url\":\"https://example.com\"}"</code></pre>
+      You should see <code>HTTP/1.1 429 Too Many Requests</code>, a <code>retry-after:</code> line with a number of seconds (less than 60), <code>x-ratelimit-limit: 5</code> and <code>x-ratelimit-remaining: 0</code>. Header names may appear in lower case; that is normal.</li>
+    <li>Wait for the number of seconds shown in <code>retry-after</code>, then run the loop again. The first requests succeed again. That is the sliding window moving on.</li>
+    <li>Try a different "person". In local development there is no proxy, so all your requests look like one client. Pretend to be another IP by sending the forwarding header yourself:
+<pre><code>curl.exe -i -X POST http://localhost:3000/api/shorten -H "x-forwarded-for: 1.2.3.4" -H "Content-Type: application/json" -d "{\"url\":\"https://example.com\"}"</code></pre>
+      It should return <code>201</code> even while your first "client" is blocked, because the limit is counted per IP. (On Vercel the platform sets this header itself, so a visitor cannot choose it; on your own server you must only trust it from your own proxy.)</li>
+    <li>Open the Upstash console, your database, <span class="ui">Data Browser</span>. You should see keys that begin with <code>rl:shorten</code>. These are the counters, and they expire by themselves.</li>
+    <li>Stop the server with <kbd>Ctrl</kbd> + <kbd>C</kbd>, then run <code>npm run build</code>. It should finish with the list of routes and no errors.</li>
+    <li>Optional clean-up: in the Supabase <span class="ui">Table Editor</span> you will see the test rows in <code>links</code>; select them and delete them.</li>
+  </ol>
+  <p class="tip">Skipped on purpose: fail-open handling. Today, if Upstash is down, this route throws and returns a 500, which is "fail-closed by accident". Wrap <code>shortenLimiter.limit(...)</code> in <code>try/catch</code> and decide on purpose which way it should go.</p>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why is "GET the count, then SET count+1" wrong in a distributed limiter?</summary><p>Two servers can read the same value before either writes, so both allow the request and extra requests slip through. The read and write must be one atomic step: <code>INCR</code>, a Lua script, or a library that uses them.</p></details>
+  <details><summary>What breaks if you run <code>INCR</code> and then <code>EXPIRE</code> as two separate commands and the server crashes between them?</summary><p>The counter key stays without an expiry. Once it passes the limit, that client is blocked forever. Use one Lua script, or set the key with its TTL in the same step.</p></details>
+  <details><summary>What is the weakness of a fixed window counter?</summary><p>The boundary burst: a client can use the whole limit at the end of one window and the whole limit again at the start of the next, so up to twice the limit passes in a short time. A sliding window or token bucket fixes this.</p></details>
+  <details><summary>What breaks if you rate limit by IP address only?</summary><p>Many real users share one IP (office, college, mobile carrier), so they all get blocked together. Meanwhile an attacker with many IPs gets through. Use user id or API key when you have one, keep IP limits generous.</p></details>
+  <details><summary>Redis goes down. Do you fail open or fail closed?</summary><p>It depends on the endpoint. For a normal API, fail open (allow) and alert, because blocking everyone is a total outage. For login or OTP sending, fail closed or fall back to a small in-memory limit, because unlimited attempts are dangerous or expensive.</p></details>
+  <details><summary>You must pick one algorithm for a public API where mobile apps fire a few calls at once. Which and why?</summary><p>Token bucket: it allows short bursts up to the bucket size but enforces the average rate, and stores only two numbers per client.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would put the limiter at the API gateway, keyed by API key, then user, then IP. Counters live in Redis with a TTL equal to the window, and the check-and-increment is one atomic call so concurrent requests cannot race."</blockquote>
+  <blockquote>"On a rejection I return 429 with Retry-After. If Redis is down I fail open for normal endpoints and fail closed for login and OTP."</blockquote>
+  <p><b>Common follow-up question:</b> How do you make the limit work across many servers and regions?</p>
+  <p>All servers in a region share one Redis (sharded by key), so the count is global within the region. Across regions, a single global Redis is too slow, so each region gets a share of the limit or counts sync asynchronously. The limit becomes approximate; I would say that out loud as an accuracy versus latency choice.</p>
+  <p><b>Common follow-up question:</b> Token bucket or sliding window?</p>
+  <p>Token bucket when bursts are normal and you care about the average rate. Sliding window counter when you want a strict "N per rolling minute" with low memory. Avoid the sliding window log at scale, since it stores every timestamp.</p>
+</section>
+
+</main>
+</body>
+</html>

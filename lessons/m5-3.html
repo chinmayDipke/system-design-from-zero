@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a notification system</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m5-3">
+<main class="lesson">
+
+<section class="story">
+  <h2>The school office that talks to 5,000 parents</h2>
+  <p>A big school has one office that must reach parents. Some news is urgent: "School closed today because of heavy rain." Some is routine: "Fee due on the 10th." Some is just a newsletter. Parents like different ways: one wants a WhatsApp message, one reads email, one only answers a phone call, and a few said "please stop sending me the newsletter".</p>
+  <p>The clerk cannot shout at everyone at once. So the office uses a system: write the message once, check each parent's wishes, put the messages in trays (urgent tray first), and give them to different helpers: one for SMS, one for email, one for calls. If a helper cannot reach a parent, they try again later, and if it keeps failing, the note goes to a "problem pile" for a human.</p>
+  <p>That is a notification system. It is less about sending a message and more about sending the <b>right message, to the right person, on the right channel, once</b>, even when things go wrong.</p>
+</section>
+
+<section class="explain">
+  <h2>Design a notification system (SMS, email, push, WhatsApp)</h2>
+  <p class="tip">Before reading on, set a 10-minute timer and write your own requirements and a rough diagram. Then compare. Ask yourself especially: what happens if the SMS provider is slow, and what if the same message is sent twice?</p>
+  <p>We follow the <a href="m4-2.html">7-step framework</a>. This design leans on <a href="m2-11.html">queues</a> and <a href="m3-4.html">retries, idempotency and dead-letter queues</a>, so skim those if they are fuzzy.</p>
+
+  <h3>1. Requirements</h3>
+  <p><b>Functional:</b></p>
+  <ul>
+    <li>Send notifications over four channels: <b>SMS, email, mobile push, WhatsApp</b>.</li>
+    <li>Triggered by <b>events</b> (OTP, order shipped), by <b>campaigns</b> (a promo to 5 million users) and <b>scheduled</b> for later.</li>
+    <li><b>Templates</b> with variables ("Hi {name}, your order {id} has shipped"), in several languages.</li>
+    <li><b>User preferences:</b> a user can turn channels or categories (marketing, updates) on or off, and opt out entirely.</li>
+    <li>Track <b>delivery status</b> per message: queued, sent, delivered, failed, read.</li>
+  </ul>
+  <p><b>Non-functional:</b></p>
+  <ul>
+    <li><b>Priority:</b> an OTP must arrive in seconds, even while a marketing blast is running.</li>
+    <li><b>Reliable:</b> no message is silently lost. <b>At least once</b> delivery, with duplicates prevented where we can.</li>
+    <li><b>Scalable</b> to big bursts (a campaign) and <b>highly available</b>.</li>
+    <li>Respects provider limits and legal rules (opt-outs, quiet hours, sender registration).</li>
+  </ul>
+  <p><b>Out of scope:</b> building our own SMS network (we buy that from providers), the in-app inbox screen, A/B testing of campaigns.</p>
+
+  <h3>2. Estimation</h3>
+  <p>Assume 10 million users, about 5 notifications each per day: <b>50 million a day</b>.</p>
+  <ul>
+    <li><b>Average:</b> 50,000,000 / 100,000 s = <b>500 per second</b>.</li>
+    <li><b>Peak</b> is driven by campaigns, not by users. A marketing blast to 5 million users finished in 10 minutes (600 s) needs 5,000,000 / 600 = about <b>8,300 per second</b>. Designing for about 10x average, 5,000 to 10,000 a second, is right.</li>
+    <li><b>Storage of delivery logs:</b> about 300 bytes a row. 50,000,000 x 300 B = 15 GB a day, which is about 5.5 TB a year (15 GB x 365). Keep 90 days hot (about 1.4 TB) and archive older data.</li>
+    <li><b>Channel mix</b> (assumption): 60% push, 20% email, 10% SMS, 10% WhatsApp. SMS and WhatsApp cost real money per message, push and email are almost free, so we must not send them carelessly.</li>
+  </ul>
+  <p>What the numbers say: thousands per second with sharp spikes means a <b>queue</b> must sit between "someone wants to notify" and "we actually send". The database for logs needs good write throughput.</p>
+
+  <h3>3. API</h3>
+<pre><code>POST /v1/notifications
+  { "user_id": 42, "template": "order_shipped", "data": { "order_id": "A91" },
+    "category": "transactional", "priority": "high",
+    "channels": ["push", "sms"],           (optional: otherwise use user prefs)
+    "idempotency_key": "order-A91-shipped",
+    "send_at": "2026-12-01T10:00:00+05:30"  (optional: schedule) }
+  202 -> { "notification_id": "n_123" }       (accepted, not yet sent)
+
+GET  /v1/notifications/{id}        -> status per channel
+PUT  /v1/users/{id}/preferences    { "sms": false, "marketing": false }
+POST /v1/campaigns                 { "segment": "...", "template": "...", "send_at": "..." }
+POST /webhooks/{provider}          (callback from the SMS/email/WhatsApp provider)</code></pre>
+  <p>The send call returns <code>202 Accepted</code>, not <code>200</code>: "we took it, we will send it". The caller must not wait for the SMS. The <code>idempotency_key</code> lets a caller retry safely (<a href="m3-4.html">idempotency</a>).</p>
+
+  <h3>4. Data model</h3>
+<pre><code>templates      (id, channel, locale, version, body)
+preferences    (user_id, channel, category, enabled, updated_at)
+device_tokens  (user_id, platform, token)           -- for push
+notifications  (id, user_id, template, category, priority,
+                idempotency_key UNIQUE, created_at)
+deliveries     (id, notification_id, channel, provider, provider_msg_id,
+                status, attempts, last_error, updated_at)
+scheduled      (id, notification_id, send_at)  INDEX on send_at</code></pre>
+  <p><b>Why these stores:</b> templates, preferences and the idempotency key need correctness and uniqueness, so they go in a relational database (PostgreSQL; <a href="m2-2.html">SQL vs NoSQL</a>). The <code>deliveries</code> table is a huge, append-heavy log queried mostly by id or user; at 15 GB a day a time-partitioned table or a wide-column store works. Redis helps for short-lived things: dedupe keys and provider rate counters.</p>
+
+  <h3>5. High-level design</h3>
+  <ol>
+    <li>A service (orders, auth) or the campaign tool calls the <b>Notification service</b>.</li>
+    <li>It validates the request and <b>dedupes</b> using the idempotency key.</li>
+    <li>It checks the user's <b>preferences</b> and renders the <b>template</b> for each allowed channel.</li>
+    <li>It puts one message per channel on a <b>queue</b>, chosen by channel and priority.</li>
+    <li>A <b>channel worker</b> pulls messages, respects the provider's rate limit and calls the provider (SMS gateway, email service, push service, WhatsApp API).</li>
+    <li>If the call fails, the message goes back with a delay (<b>retry with backoff</b>), and after too many tries into a <b>dead-letter queue</b> for a human to look at.</li>
+    <li>Later the provider calls our <b>webhook</b> with "delivered" or "failed", and a status updater writes it to <code>deliveries</code>.</li>
+  </ol>
+  <p>A <b>scheduler</b> scans the <code>scheduled</code> table and puts due messages onto the same queues at the right time, so scheduled traffic follows the same path.</p>
+
+  <h3>6. Deep dives</h3>
+  <h4>Deep dive A: retries, duplicates and dead letters</h4>
+  <p>Providers fail: timeouts, 5xx errors, rate limits. We retry, but not instantly and not forever. Use <b>exponential backoff with jitter</b>: wait 1 s, 2 s, 4 s, 8 s ... plus a random bit so thousands of failed messages do not all retry at the same instant. After, say, 5 attempts, move the message to the <b>DLQ</b> and alert.</p>
+  <p>Retries create the danger of duplicates: the worker sends the SMS, the provider accepts it, but the worker crashes before writing "sent". The queue redelivers, and the user gets two OTPs. We cannot get perfect exactly-once with an outside provider, so we aim for <b>at-least-once plus dedupe</b>:</p>
+  <ul>
+    <li>Callers send an <b>idempotency key</b>; a unique index on it rejects the second copy.</li>
+    <li>Each queue message has a stable id <code>(notification_id, channel)</code>. Before sending, the worker records "attempt started" with that id and skips if it is already marked sent.</li>
+    <li>Where a provider supports its own idempotency key or client reference, pass ours.</li>
+  </ul>
+  <p>For an OTP a duplicate is harmless; for a "payment received" message it is confusing but not harmful. For a marketing offer it is annoying. Match the effort to the damage.</p>
+
+  <h4>Deep dive B: priorities and provider limits</h4>
+  <p>If OTPs and a 5-million-user promo share one queue, the OTPs wait behind the promo and users cannot log in. So use <b>separate queues (and separate worker pools) per priority</b>:</p>
+  <table>
+    <tr><th>Queue</th><th>Example</th><th>Target</th><th>Workers</th></tr>
+    <tr><td><b>High</b></td><td>OTP, password reset</td><td>seconds</td><td>Always reserved, never starved</td></tr>
+    <tr><td><b>Normal</b></td><td>Order shipped, payment received</td><td>under a minute</td><td>Scaled to load</td></tr>
+    <tr><td><b>Low</b></td><td>Marketing, newsletters</td><td>minutes to hours</td><td>Throttled on purpose</td></tr>
+  </table>
+  <p>Providers also limit how fast you may send (for example X messages a second) and charge per message. Put a <b>rate limiter</b> (<a href="m5-2.html">token bucket</a>) in the worker, per provider, and keep low-priority throughput below the cap so there is always room for OTPs. For safety use <b>two providers</b> for SMS and email, with a <a href="m3-6.html">circuit breaker</a> that moves traffic to the second one when the first fails.</p>
+
+  <h4>Deep dive C: preferences, opt-outs and status webhooks</h4>
+  <ul>
+    <li><b>Preferences are checked at send time</b>, not just at enqueue time. A user may opt out while a campaign message waits in the queue. Cache preferences in Redis for speed, and update the cache when the user changes them.</li>
+    <li><b>Categories matter.</b> Security messages (OTP) and transactional ones are allowed even if marketing is off; marketing must honour opt-out. Add quiet hours, and limit how many promos one user gets a day.</li>
+    <li><b>Rules vary by channel.</b> In India, bulk SMS needs registered sender IDs and approved message templates (the telecom "DLT" rules) and respects a do-not-disturb list. WhatsApp business messages need pre-approved templates when you start the chat. Check the provider's current rules rather than guessing.</li>
+    <li><b>Status via webhooks.</b> When the provider says "accepted", it means only "I took it", not "the phone received it". Delivery results arrive later as webhooks. Verify the webhook's signature, handle duplicates (providers resend), and let statuses only move forward (a late "sent" must not overwrite "delivered"). If webhooks go missing, poll the provider for old messages.</li>
+    <li><b>Scheduling:</b> an index on <code>send_at</code> and a scheduler that every few seconds takes due rows (marking them as taken inside the same transaction so two schedulers do not both send). For "10am in the user's own time zone" store the user's time zone and compute <code>send_at</code> per user.</li>
+  </ul>
+
+  <h3>7. Trade-offs, bottlenecks and wrap-up</h3>
+  <ul>
+    <li><b>At-least-once beats at-most-once</b> for most messages: a duplicate is better than a lost OTP. We reduce duplicates with dedupe instead of trying for the impossible exactly-once.</li>
+    <li><b>Asynchronous means delay:</b> the API answers 202 quickly, but the actual send takes a moment. The price of reliability.</li>
+    <li><b>Bottlenecks:</b> provider rate limits and cost (not our servers); the preference lookup on every send; the delivery-log writes.</li>
+    <li><b>Fallback channels:</b> try push first; if not delivered in a minute, send SMS. Costs more but improves reach for important messages.</li>
+    <li><b>Monitor</b> (<a href="m3-7.html">observability</a>): queue depth and age per priority, success rate per provider, DLQ size, time to deliver an OTP (p95).</li>
+  </ul>
+  <p><b>At 10x scale</b> (500 million a day): partition queues by user id, shard the delivery log by user and month, add more worker pools per channel, contract with multiple providers per country, and precompute audience segments for campaigns instead of looking up users one by one.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 440" role="img" aria-label="Notification system architecture. Services and campaigns call the notification service, which checks preferences and templates, then publishes to queues by priority. Channel workers send through providers. Failed messages retry and then go to a dead-letter queue. Providers call a webhook handler that updates delivery status.">
+      <defs><marker id="ar-m5-3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="110" height="60" rx="8"/>
+        <rect x="165" y="40" width="140" height="60" rx="8"/>
+        <rect x="345" y="40" width="120" height="60" rx="8"/>
+        <rect x="505" y="40" width="120" height="60" rx="8"/>
+        <rect x="15" y="120" width="110" height="50" rx="8"/>
+        <rect x="165" y="200" width="150" height="50" rx="8"/>
+        <rect x="345" y="200" width="120" height="50" rx="8"/>
+        <rect x="485" y="190" width="140" height="50" rx="8"/>
+        <rect x="485" y="280" width="140" height="50" rx="8"/>
+        <rect x="485" y="370" width="140" height="50" rx="8"/>
+        <path d="M125 70 H163" marker-end="url(#ar-m5-3)"/>
+        <path d="M305 70 H343" marker-end="url(#ar-m5-3)"/>
+        <path d="M465 70 H503" marker-end="url(#ar-m5-3)"/>
+        <path d="M125 145 H235 V102" marker-end="url(#ar-m5-3)"/>
+        <path d="M285 102 V198" marker-end="url(#ar-m5-3)"/>
+        <path d="M405 102 V198" marker-end="url(#ar-m5-3)" stroke-dasharray="5 4"/>
+        <path d="M555 102 V188" marker-end="url(#ar-m5-3)"/>
+        <path d="M555 240 V278" marker-end="url(#ar-m5-3)"/>
+        <path d="M555 330 V368" marker-end="url(#ar-m5-3)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="70" y="66" font-size="14" font-weight="700">Services</text>
+        <text x="70" y="84" font-size="13">+ campaigns</text>
+        <text x="235" y="66" font-size="14" font-weight="700">Notification</text>
+        <text x="235" y="84" font-size="14" font-weight="700">service</text>
+        <text x="405" y="66" font-size="14" font-weight="700">Queues</text>
+        <text x="405" y="84" font-size="13">OTP | txn | promo</text>
+        <text x="565" y="66" font-size="14" font-weight="700">Channel</text>
+        <text x="565" y="84" font-size="14" font-weight="700">workers</text>
+        <text x="70" y="150" font-size="14" font-weight="700">Scheduler</text>
+        <text x="70" y="166" font-size="13">send_at</text>
+        <text x="240" y="220" font-size="14" font-weight="700">Prefs + templates</text>
+        <text x="240" y="238" font-size="13">+ idempotency keys</text>
+        <text x="405" y="220" font-size="14" font-weight="700">Retry + DLQ</text>
+        <text x="405" y="238" font-size="13">backoff, then park</text>
+        <text x="555" y="212" font-size="14" font-weight="700">Providers</text>
+        <text x="555" y="229" font-size="13">SMS/email/push/WA</text>
+        <text x="555" y="310" font-size="14" font-weight="700">Webhook handler</text>
+        <text x="555" y="397" font-size="14" font-weight="700">Delivery log</text>
+        <text x="144" y="63" font-size="13">1</text>
+        <text x="324" y="63" font-size="13">4</text>
+        <text x="484" y="63" font-size="13">5</text>
+        <text x="418" y="155" font-size="13" text-anchor="start">6</text>
+        <text x="572" y="263" font-size="13" text-anchor="start">7</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="15" y="290" font-size="13">1. Event or campaign calls the API</text>
+        <text x="15" y="310" font-size="13">2. Dedupe by idempotency key</text>
+        <text x="15" y="330" font-size="13">3. Check prefs, render template</text>
+        <text x="15" y="350" font-size="13">4. Queue by channel + priority</text>
+        <text x="15" y="370" font-size="13">5. Worker sends via provider</text>
+        <text x="15" y="390" font-size="13">6. Fail: retry, then DLQ</text>
+        <text x="15" y="410" font-size="13">7. Provider webhook sets status</text>
+      </g>
+    </svg>
+    <figcaption>Everything is asynchronous after step 2. The API answers "accepted" and the queues, workers and webhooks do the rest.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m5-3 notifications.excalidraw</code> in your Module 5 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+design+a+notification+system" target="_blank" rel="noopener">YouTube search: "ByteByteGo design a notification system"</a>
+      <span class="meta">Short. Watch it all and note how they separate channels.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=system+design+notification+service+retries+priority+queue+Hello+Interview" target="_blank" rel="noopener">YouTube search: "system design notification service retries priority queue Hello Interview"</a>
+      <span class="meta">Pick a full walkthrough. Watch the part on priority and retries.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#asynchronism" target="_blank" rel="noopener">System Design Primer: Asynchronism</a>
+      <span class="meta">Read about message queues and back pressure; they are the heart of this design.</span></li>
+    <li><a href="https://aws.amazon.com/what-is/pub-sub-messaging/" target="_blank" rel="noopener">AWS: What is pub/sub messaging?</a>
+      <span class="meta">Read the first sections; it explains how one event reaches many subscribers.</span></li>
+    <li><a href="https://firebase.google.com/docs/cloud-messaging" target="_blank" rel="noopener">Firebase Cloud Messaging docs</a>
+      <span class="meta">Skim the overview to see what a push provider handles for you (device tokens, delivery).</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 to 60 minutes, no build)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <ol class="steps">
+    <li>Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span> and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> and press <span class="ui">Record</span>.</li>
+    <li>Open <code>excalidraw.com</code> with a blank canvas. Say "Design a notification system" and follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 / 5 / 3 / 3 / 3 / 10 / 14 / 5 minutes. Draw from memory.</li>
+    <li>In the deep-dive slot, cover <b>two</b> of: retries and duplicates, priority queues, webhooks. Say aloud why OTP and marketing must not share a queue.</li>
+    <li>Stop the recording and save it as <code>m5-3 mock</code>, and the drawing as <code>m5-3 notifications-mock.excalidraw</code>. Compare with the lesson and note the two things you missed.</li>
+  </ol>
+
+  <h3>B. Draw the life of one notification (15 minutes)</h3>
+  <ol class="steps">
+    <li>On a new Excalidraw canvas, press <kbd>R</kbd> and draw four boxes in a row: <code>queued</code>, <code>sending</code>, <code>sent</code>, <code>delivered</code>. Draw two more below them: <code>retrying</code> and <code>dead</code>.</li>
+    <li>Press <kbd>A</kbd> and draw arrows: queued to sending, sending to sent, sent to delivered. Then sending to retrying, retrying back to sending, and retrying to dead.</li>
+    <li>On each arrow write what causes it (for example "provider timeout" on sending to retrying, "5 failures" on retrying to dead, "webhook: delivered" on sent to delivered).</li>
+    <li>Add one note: "A late 'sent' webhook must never overwrite 'delivered'." Save as <code>m5-3 status-states.excalidraw</code>.</li>
+  </ol>
+
+  <h3>C. Variation questions</h3>
+  <details><summary>1. Send a push first, and if it is not delivered in one minute, send an SMS. How?</summary>
+    <p>After sending the push, the worker schedules a "check" message with a one-minute delay (a delayed queue or the scheduler table). When it fires, it reads the delivery status. If the push is not <code>delivered</code>, it sends the SMS; if it is, it does nothing. Use the same idempotency key family so a late push callback cannot trigger a second SMS.</p></details>
+  <details><summary>2. Marketing must go out at 10 am local time for every user across India and abroad. How?</summary>
+    <p>Store each user's time zone. For a campaign, compute each user's <code>send_at</code> (10:00 in their zone converted to UTC) and write them as scheduled rows in batches. The scheduler releases them as they come due, into the low-priority queue, so the blast is spread over the day instead of arriving at once.</p></details>
+  <details><summary>3. The main SMS provider is returning errors. What happens?</summary>
+    <p>Retries with backoff first. If the failure rate stays high, a circuit breaker opens and the SMS worker routes new messages to the backup provider. High-priority OTPs switch first. When the main provider recovers, the breaker lets a few test messages through before sending everything back.</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why does the send API return 202 and not 200?</summary><p>Because the message is only accepted, not sent yet. The real sending happens later through queues and workers, and the caller must not wait for slow providers.</p></details>
+  <details><summary>What breaks if OTPs and marketing share a single queue?</summary><p>A marketing blast of millions of messages sits ahead of the OTPs, so users wait minutes for a login code. Use separate queues and worker pools per priority.</p></details>
+  <details><summary>What breaks if a worker sends an SMS and crashes before recording "sent"?</summary><p>The queue redelivers the message and the user gets a duplicate. We reduce this with idempotency keys and a stable message id checked before sending, accepting at-least-once delivery.</p></details>
+  <details><summary>Why add random jitter to retry backoff?</summary><p>Without jitter, thousands of messages that failed at the same moment retry at the same moment, hitting the provider in waves. Randomness spreads them out.</p></details>
+  <details><summary>A user opts out of marketing while their message sits in the queue. How do you honour it?</summary><p>Check preferences again at send time (a cached lookup), not only when the message was enqueued.</p></details>
+  <details><summary>What breaks if you treat the provider's "accepted" response as "delivered"?</summary><p>You would show "delivered" for messages that later fail (phone off, number invalid) and never retry or fall back. Delivery status must come from the provider's webhook, with statuses only moving forward.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would decouple with queues: the API validates, dedupes by idempotency key, checks preferences and renders a template, then publishes to per-channel, per-priority queues. Workers send through providers and retry with exponential backoff and jitter, with a dead-letter queue at the end."</blockquote>
+  <blockquote>"OTPs get their own high-priority queue and reserved workers so a marketing campaign cannot delay them, and each worker rate limits itself to the provider's cap."</blockquote>
+  <p><b>Common follow-up question:</b> How do you avoid sending a duplicate notification?</p>
+  <p>The caller supplies an idempotency key with a unique index, and each queue message has a stable id that the worker checks before sending. Since exactly-once with an external provider is not possible, I accept at-least-once and make a rare duplicate harmless.</p>
+  <p><b>Common follow-up question:</b> How do you know a message was really delivered?</p>
+  <p>The provider's "accepted" only means it took the message. Final status arrives later by webhook (delivered, failed, read). I verify the webhook signature, handle repeats, let statuses move only forward, and poll the provider for messages whose webhook never arrived.</p>
+</section>
+
+</main>
+</body>
+</html>
