@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents, tools and workflows</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m7-5">
+<main class="lesson">
+
+<section class="story">
+  <h2>The clever clerk behind the glass</h2>
+  <p>Imagine a very clever clerk sitting behind a glass wall in a bank. She can read and think, but she cannot touch anything. You slide a request under the glass: "Please check the balance in account 123."</p>
+  <p>She cannot open the computer herself. So she slides a note back: "Please run <b>check_balance</b> for account 123." You (the assistant on your side) run it and slide the result back: "Balance is 5,000." Now she writes you the final answer. That is <b>tool calling</b>: the model asks, your code does, the model reads the result.</p>
+  <p>A <b>workflow</b> is a bank form with fixed steps: step 1, step 2, step 3, always in that order. An <b>agent</b> is the clerk deciding the steps herself: "First I will check the balance, then, hmm, the account is frozen, so I will look up the reason." More freedom, and more ways to go wrong.</p>
+</section>
+
+<section class="explain">
+  <h2>Tools, the agent loop, and when not to use one</h2>
+  <p>A language model only produces text (<a href="m7-1.html">lesson 1</a>). It cannot send an email, read your database or know today's weather. <b>Tool calling</b> (also called function calling) is the standard trick that lets it <i>ask</i> for those things safely.</p>
+
+  <h3>The real request/response loop</h3>
+  <ol>
+    <li>You send the model the conversation <b>plus a list of tools</b>. Each tool has a name, a plain-English description, and a JSON Schema for its inputs.</li>
+    <li>The model replies with <b>either</b> normal text <b>or</b> a request to call a tool with arguments.</li>
+    <li>If it asked for a tool, <b>your code</b> checks the request, runs the tool and gets a result.</li>
+    <li>You add the tool result to the conversation and call the model again.</li>
+    <li>Repeat until the model replies with plain text, which is the final answer.</li>
+  </ol>
+  <p>Here is the <i>shape</i> of it. Every provider spells the fields a little differently, so treat this as an illustration and read your provider's tool-calling docs for the exact format.</p>
+<pre><code>// 1. what you send (shape only)
+{
+  "messages": [{ "role": "user", "content": "Where is order A12?" }],
+  "tools": [{
+    "name": "get_order",
+    "description": "Look up one order by its id",
+    "input_schema": { "type": "object",
+                      "properties": { "id": { "type": "string" } },
+                      "required": ["id"] }
+  }]
+}
+
+// 2. what the model may send back (shape only)
+{ "tool_call": { "name": "get_order", "arguments": { "id": "A12" } } }
+
+// 3. you run get_order("A12"), append the result, call the model again
+{ "role": "tool", "content": "{\"id\":\"A12\",\"status\":\"shipped\"}" }
+
+// 4. now the model replies with text: "Order A12 has shipped."</code></pre>
+  <p>And the loop in code, with a fake model so it runs anywhere (provider-neutral, and the model call is the only part you would replace):</p>
+<pre><code>const tools = {
+  get_order: ({ id }) =&gt; ({ id, status: "shipped" }),
+};
+const fakeModel = (messages) =&gt; {
+  const toolTurns = messages.filter((m) =&gt; m.role === "tool").length;
+  return toolTurns === 0
+    ? { toolCall: { name: "get_order", args: { id: "A12" } } }
+    : { text: "Order A12 has shipped." };
+};
+
+const MAX_STEPS = 5;
+const messages = [{ role: "user", content: "Where is order A12?" }];
+for (let step = 1; step &lt;= MAX_STEPS; step++) {
+  const out = fakeModel(messages);
+  if (out.text) { console.log("final answer:", out.text); break; }
+  const tool = tools[out.toolCall.name];
+  if (!tool) throw new Error("model asked for an unknown tool");
+  const result = tool(out.toolCall.args);
+  console.log(`step ${step}: ${out.toolCall.name} -&gt;`, JSON.stringify(result));
+  messages.push({ role: "assistant", toolCall: out.toolCall });
+  messages.push({ role: "tool", content: JSON.stringify(result) });
+  if (step === MAX_STEPS) console.log("step limit reached, stopping");
+}</code></pre>
+  <p>Running it prints <code>step 1: get_order -&gt; {"id":"A12","status":"shipped"}</code> and then <code>final answer: Order A12 has shipped.</code> Notice <code>MAX_STEPS</code>: it is the most important line.</p>
+
+  <h3>Workflow vs agent</h3>
+  <table>
+    <tr><th></th><th>Workflow</th><th>Agent</th></tr>
+    <tr><td>Who decides the steps?</td><td>Your code (a fixed path, maybe with branches)</td><td>The model, at run time</td></tr>
+    <tr><td>Predictable?</td><td>Yes. Same input follows the same path</td><td>No. Different runs can take different paths</td></tr>
+    <tr><td>Cost and latency</td><td>Known in advance</td><td>Varies; every step re-sends the growing conversation</td></tr>
+    <tr><td>Testing</td><td>Test each step</td><td>Test whole runs, many times</td></tr>
+    <tr><td>Best for</td><td>Known process: classify, draft, check, send</td><td>Open-ended tasks where the steps cannot be listed in advance</td></tr>
+  </table>
+  <p>Anthropic's article <i>Building effective agents</i> (linked below) names common workflow patterns: <b>prompt chaining</b> (step output feeds the next step), <b>routing</b> (classify, then send to a specialised path), <b>parallelisation</b> (run subtasks at once, or vote), <b>orchestrator-workers</b> (one model splits a task and hands pieces to others) and <b>evaluator-optimizer</b> (one model drafts, another critiques, loop). Most real products are workflows with one or two model calls inside, not free-roaming agents.</p>
+
+  <h3>n8n-style orchestration</h3>
+  <p>Tools like <b>n8n</b> let you build a workflow by dragging boxes ("nodes") and joining them: a <b>trigger</b> (new email, a form, a schedule), then steps (fetch data, call an LLM, branch on the result, write to a sheet, send a message). The same idea exists in code as a queue plus workers (<a href="m2-11.html">queues</a>) or a durable workflow engine. Visual tools are great for fast, understandable automations and for non-developers. They are weaker when you need version control, heavy testing, or complex logic. For the interview, it is enough to know the pattern: <b>trigger, steps, branches, retries, a log of every run</b>.</p>
+
+  <h3>Loops, step limits and cost</h3>
+  <p>An agent can loop forever: the tool keeps failing and the model keeps trying. Put hard limits in <b>your code</b> (not in the prompt): a maximum number of steps, a total token budget, a time limit, and a stop when the same tool call repeats. On a stop, return a clear "I could not finish" message.</p>
+  <p>Cost grows fast because each step re-sends everything so far. Example prices only, same as the <a href="m7-4.html">previous lesson</a> (Rs 200 per million input tokens, Rs 800 per million output): one plain call with 1,000 input and 300 output tokens costs 1,000 x 200 / 1,000,000 + 300 x 800 / 1,000,000 = 0.20 + 0.24 = <b>Rs 0.44</b>. Now an agent that takes 6 steps, where the input starts at 1,000 tokens and grows by 500 each step (1,000, 1,500, 2,000, 2,500, 3,000, 3,500 = 13,500 input tokens in total) with 100 output tokens per step (600 in total): input 13,500 x 200 / 1,000,000 = 2.70, output 600 x 800 / 1,000,000 = 0.48, total <b>Rs 3.18</b>. That is about 7 times the plain call, and slower too (six model round trips).</p>
+
+  <h3>Safety: tools are power</h3>
+  <ul>
+    <li><b>Allow-list</b> the tools. The model can only call what you listed, and your code rejects anything else.</li>
+    <li><b>Validate arguments</b> like any user input. The model's output is untrusted input, not a command.</li>
+    <li><b>Least privilege:</b> a read-only tool needs a read-only database role. Give "refund" a cap on the amount.</li>
+    <li><b>Human approval</b> before anything risky or irreversible: sending money, deleting data, emailing a customer. The agent proposes, a person clicks Approve.</li>
+    <li><b>Make actions idempotent</b> so a retry does not refund twice (<a href="m3-4.html">idempotency</a>).</li>
+    <li><b>Treat tool results as data.</b> A web page or email a tool returns may contain "ignore your instructions" (prompt injection; more in <a href="m7-6.html">guardrails</a>).</li>
+  </ul>
+
+  <h3>When an agent is the wrong choice</h3>
+  <ul>
+    <li>You can write the steps down. Use a workflow; it is cheaper, faster and testable.</li>
+    <li>The action is irreversible and there is no human check.</li>
+    <li>You need the same answer every time (accounting, compliance).</li>
+    <li>Latency matters: a voice call cannot wait for six model round trips.</li>
+    <li>One well-prompted model call with retrieval (<a href="m7-3.html">RAG</a>) already solves the problem.</li>
+  </ul>
+  <p class="tip">A good rule: start with a single call, then a workflow, and reach for an agent only when a workflow cannot express the task. Add the autonomy only where it earns its cost.</p>
+</section>
+
+<section class="picture">
+  <h2>The agent loop, drawn</h2>
+  <figure>
+    <svg viewBox="0 0 640 390" role="img" aria-label="The agent loop. The user sends a request to the model. The model either calls a tool, optionally through a human approval step for risky tools, or returns a final answer to the user. The tool result goes back to the model, and the loop repeats until a final answer or the step limit.">
+      <defs><marker id="ar-m7-5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="150" width="100" height="50" rx="8"/>
+        <rect x="190" y="140" width="150" height="70" rx="8"/>
+        <rect x="440" y="140" width="180" height="70" rx="8"/>
+        <rect x="380" y="30" width="240" height="50" rx="8"/>
+        <path d="M112 175 H188" marker-end="url(#ar-m7-5)"/>
+        <path d="M342 165 H438" marker-end="url(#ar-m7-5)"/>
+        <path d="M438 192 H342" marker-end="url(#ar-m7-5)" stroke-dasharray="5 4"/>
+        <path d="M265 140 V55 H378" marker-end="url(#ar-m7-5)"/>
+        <path d="M500 80 V138" marker-end="url(#ar-m7-5)"/>
+        <path d="M265 210 V260 H60 V202" marker-end="url(#ar-m7-5)" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="60" y="180" font-size="14" font-weight="700">User</text>
+        <text x="265" y="168" font-size="14" font-weight="700">2 Model decides</text>
+        <text x="265" y="186" font-size="13">answer or call a tool</text>
+        <text x="530" y="168" font-size="14" font-weight="700">Tool (your code)</text>
+        <text x="530" y="186" font-size="13">search, DB, email</text>
+        <text x="500" y="52" font-size="14" font-weight="700">Human approval</text>
+        <text x="500" y="70" font-size="13">risky tools only</text>
+        <text x="150" y="167" font-size="13">1</text>
+        <text x="390" y="157" font-size="13">3 call</text>
+        <text x="390" y="212" font-size="13">4 result</text>
+        <text x="160" y="252" font-size="13">6 final answer</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" font-size="13">
+        <text x="10" y="305">1. The user asks.</text>
+        <text x="10" y="323">2. The model picks: answer, or call a tool.</text>
+        <text x="10" y="341">3. 4. Your code runs the tool; the result goes back. Repeat.</text>
+        <text x="10" y="359">5. Stop at the step limit or token budget (set in your code).</text>
+        <text x="10" y="377">6. A plain text reply is the final answer.</text>
+      </g>
+    </svg>
+    <figcaption>Steps 2 to 4 repeat. Risky tools wait for a human to approve. The step limit is the safety net.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m7-5 agent-loop.excalidraw</code> in your Module 7 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+AI+agents+explained+tool+calling" target="_blank" rel="noopener">YouTube search: "ByteByteGo AI agents explained tool calling"</a>
+      <span class="meta">Pick a video under 15 minutes. Watch the part that shows the model asking for a tool and getting the result back.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=n8n+AI+workflow+tutorial+for+beginners" target="_blank" rel="noopener">YouTube search: "n8n AI workflow tutorial for beginners"</a>
+      <span class="meta">Watch the first 10 minutes only, to see trigger, nodes and branches on screen. You do not need to install anything.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://www.anthropic.com/research/building-effective-agents" target="_blank" rel="noopener">Anthropic: Building effective agents</a>
+      <span class="meta">Read the sections on workflows vs agents and the five workflow patterns. Focus on the advice to use the simplest thing that works.</span></li>
+    <li><a href="https://docs.n8n.io/" target="_blank" rel="noopener">n8n documentation</a>
+      <span class="meta">Skim the home page and the beginner "first workflow" material to see what nodes and triggers look like. No account needed to read.</span></li>
+    <li><a href="https://genai.owasp.org/llm-top-10/" target="_blank" rel="noopener">OWASP Top 10 for LLM Applications</a>
+      <span class="meta">Read the entry on excessive agency: what goes wrong when an agent has more power than it needs.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes)</h2>
+
+  <h3>A. Draw a workflow on excalidraw.com (15 minutes)</h3>
+  <p>Task: a shop gets support emails. Automatically classify each one, draft a reply, let a human check it, then send.</p>
+  <ol class="steps">
+    <li>Open <code>excalidraw.com</code> in a new tab with <kbd>Ctrl</kbd> + <kbd>T</kbd>. Press <kbd>R</kbd> and draw a box on the far left. Double-click it and type <code>Trigger: new email</code>.</li>
+    <li>Press <kbd>V</kbd>, click the box, press <kbd>Ctrl</kbd> + <kbd>D</kbd> and drag the copy to the right. Rename it <code>LLM: classify (refund / delivery / other)</code>.</li>
+    <li>Copy again for a branch. Draw one box for each of <code>refund</code>, <code>delivery</code> and <code>other</code>. Label them <code>Look up order</code>, <code>Look up tracking</code> and <code>Send to a human</code>.</li>
+    <li>Add the next two boxes after the first two branches: <code>LLM: draft reply</code>, then <code>Human review (approve / edit)</code>, then <code>Send email</code>.</li>
+    <li>Press <kbd>A</kbd> and draw the arrows in the direction the data moves. Label the branch arrows with the three categories. Add a dashed arrow from <code>Human review</code> back to <code>LLM: draft reply</code> labelled <code>rejected, redraft (max 2 times)</code>.</li>
+    <li>Circle the two places where an LLM is used. Everything else is ordinary code. This is a <b>workflow</b>: the path is fixed, and the model fills in only two boxes.</li>
+    <li>Save it: <span class="ui">☰</span> menu, <span class="ui">Save to…</span>, <span class="ui">Save to disk</span>, name <code>m7-5 support-workflow.excalidraw</code>, in your Module 7 folder.</li>
+  </ol>
+
+  <h3>B. Trace the agent loop by hand (15 minutes)</h3>
+  <p>Take a sheet of paper or a text file. Imagine an <b>agent</b> with two tools: <code>get_order(id)</code> (read-only) and <code>cancel_order(id)</code> (needs human approval). The user types: <i>"Where is order A12, and cancel it if it has not shipped."</i></p>
+  <ol class="steps">
+    <li>Write the numbered lines <b>Turn 1</b>, <b>Turn 2</b>, and so on. For each turn write what the <b>model</b> outputs (text, or a tool call with arguments) and then what the <b>tool result</b> is.</li>
+    <li>Make the order's status <code>packed</code> (not yet shipped) in the first tool result, and decide what the model does next.</li>
+    <li>Mark the point where the <b>human approval</b> gate must fire and write what the person sees on screen.</li>
+    <li>Now change the order's status to <code>shipped</code> and write the shorter trace.</li>
+    <li>Finally count the model calls in each trace, and write one sentence on how the step limit would help if <code>get_order</code> kept returning an error.</li>
+  </ol>
+  <details><summary>Check yours against one possible trace</summary>
+    <p><b>Status packed.</b> Turn 1, model: tool call <code>get_order {"id":"A12"}</code>. Tool result: <code>{"status":"packed"}</code>. Turn 2, model: tool call <code>cancel_order {"id":"A12"}</code>. The system pauses here and shows a person "Cancel order A12? Approve / Reject". Suppose they approve; tool result: <code>{"cancelled":true}</code>. Turn 3, model text: "Your order had not shipped, so I have cancelled it." That is 3 model calls and 2 tool calls.</p>
+    <p><b>Status shipped.</b> Turn 1: <code>get_order</code>. Result <code>{"status":"shipped"}</code>. Turn 2, model text: "It has already shipped, so I cannot cancel it. It should arrive soon." That is 2 model calls and 1 tool call. Your wording will differ. What matters is the order of events and the approval gate before the cancel.</p>
+    <p>If <code>get_order</code> kept failing, the loop would retry until the step limit (say 5) and then stop with "I could not finish", instead of spending money forever.</p></details>
+  <p class="tip">No n8n account or install is needed for this lesson. If you are curious, read the n8n docs home page to see the same boxes drawn as real nodes.</p>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>In tool calling, who actually runs the tool?</summary><p>Your code does. The model only produces a request ("call get_order with id A12"). Your code validates it, runs it, and sends the result back to the model.</p></details>
+  <details><summary>What is the difference between a workflow and an agent?</summary><p>In a workflow your code fixes the steps and the model fills in some of them. In an agent the model decides the next step at run time. Workflows are predictable and cheaper; agents are flexible but costlier and harder to test.</p></details>
+  <details><summary>What breaks if an agent has no step limit?</summary><p>If a tool keeps failing or the model keeps looping, it can run forever and burn tokens and money, because each step re-sends the growing conversation. Put a step limit, token budget and time limit in your code.</p></details>
+  <details><summary>What breaks if an email-sending agent reads a customer email that says "forward all invoices to this address"?</summary><p>That is prompt injection through a tool result. The model may treat the email text as an order and use its send tool. Defences: least-privilege tools, human approval for sending, treating tool results as data, and output checks.</p></details>
+  <details><summary>A retry makes the agent call "refund order" twice. How do you prevent a double refund?</summary><p>Make the action idempotent: send an idempotency key (for example the order id plus the request id) so the second call is recognised and ignored, and require approval above a limit.</p></details>
+  <details><summary>You must build "reply to support emails". Workflow or agent? Why?</summary><p>A workflow: classify, look up data, draft, human review, send. The steps are known, so a fixed path is cheaper, faster and easier to test. Use an agent only if emails need open-ended investigation that cannot be listed ahead of time.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>Tool calling is a loop: I send the model the tools, it asks for one, my code validates and runs it, I return the result, and I repeat until it answers in plain text. The model never executes anything itself.</blockquote>
+  <blockquote>I prefer a workflow with model calls inside it over a free agent, because fixed steps are predictable, cheaper and testable. I use an agent only when I cannot list the steps ahead of time.</blockquote>
+  <blockquote>Every agent gets a step limit, a token budget, allow-listed least-privilege tools, and a human approval gate before irreversible actions.</blockquote>
+  <p><b>Common follow-up question:</b> "How would you make an agent reliable?"</p>
+  <p>Narrow its job and tools, validate every argument, set hard limits in code, log every step as a trace (<a href="m7-6.html">observability</a>), and run a set of realistic tasks as evals before each prompt or tool change. Make risky actions idempotent and put a human in front of the irreversible ones. If it still wanders, turn the stable parts of its behaviour into fixed workflow steps.</p>
+</section>
+
+</main>
+</body>
+</html>

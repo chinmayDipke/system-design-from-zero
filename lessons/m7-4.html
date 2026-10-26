@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scaling LLM apps</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m7-4">
+<main class="lesson">
+
+<section class="story">
+  <h2>The busy dhaba on the highway</h2>
+  <p>A highway dhaba gets a rush of truck drivers at lunch. The head chef is excellent, but slow and expensive. If every driver orders a different dish and the chef cooks each one from scratch, the queue reaches the road.</p>
+  <p>So the owner makes rules. Dal tadka is the most common order, so a big pot is <b>already made</b> (a cache). Each table may order only so much at a time (a <b>limit</b>). A big party order gets a <b>token number</b> and a "we will call you" (a <b>queue</b>). Plain chai is made by the helper boy, and only tricky dishes go to the head chef (<b>routing</b>). And if the gas runs out, the owner has a second stove next door (a <b>fallback</b>).</p>
+  <p>Scaling an LLM app is exactly this: the model is slow, costly and sometimes unavailable, so you do everything you can to <b>call it less, call a cheaper one, and survive when it fails</b>.</p>
+</section>
+
+<section class="explain">
+  <h2>Making an LLM app fast, cheap and sturdy</h2>
+  <p>A normal database call takes a few milliseconds and costs almost nothing. An LLM call takes seconds, costs real money per token, and the provider limits how many you may send per minute (<a href="m7-1.html">lesson 1</a> showed why). Classic scaling tricks still apply, but cost and provider limits become the main enemies, not just server CPU.</p>
+
+  <h3>1. Response caching: exact and semantic</h3>
+  <p>An <b>exact cache</b> stores the answer under a key made from the full prompt (plus model name and settings). The same input again gives the same answer instantly, with no model call. It is simple and safe, but it only hits when the text is identical. Use the ideas from <a href="m2-7.html">caching</a>: TTL, eviction, and a key that includes everything that changes the answer.</p>
+  <p>A <b>semantic cache</b> embeds the question (<a href="m7-2.html">embeddings</a>) and looks for a <i>similar</i> earlier question: "how do I reset my password" and "forgot password, what to do" can share one answer. It hits more often, but it can hit <b>wrongly</b>: "cancel my order" and "cancel my subscription" are close in meaning and different in action.</p>
+  <div class="warn">Never share cached answers between users when the answer depends on the user (their orders, their account) or on private documents. Put the user or tenant in the cache key, or do not cache that path at all. A semantic cache needs a strict similarity threshold, which you tune on real questions (<a href="m7-6.html">evals</a>).</div>
+  <p>Separately, some providers offer <b>prompt caching</b>: if the start of your prompt (a long system prompt or document) is identical across calls, repeated tokens are processed faster or billed cheaper. The rules and discounts differ by provider, so read their docs. The design lesson: put the stable part of the prompt first and the changing question last.</p>
+
+  <h3>2. Rate limits and token budgets</h3>
+  <p>There are two limits. <b>The provider limits you</b> (requests and tokens per minute). <b>You limit your users</b>, otherwise one user, or one bug, can burn your whole bill overnight. Count <b>tokens</b>, not only requests, because one request can be 100 tokens or 100,000. Cap the output with a maximum-output-tokens setting, cap the input length, and keep a per-user daily token budget in Redis. The counting methods are in <a href="m2-12.html">rate limiting</a> and <a href="m5-2.html">the rate limiter design</a>. Return a clear "limit reached" message rather than failing quietly.</p>
+
+  <h3>3. Queues for long jobs</h3>
+  <p>If a task takes 30 seconds to many minutes (summarise 200 pages, generate a report), do not hold an HTTP request open. Accept the job, put it on a <a href="m2-11.html">queue</a>, answer "job accepted, id 123", and let workers process it. The user polls, or you push the result by webhook or notification. Workers also let you <b>control concurrency</b>: ten workers means at most ten model calls at once, which keeps you under the provider's limits.</p>
+
+  <h3>4. Streaming</h3>
+  <p>For chat, the first words matter more than the last. Stream tokens to the browser as they are produced, using <a href="m2-1.html">server-sent events</a>, so the user sees text after the time-to-first-token instead of waiting for the whole answer. Streaming does not make the model cheaper or finish sooner; it makes the app <i>feel</i> faster. Note that a stream cut halfway is awkward to retry: you have already shown part of an answer.</p>
+
+  <h3>5. Timeouts and retries with backoff</h3>
+  <p>Set a timeout on every call (stricter for the time to first token than for the whole answer) so a hung request does not pin a server. Retry only errors that may pass by themselves: rate-limit errors (429), server errors (5xx) and timeouts. Never retry a bad request (400) or an auth failure; it will fail the same way. Wait longer after each failure (<b>exponential backoff</b>) and add <b>jitter</b> (a random part) so a thousand clients do not all retry in the same second. Respect a <code>Retry-After</code> header if the provider sends one, and stop after a small number of tries or a total deadline. More background: <a href="m3-4.html">retries and idempotency</a> and <a href="m3-6.html">circuit breakers and timeouts</a>.</p>
+<pre><code>async function withRetry(fn, { maxTries = 4, baseMs = 200, capMs = 5000 } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!err.retryable || attempt === maxTries) throw err; // give up
+      const wait = Math.random() * Math.min(capMs, baseMs * 2 ** (attempt - 1)); // "full jitter"
+      console.log(`attempt ${attempt} failed, waiting ${Math.round(wait)} ms`);
+      await new Promise((resolve) =&gt; setTimeout(resolve, wait));
+    }
+  }
+}</code></pre>
+  <p>Here <code>fn</code> is "call the model" and your code marks an error <code>retryable</code> for 429, 5xx and timeouts. This snippet is provider-neutral on purpose. Many official SDKs already retry for you, so check before adding a second layer (retries multiplied by retries make a storm).</p>
+
+  <h3>6. Fallbacks between models and providers</h3>
+  <p>Providers have outages and slow hours. A <b>fallback</b> sends the request to a second model, or a second provider, when the first keeps failing or times out. A <a href="m3-6.html">circuit breaker</a> stops you from hammering a provider that is clearly down. Costs of fallbacks: the second model may answer a little differently, may need a slightly different prompt, may have a different privacy policy, and you must test it before the bad day arrives. Aggregator gateways exist that do this routing for you; they add convenience and one more dependency.</p>
+
+  <h3>7. Cheap-model routing</h3>
+  <p>Most questions are easy. A <b>router</b> sends easy ones to a small, cheap, fast model and only hard ones to a strong, expensive model. The router can be simple rules (short question, known intent), a small classifier, or the cheap model itself saying "I am not sure, escalate". The risk is routing a hard question to a weak model, so measure answer quality on both paths with a golden set.</p>
+
+  <h3>The numbers: what these tricks are worth</h3>
+  <p>Example prices only (check the provider's page for real ones): <b>Rs 200 per million input tokens, Rs 800 per million output tokens</b>. Say a support bot gets 10,000 requests a day, each with 1,500 input and 400 output tokens.</p>
+  <ul>
+    <li>One request: input 1,500 x 200 / 1,000,000 = Rs 0.30. Output 400 x 800 / 1,000,000 = Rs 0.32. Total <b>Rs 0.62</b>.</li>
+    <li>Per day: 10,000 x 0.62 = <b>Rs 6,200</b>.</li>
+    <li>With a cache that answers 30% of requests: only 7,000 reach the model, 7,000 x 0.62 = <b>Rs 4,340</b>.</li>
+    <li>With routing instead (example: 60% of requests go to a model that costs one tenth as much): 0.4 x 0.62 + 0.6 x 0.062 = Rs 0.2852 per request, so 10,000 x 0.2852 = <b>Rs 2,852</b>.</li>
+  </ul>
+  <p>These percentages are invented to show the method. Your real hit rate and routing split come from your own traffic.</p>
+
+  <h3>Techniques vs what they save</h3>
+  <table>
+    <tr><th>Technique</th><th>Latency</th><th>Cost</th><th>Errors</th><th>Main risk</th></tr>
+    <tr><td>Exact cache</td><td>Big win on a hit</td><td>Big win on a hit</td><td>Hides outages for cached questions</td><td>Low hit rate; stale answers</td></tr>
+    <tr><td>Semantic cache</td><td>Win on a hit</td><td>Win on a hit</td><td>Some</td><td>Wrong answer on a near-miss; data leaking between users</td></tr>
+    <tr><td>Rate limit / token budget</td><td>None</td><td>Caps the worst case</td><td>Avoids provider 429s</td><td>Blocks real users if set too tight</td></tr>
+    <tr><td>Queue</td><td>Async: the user waits for the result, not for the request</td><td>None</td><td>Smooths spikes, allows retries</td><td>More moving parts; user must be told to wait</td></tr>
+    <tr><td>Streaming</td><td>Faster first word (perceived)</td><td>None</td><td>None</td><td>Hard to retry mid-stream</td></tr>
+    <tr><td>Timeout + retry</td><td>Can add wait</td><td>Can add cost</td><td>Fixes passing failures</td><td>Retry storms</td></tr>
+    <tr><td>Fallback</td><td>Can add wait</td><td>Varies</td><td>Survives an outage</td><td>Different answer quality</td></tr>
+    <tr><td>Cheap-model routing</td><td>Small model is often faster</td><td>Big win</td><td>None</td><td>Hard question sent to a weak model</td></tr>
+  </table>
+
+  <h3>When to use, when not to</h3>
+  <ul>
+    <li><b>Early on, do not build everything.</b> Start with timeouts, a retry, an output-token cap and a per-user limit. Those four prevent most disasters.</li>
+    <li><b>Add a cache when many users ask the same thing</b> (an FAQ bot). Skip it when every question is unique or personal.</li>
+    <li><b>Add a queue when work is long or bursty.</b> Skip it for a short chat where streaming is enough.</li>
+    <li><b>Add routing and fallbacks when the bill or the downtime hurts.</b> Both need an <a href="m7-6.html">eval set</a> to stay safe.</li>
+  </ul>
+  <p class="tip">Watch the cost per request on a dashboard from day one (<a href="m7-6.html">observability</a>). You cannot reduce what you do not measure.</p>
+</section>
+
+<section class="picture">
+  <h2>The request path, drawn</h2>
+  <figure>
+    <svg viewBox="0 0 640 400" role="img" aria-label="A client sends a request to the API, which checks rate limit and token budget, then a cache. On a cache hit the answer returns straight to the client. On a miss a router sends easy questions to a small model and hard ones to a strong model. If the strong model fails, the request goes to a fallback provider. Slow jobs go from the API to a queue and then a worker.">
+      <defs><marker id="ar-m7-4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="150" width="100" height="50" rx="8"/>
+        <rect x="160" y="140" width="120" height="70" rx="8"/>
+        <rect x="320" y="150" width="110" height="50" rx="8"/>
+        <rect x="490" y="150" width="130" height="50" rx="8"/>
+        <rect x="160" y="250" width="120" height="50" rx="8"/>
+        <rect x="10" y="250" width="110" height="50" rx="8"/>
+        <rect x="380" y="270" width="110" height="50" rx="8"/>
+        <rect x="510" y="270" width="110" height="50" rx="8"/>
+        <rect x="510" y="350" width="110" height="40" rx="8"/>
+        <path d="M112 175 H158" marker-end="url(#ar-m7-4)"/>
+        <path d="M282 175 H318" marker-end="url(#ar-m7-4)"/>
+        <path d="M432 175 H488" marker-end="url(#ar-m7-4)"/>
+        <path d="M220 210 V248" marker-end="url(#ar-m7-4)"/>
+        <path d="M158 275 H122" marker-end="url(#ar-m7-4)"/>
+        <path d="M520 200 V235 H435 V268" marker-end="url(#ar-m7-4)"/>
+        <path d="M565 200 V268" marker-end="url(#ar-m7-4)"/>
+        <path d="M565 320 V348" marker-end="url(#ar-m7-4)" stroke-dasharray="5 4"/>
+        <path d="M375 150 V100 H60 V148" marker-end="url(#ar-m7-4)" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="60" y="180" font-size="14" font-weight="700">Client</text>
+        <text x="220" y="163" font-size="14" font-weight="700">API</text>
+        <text x="220" y="181" font-size="13">rate limit +</text>
+        <text x="220" y="199" font-size="13">token budget</text>
+        <text x="375" y="172" font-size="14" font-weight="700">Cache</text>
+        <text x="375" y="190" font-size="13">exact / semantic</text>
+        <text x="555" y="172" font-size="14" font-weight="700">Router</text>
+        <text x="555" y="190" font-size="13">pick a model</text>
+        <text x="220" y="272" font-size="14" font-weight="700">Queue</text>
+        <text x="220" y="290" font-size="13">long jobs</text>
+        <text x="65" y="272" font-size="14" font-weight="700">Worker</text>
+        <text x="65" y="290" font-size="13">calls the model</text>
+        <text x="435" y="292" font-size="14" font-weight="700">Small model</text>
+        <text x="435" y="310" font-size="13">easy questions</text>
+        <text x="565" y="292" font-size="14" font-weight="700">Strong model</text>
+        <text x="565" y="310" font-size="13">hard questions</text>
+        <text x="565" y="375" font-size="13">Other provider</text>
+        <text x="135" y="168" font-size="13">1</text>
+        <text x="300" y="168" font-size="13">2</text>
+        <text x="460" y="168" font-size="13">3</text>
+        <text x="217" y="90" font-size="13">hit: answer straight from the cache, no model call</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" font-size="13">
+        <text x="230" y="236">slow job</text>
+        <text x="555" y="341" text-anchor="end">on repeated errors</text>
+        <text x="10" y="338">1. Check rate limit and token budget</text>
+        <text x="10" y="356">2. Look in the cache (exact, then meaning)</text>
+        <text x="10" y="374">3. Miss: the router picks a model</text>
+        <text x="10" y="392">Retry with backoff inside every model call.</text>
+      </g>
+    </svg>
+    <figcaption>Dashed arrows are the shortcuts: a cache hit skips the model, and a failing model hands over to a fallback.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m7-4 scaling-llm-app.excalidraw</code> in your Module 7 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+LLM+semantic+caching+explained" target="_blank" rel="noopener">YouTube search: "ByteByteGo LLM semantic caching explained"</a>
+      <span class="meta">Pick any short video. Watch the part that compares an exact cache with a semantic cache.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=exponential+backoff+with+jitter+explained" target="_blank" rel="noopener">YouTube search: "exponential backoff with jitter explained"</a>
+      <span class="meta">Any video under 10 minutes. Watch for why the random part (jitter) matters.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://eugeneyan.com/writing/llm-patterns/" target="_blank" rel="noopener">Eugene Yan: Patterns for Building LLM-based Systems &amp; Products</a>
+      <span class="meta">Read the "Caching" and "Guardrails" patterns. Skim the other headings first.</span></li>
+    <li><a href="https://huyenchip.com/blog/" target="_blank" rel="noopener">Chip Huyen's blog</a>
+      <span class="meta">Search the list for her posts on building LLM applications and read the part about latency and cost.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes)</h2>
+
+  <h3>A. Cost math in the browser console (10 minutes)</h3>
+  <ol class="steps">
+    <li>In Chrome press <kbd>F12</kbd>, then click the <span class="ui">Console</span> tab. If it is hidden, click the <span class="ui">&gt;&gt;</span> arrows in the tab bar.</li>
+    <li>Click <span class="ui">Copy</span> below, click inside the console, press <kbd>Ctrl</kbd> + <kbd>V</kbd>, and press <kbd>Enter</kbd>. If Chrome asks you to type <code>allow pasting</code> first, type it and press <kbd>Enter</kbd>, then paste again.
+<pre><code>const inPerM = 200;   // example: rupees per 1 million input tokens
+const outPerM = 800;  // example: rupees per 1 million output tokens
+const perRequest = 1500 * inPerM / 1e6 + 400 * outPerM / 1e6;
+const perDay = perRequest * 10000;
+console.log("per request", perRequest);
+console.log("per day, no tricks", perDay);
+console.log("per day, 30% cache hits", perRequest * 7000);
+const routed = 0.4 * perRequest + 0.6 * (perRequest / 10);
+console.log("per day, routed", routed * 10000);</code></pre></li>
+    <li>You should see four lines: <code>per request 0.62</code>, <code>per day, no tricks 6200</code>, <code>per day, 30% cache hits 4340</code> and <code>per day, routed 2852</code>.</li>
+    <li>Now change the numbers: set the cache hit share to 60% (so 4,000 requests reach the model: <code>perRequest * 4000</code>) and make the routed share 80% cheap. Predict the answer on paper first, then check it. Which trick saves more with your numbers?</li>
+  </ol>
+
+  <h3>B. Watch retries with backoff (10 minutes)</h3>
+  <ol class="steps">
+    <li>Keep the console open. Paste this and press <kbd>Enter</kbd>. It uses a fake model call that fails twice with a retryable error and then succeeds.
+<pre><code>async function withRetry(fn, { maxTries = 4, baseMs = 200, capMs = 5000 } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!err.retryable || attempt === maxTries) throw err;
+      const wait = Math.random() * Math.min(capMs, baseMs * 2 ** (attempt - 1));
+      console.log(`attempt ${attempt} failed, waiting ${Math.round(wait)} ms`);
+      await new Promise((resolve) =&gt; setTimeout(resolve, wait));
+    }
+  }
+}
+
+let calls = 0;
+async function flakyModelCall() {
+  calls++;
+  if (calls &lt; 3) throw Object.assign(new Error("429 too many requests"), { retryable: true });
+  return "answer";
+}
+withRetry(flakyModelCall).then((r) =&gt; console.log("got", r, "after", calls, "calls"));</code></pre></li>
+    <li>You should see two "attempt N failed, waiting X ms" lines (X is random each time, so yours will differ) and then <code>got answer after 3 calls</code>.</li>
+    <li>Change <code>calls &lt; 3</code> to <code>calls &lt; 10</code>, paste the whole block again, and run it. After the third failed wait you should see a red error, because <code>maxTries</code> is 4 and the model never recovered. That is the "stop after a few tries" rule.</li>
+  </ol>
+
+  <h3>C. Draw your own (10 minutes)</h3>
+  <ol class="steps">
+    <li>Open <code>excalidraw.com</code>. Redraw the picture above from memory, using the keys from <a href="m0-3.html">lesson m0-3</a>.</li>
+    <li>For a chatbot that answers questions about a college's admission rules, write on paper which three techniques you would add first, and which two you would skip for now, with one sentence of reason each.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why count tokens, not only requests, when you rate-limit an LLM app?</summary><p>Requests differ hugely in size. One request can use 100 tokens or 100,000, and the bill and the provider's limits are in tokens. A request-count limit lets one big request cost as much as hundreds of small ones.</p></details>
+  <details><summary>What is the difference between an exact cache and a semantic cache?</summary><p>An exact cache hits only when the whole prompt is identical. A semantic cache embeds the question and hits on a similar one. It gets more hits but can return the wrong answer for a near-miss, so it needs a strict threshold.</p></details>
+  <details><summary>Which errors should you retry, and which not?</summary><p>Retry errors that may pass by themselves: 429, 5xx and timeouts, with exponential backoff and jitter, and a limit on tries. Do not retry 400-type errors or auth failures; they will fail again.</p></details>
+  <details><summary>What breaks if a thousand clients all retry after exactly 1 second, then 2, then 4?</summary><p>They retry in waves at the same moments, so each wave hits the provider (or your own server) together and the overload continues. Jitter spreads the retries out.</p></details>
+  <details><summary>What breaks if a semantic cache is shared across all users of a bank chatbot?</summary><p>"What is my balance?" is similar to another user's "what is my balance?", so one customer could be shown another's cached answer. Personal answers must never be cached across users: include the user in the key or skip caching.</p></details>
+  <details><summary>Your bot costs too much and the answers are mostly easy FAQs. What would you try first and why?</summary><p>First an exact or semantic cache for repeated FAQs, since a hit costs nothing. Then cheap-model routing for the rest. Both are measured against a golden set so quality does not quietly drop. Rate limits and an output cap protect the worst case in the meantime.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>An LLM call is slow, expensive and rate-limited, so I call it less: cache repeated answers, route easy questions to a small model, and set per-user token budgets.</blockquote>
+  <blockquote>I put a timeout on every call, retry only 429s, 5xx and timeouts with exponential backoff and jitter, and keep a fallback model behind a circuit breaker for provider outages.</blockquote>
+  <blockquote>Long jobs go on a queue with a fixed number of workers, which also keeps me under the provider's rate limit. Chat streams tokens so the first word appears quickly.</blockquote>
+  <p><b>Common follow-up question:</b> "What is the risk of a semantic cache?"</p>
+  <p>It can return a confident answer to a question that only looks similar, and it can leak personal answers between users. I use a strict similarity threshold, keep the user or tenant in the key for personal data, set a TTL, and check hit quality on a golden set.</p>
+</section>
+
+</main>
+</body>
+</html>

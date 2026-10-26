@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI design problems</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m7-7">
+<main class="lesson">
+
+<section class="story">
+  <h2>Four shops, one checklist</h2>
+  <p>A good shopkeeper opens four very different shops: a tea stall that serves a long queue, a help desk that answers from a thick rule book, a phone booth where every second of silence feels rude, and a sales team that writes letters to new customers. The goods differ, but the owner asks the same questions every time: who comes, how many, what must be fast, what can go wrong, and what does it cost?</p>
+  <p>AI interviews work the same way. "Design a chatbot" and "design a voice agent" sound different, but you answer with the same <a href="m4-2.html">7-step framework</a> you already know. The new part is that the expensive, slow, unreliable box in the middle is a language model, and you now know how to handle it (<a href="m7-1.html">tokens</a>, <a href="m7-3.html">RAG</a>, <a href="m7-4.html">scaling</a>, <a href="m7-5.html">agents</a>, <a href="m7-6.html">guardrails and evals</a>).</p>
+</section>
+
+<section class="explain">
+  <h2>Four AI design problems, compactly</h2>
+  <p class="tip">Before reading each problem, set a 5-minute timer and write your own requirements and a rough box diagram. Then compare. In the real interview each of these would take 45 minutes; here every problem is a compact version of the same seven steps.</p>
+  <p><b>Example prices used below (invented, check real ones):</b> Rs 200 per million input tokens and Rs 800 per million output tokens, as in the earlier lessons. A day is about 86,400 seconds.</p>
+
+  <h3>Problem 1: a ChatGPT-like chat app</h3>
+  <p><b>1. Requirements.</b> Functional: sign in, start a chat, send a message and see the answer appear word by word, keep and reopen past chats, stop a reply midway. Non-functional: first words within about a second or two, a conversation that stays coherent when long, cost under control, safe content. Out of scope: image generation, voice, plugins.</p>
+  <p><b>2. Estimation.</b> 100,000 daily users x 10 messages = 1,000,000 messages a day. 1,000,000 / 86,400 = about 12 per second on average; peak at 3x is about 35 per second. A streamed answer stays open about 15 seconds, so at peak about 35 x 15 = <b>525 open streams</b>. Tokens: with history, say 2,000 input and 400 output per message: 2,000 x 200 / 1,000,000 = Rs 0.40, plus 400 x 800 / 1,000,000 = Rs 0.32, so Rs 0.72 a message and 1,000,000 x 0.72 = <b>Rs 720,000 (7.2 lakh) a day</b>. The model bill dwarfs servers and storage. Storage: about 2 KB of text per message pair x 1,000,000 = 2 GB a day, about 730 GB a year.</p>
+  <p><b>3. API.</b></p>
+<pre><code>POST /v1/chats                          -&gt; { "chat_id": "c1" }
+POST /v1/chats/{id}/messages            body: { "text": "..." }
+     -&gt; Server-Sent Events: token, token, ... , done { "message_id", "tokens_used" }
+POST /v1/chats/{id}/stop                -&gt; cancels the running reply
+GET  /v1/chats                          -&gt; list of the user's chats
+GET  /v1/chats/{id}/messages?before=... -&gt; older messages (paged)</code></pre>
+  <p><b>4. Data model.</b> <code>users</code>, <code>chats(id, user_id, title, created_at)</code>, <code>messages(id, chat_id, role, content, tokens_in, tokens_out, created_at)</code>. The only hot query is "latest messages of one chat", so PostgreSQL with an index on <code>(chat_id, created_at)</code> is fine. Partition or shard by <code>chat_id</code> at much larger scale (<a href="m2-10.html">sharding</a>).</p>
+  <p><b>5. High-level design.</b> Browser, load balancer, stateless app servers (auth and <a href="m2-12.html">rate limit</a> per user and per token budget), a context builder that loads recent messages, the LLM provider call, then the answer streamed back over <a href="m2-1.html">SSE</a>. The app saves the full reply after the stream ends. Billing and analytics events go on a <a href="m2-11.html">queue</a>.</p>
+  <p><b>6. Deep dives.</b></p>
+  <table>
+    <tr><th>Deep dive</th><th>Options</th><th>Pick</th></tr>
+    <tr><td>Long conversations outgrow the context window and the budget</td><td>Send everything; sliding window of the last N turns; summarise old turns; retrieve old messages by meaning (<a href="m7-3.html">RAG</a> over the chat)</td><td>Sliding window plus a running summary. Predictable cost, simple. Add retrieval only if users need to refer to old chats</td></tr>
+    <tr><td>Many long-lived streams</td><td>One server holds each stream; or a gateway holds connections and workers produce tokens</td><td>Stateless servers behind a load balancer with long idle timeouts. Cancel the upstream model call when the client disconnects, so you stop paying for words nobody reads</td></tr>
+  </table>
+  <p><b>7. Trade-offs.</b> Streaming improves perceived speed but makes retries hard (see <a href="m7-4.html">scaling</a>). Cheap-model routing saves money but risks quality. Per-user daily token budgets protect the bill but annoy heavy users. <b>At 10x:</b> add provider fallbacks, prompt caching of the stable prompt prefix, regional servers, and move the message store to sharded storage.</p>
+
+  <h3>Problem 2: a customer-support RAG bot</h3>
+  <p><b>1. Requirements.</b> Functional: answer customer questions from the company's help articles, cite the source, hand over to a human when unsure or on request, remember the current chat. Non-functional: answers grounded in the documents (no invention), reply starts within about 2 seconds, one company's data never shown to another, new or changed articles live within an hour. Out of scope: taking actions like refunds (a later step, with <a href="m7-5.html">approval</a>).</p>
+  <p><b>2. Estimation.</b> 20,000 questions a day. If 80% fall in an 8-hour working window: 16,000 / 28,800 seconds = about 0.6 per second; peak at 3x is about 2 per second. Throughput is tiny, so cost and quality are the real problems. Tokens per question: 300 rules + 200 history + 100 question + 5 chunks x 300 = 1,500 of sources, so 2,100 input and 250 output. Cost: 2,100 x 200 / 1,000,000 = Rs 0.42, plus 250 x 800 / 1,000,000 = Rs 0.20, so Rs 0.62 a question and 20,000 x 0.62 = <b>Rs 12,400 a day</b>. If a cache answers 25%, then 15,000 x 0.62 = Rs 9,300. Storage: 50,000 chunks x (384 numbers x 4 bytes = 1.5 KB vector + about 2 KB text) = about 175 MB. It fits in one Postgres with pgvector (<a href="m7-2.html">embeddings</a>).</p>
+  <p><b>3. API.</b></p>
+<pre><code>POST /v1/conversations                       -&gt; { "id": "k1" }
+POST /v1/conversations/{id}/messages         body: { "text": "..." }
+     -&gt; stream: tokens ... done { "answer", "sources": [{ "title", "url" }], "handoff": false }
+POST /v1/conversations/{id}/feedback         body: { "message_id", "helpful": true }
+POST /v1/admin/documents                     (ingest or update an article)</code></pre>
+  <p><b>4. Data model.</b> <code>documents(id, tenant_id, title, url, updated_at)</code>, <code>chunks(id, document_id, tenant_id, text, embedding vector(384))</code> with an HNSW index, <code>conversations</code>, <code>messages</code> (with the chunk ids used), and <code>feedback</code>. The <code>tenant_id</code> filter is applied in SQL before ranking (<a href="m5-14.html">multi-tenant design</a>).</p>
+  <p><b>5. High-level design.</b> Follow the numbered path in the picture below: the customer asks (1), the app server does auth, limits and input checks (2), the retriever embeds the question and fetches the top-k chunks for this tenant (3), the prompt is built with numbered sources (4), the model streams an answer (5), an output check requires a citation or hands off to a human (6), and the reply is streamed to the customer (7). A separate ingest pipeline keeps the vector store fresh.</p>
+  <p><b>6. Deep dives.</b></p>
+  <table>
+    <tr><th>Deep dive</th><th>Options</th><th>Pick</th></tr>
+    <tr><td>Retrieval quality and "I don't know"</td><td>Vector only; hybrid (keyword + vector); add a re-ranker; similarity threshold</td><td>Hybrid search, top 20 re-ranked to 5, plus a threshold. Below the threshold: no model answer, offer a human. Measure on a golden set (<a href="m7-6.html">evals</a>)</td></tr>
+    <tr><td>Freshness and safety of the knowledge</td><td>Re-embed everything nightly; re-embed only changed pages; delete on removal</td><td>Re-ingest per changed article and delete old chunks. Treat documents as untrusted data because they can carry prompt injection, and give the bot no powerful tools on this path</td></tr>
+  </table>
+  <p><b>7. Trade-offs.</b> A bigger k finds more but costs more and distracts the model. Strict thresholds reduce wrong answers but send more chats to humans. Languages: Hindi and Hinglish queries need a multilingual embedding model, and need more tokens (<a href="m7-1.html">lesson 1</a>). <b>At 10x:</b> cache frequent questions, route easy ones to a cheaper model, move vectors to a dedicated store if Postgres slows, and shard by tenant.</p>
+
+  <h3>Problem 3: a real-time voice agent</h3>
+  <p><b>1. Requirements.</b> Functional: the caller speaks, the agent answers in speech, the caller can interrupt ("barge-in"), the agent can look up an order, a full transcript is saved. Non-functional: the pause after the caller stops speaking must feel natural, so aim for about 1 second to the first sound; calls must not drop; many calls at once. Out of scope: building your own speech models, outbound dialling campaigns.</p>
+  <p><b>2. Estimation (latency first).</b> A voice agent is a chain of three streaming services: speech-to-text (STT), the LLM, then text-to-speech (TTS). The latency budget is spent hop by hop. These are example targets, not measured figures:</p>
+  <table>
+    <tr><th>Hop</th><th>Budget (ms)</th></tr>
+    <tr><td>Detect that the caller has stopped speaking</td><td>200</td></tr>
+    <tr><td>STT finishes the last words</td><td>150</td></tr>
+    <tr><td>LLM time to first token</td><td>400</td></tr>
+    <tr><td>TTS makes the first audio chunk</td><td>150</td></tr>
+    <tr><td>Network in and out</td><td>100</td></tr>
+    <tr><td><b>Total to first sound</b></td><td><b>1,000</b></td></tr>
+  </table>
+  <p>Cost of one 5-minute call with invented prices: STT Rs 0.5 per audio minute (on all 5 minutes) = Rs 2.50. The agent speaks about half the call: 2.5 minutes x 150 words = 375 words, about 2,250 characters; with TTS at Rs 1 per 1,000 characters that is Rs 2.25. The LLM runs 20 turns, each about 1,500 input and 60 output tokens: 1,500 x 200 / 1,000,000 + 60 x 800 / 1,000,000 = 0.30 + 0.048 = Rs 0.348 a turn, so 20 x 0.348 = Rs 6.96. Total 2.50 + 2.25 + 6.96 = <b>about Rs 12 a call</b>. At 1,000 simultaneous calls you hold 1,000 open audio streams, each fanning out to three provider streams.</p>
+  <p><b>3. API.</b></p>
+<pre><code>POST /v1/calls                         body: { "phone": "...", "agent_id": "..." } -&gt; { "call_id" }
+WS   /v1/calls/{id}/audio              duplex: audio frames in, audio frames out, control events
+webhook call.ended                     { "call_id", "duration", "transcript_url", "outcome" }
+GET  /v1/calls/{id}/transcript         -&gt; turns with timestamps</code></pre>
+  <p><b>4. Data model.</b> <code>calls(id, started_at, ended_at, outcome)</code>, <code>turns(call_id, n, speaker, text, t_start, t_end, ttfb_ms)</code> for transcripts and per-turn latency, and <code>actions(call_id, tool, args, result)</code>. Raw audio goes in object storage with a retention period.</p>
+  <p><b>5. High-level design.</b> Caller phone or browser, a telephony or WebRTC gateway, a voice-activity detector (finds where speech starts and ends), streaming STT, the LLM (with a few allow-listed tools), streaming TTS, and audio back to the caller. A session server holds the call's state, and every stage <b>streams into the next</b>: partial text goes to the LLM, and the first complete sentence goes to TTS while the LLM is still writing.</p>
+  <p><b>6. Deep dives.</b></p>
+  <table>
+    <tr><th>Deep dive</th><th>Options</th><th>Pick</th></tr>
+    <tr><td>Hitting the latency budget</td><td>Wait for each stage to finish; stream every stage; a speech-to-speech model that skips the text steps</td><td>Stream every stage, send TTS sentence by sentence, keep prompts short, use a small fast model, place servers near the provider. A speech-to-speech model can be faster but gives you less control and weaker transcripts</td></tr>
+    <tr><td>Barge-in (caller interrupts)</td><td>Ignore interruptions; stop audio only; stop audio, cancel the LLM call and fix the history</td><td>The VAD detects speech while the agent talks: stop playback at once, cancel the LLM and TTS streams, and record in the history only what was actually spoken</td></tr>
+  </table>
+  <p><b>7. Trade-offs.</b> Fillers like "let me check" hide a slow tool call but must be honest. Tools lengthen the pause, so cache lookups and prefetch likely data. A cheaper small model is faster but handles complex requests worse. Provide a human handoff. <b>At 10x:</b> regional deployments (distance is latency), autoscaling on concurrent calls, and per-hop latency dashboards (<a href="m7-6.html">observability</a>).</p>
+
+  <h3>Problem 4: an AI lead-outreach pipeline</h3>
+  <p><b>1. Requirements.</b> Functional: take a list of leads, enrich each with public company information, have an LLM draft a short personalised email, let a human review and approve, then send within limits and record replies and opt-outs. Non-functional: nothing is sent without approval, one lead is never emailed twice, sending is spread out within provider limits, unsubscribe requests are honoured at once. Out of scope: buying data, scraping private data. Follow the consent, spam and data-protection laws that apply to you; the design must make opt-out easy to respect.</p>
+  <p><b>2. Estimation.</b> 500 leads a day, 3 enrichment lookups each = 1,500 external calls a day. Drafting at 800 input and 200 output tokens: 800 x 200 / 1,000,000 + 200 x 800 / 1,000,000 = 0.16 + 0.16 = Rs 0.32 a draft, so 500 x 0.32 = <b>Rs 160 a day</b>. A human review at 1 minute each is 500 minutes, about 8.3 hours: <b>review, not the model, is the bottleneck</b>. If each mailbox may send 100 a day (example limit; check your email provider), 500 sends need 5 mailboxes, spread over working hours.</p>
+  <p><b>3. API.</b></p>
+<pre><code>POST /v1/campaigns                       body: { "name", "template_rules", "daily_limit" }
+POST /v1/campaigns/{id}/leads            body: [ { "email", "company", "name" } ] -&gt; accepted count
+GET  /v1/drafts?status=pending_review    -&gt; drafts with the facts they used
+POST /v1/drafts/{id}/approve | reject    body: { "edited_text"? }
+POST /v1/unsubscribe                     (public link in every email)</code></pre>
+  <p><b>4. Data model.</b> <code>leads(id, campaign_id, email, status, unique(campaign_id, email))</code>, <code>enrichment(lead_id, source, facts, fetched_at)</code>, <code>drafts(id, lead_id, text, prompt_version, status, reviewer, reviewed_at)</code>, <code>sends(id, draft_id, sent_at, provider_msg_id)</code>, and a <code>suppression</code> table of people who opted out, checked before every send.</p>
+  <p><b>5. High-level design.</b> A lead enters a queue. An enrichment worker calls external APIs. A drafting worker builds a prompt from the enrichment facts and calls the LLM, and a guard checks the draft (no invented claims, no banned phrases, right length). The draft waits in a review queue for a human. On approval a sender worker checks the suppression list and the daily limit, then sends. Replies and bounces come back by webhook and update the lead's status. Each stage is a queue plus workers (<a href="m2-11.html">message queues</a>).</p>
+  <p><b>6. Deep dives.</b></p>
+  <table>
+    <tr><th>Deep dive</th><th>Options</th><th>Pick</th></tr>
+    <tr><td>Never send twice, never lose a lead</td><td>At-most-once; at-least-once with deduplication</td><td>At-least-once queues, an idempotency key per lead and campaign, and a unique constraint on the sends table. Failed jobs go to a dead-letter queue (<a href="m3-4.html">idempotency and DLQs</a>)</td></tr>
+    <tr><td>Quality and safety of the drafts</td><td>Trust the model; rules only; rules plus review with a sample audit</td><td>The draft may use only the enrichment facts you pass in (so it cannot invent), is checked by rules, and always passes human review. Track the approve, edit and reject rates per prompt version as your quality metric</td></tr>
+    <tr><td>Send limits</td><td>Send as fast as possible; fixed daily cap; token bucket per mailbox</td><td>A token bucket per mailbox with a daily cap and random spacing. A rate limiter (<a href="m5-2.html">rate limiter</a>) protects sender reputation</td></tr>
+  </table>
+  <p><b>7. Trade-offs.</b> More automation means more risk to your sender reputation and brand. Human review is slow but is the right place to catch embarrassing drafts. Enrichment data can be stale or wrong, so store its source and date. <b>At 10x:</b> 5,000 leads a day needs about 83 hours of review, so use confidence-based sampling for low-risk segments, more workers, and per-campaign budgets for tokens and sends.</p>
+</section>
+
+<section class="picture">
+  <h2>The support bot, drawn</h2>
+  <figure>
+    <svg viewBox="0 0 640 430" role="img" aria-label="Customer-support RAG bot architecture. Numbered path: 1 customer asks in chat, 2 app server does auth, limits and input guard, 3 retriever embeds the question and searches the vector database, 4 prompt builder adds rules, history and numbered sources, 5 the LLM streams the answer, 6 an output guard needs a citation or hands off to a human agent, 7 the reply streams back to the customer. An ingest pipeline loads, chunks and embeds documents into the vector database ahead of time.">
+      <defs><marker id="ar-m7-7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="280" y="30" width="120" height="50" rx="8"/>
+        <rect x="440" y="30" width="190" height="50" rx="8"/>
+        <rect x="10" y="130" width="90" height="60" rx="8"/>
+        <rect x="130" y="130" width="120" height="60" rx="8"/>
+        <rect x="280" y="130" width="120" height="60" rx="8"/>
+        <rect x="430" y="130" width="140" height="60" rx="8"/>
+        <rect x="430" y="270" width="140" height="60" rx="8"/>
+        <rect x="280" y="270" width="120" height="60" rx="8"/>
+        <rect x="130" y="270" width="120" height="60" rx="8"/>
+        <path d="M102 160 H128" marker-end="url(#ar-m7-7)"/>
+        <path d="M252 160 H278" marker-end="url(#ar-m7-7)"/>
+        <path d="M402 160 H428" marker-end="url(#ar-m7-7)"/>
+        <path d="M500 192 V268" marker-end="url(#ar-m7-7)"/>
+        <path d="M428 300 H402" marker-end="url(#ar-m7-7)"/>
+        <path d="M278 300 H252" marker-end="url(#ar-m7-7)" stroke-dasharray="5 4"/>
+        <path d="M340 332 V360 H55 V192" marker-end="url(#ar-m7-7)"/>
+        <path d="M315 130 V82" marker-end="url(#ar-m7-7)"/>
+        <path d="M365 82 V128" marker-end="url(#ar-m7-7)" stroke-dasharray="5 4"/>
+        <path d="M438 55 H402" marker-end="url(#ar-m7-7)" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="340" y="50" font-size="14" font-weight="700">Vector DB</text>
+        <text x="340" y="68" font-size="13">chunks + vectors</text>
+        <text x="535" y="50" font-size="14" font-weight="700">Ingest (ahead of time)</text>
+        <text x="535" y="68" font-size="13">load, chunk, embed</text>
+        <text x="55" y="155" font-size="14" font-weight="700">1 Customer</text>
+        <text x="55" y="173" font-size="13">asks in chat</text>
+        <text x="190" y="150" font-size="14" font-weight="700">2 App server</text>
+        <text x="190" y="168" font-size="13">auth, limits,</text>
+        <text x="190" y="186" font-size="13">input guard</text>
+        <text x="340" y="150" font-size="14" font-weight="700">3 Retriever</text>
+        <text x="340" y="168" font-size="13">embed + top-k</text>
+        <text x="340" y="186" font-size="13">tenant filter</text>
+        <text x="500" y="150" font-size="14" font-weight="700">4 Prompt</text>
+        <text x="500" y="168" font-size="13">rules + history</text>
+        <text x="500" y="186" font-size="13">+ sources [1] [2]</text>
+        <text x="500" y="295" font-size="14" font-weight="700">5 LLM</text>
+        <text x="500" y="313" font-size="13">streams the answer</text>
+        <text x="340" y="290" font-size="14" font-weight="700">6 Output guard</text>
+        <text x="340" y="308" font-size="13">needs a citation,</text>
+        <text x="340" y="326" font-size="13">else hand off</text>
+        <text x="190" y="295" font-size="14" font-weight="700">Human agent</text>
+        <text x="190" y="313" font-size="13">if unsure</text>
+        <text x="200" y="352" font-size="13">7 stream the reply to the customer</text>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" font-size="13">
+        <text x="307" y="112" text-anchor="end">query</text>
+        <text x="373" y="112">top-k chunks</text>
+        <text x="10" y="395">Dashed arrows: results coming back, ingest, and the handoff path.</text>
+        <text x="10" y="413">Every step is traced with tokens, cost and latency (lesson m7-6).</text>
+      </g>
+    </svg>
+    <figcaption>The numbered path 1 to 7 is one question. The ingest box runs separately, whenever a help article changes.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m7-7 support-rag-bot.excalidraw</code> in your Module 7 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+design+ChatGPT+system+design+interview" target="_blank" rel="noopener">YouTube search: "Hello Interview design ChatGPT system design interview"</a>
+      <span class="meta">Pick a full walkthrough. Watch how they handle streaming and long conversations, and compare with Problem 1.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=real-time+voice+AI+agent+architecture+STT+LLM+TTS+latency" target="_blank" rel="noopener">YouTube search: "real-time voice AI agent architecture STT LLM TTS latency"</a>
+      <span class="meta">Any video under 20 minutes. Watch the part that shows the three streaming hops and interruption handling.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: system design learning path</a>
+      <span class="meta">Skim the problem breakdowns and note how they spend the 45 minutes. If an AI or chat problem is listed, read it after your own attempt.</span></li>
+    <li><a href="https://huyenchip.com/blog/" target="_blank" rel="noopener">Chip Huyen's blog</a>
+      <span class="meta">Look for her posts on building LLM applications and AI platforms. Focus on how a request flows through guardrails, retrieval, the model and back.</span></li>
+    <li><a href="https://eugeneyan.com/writing/llm-patterns/" target="_blank" rel="noopener">Eugene Yan: Patterns for Building LLM-based Systems &amp; Products</a>
+      <span class="meta">Re-read the retrieval, caching and guardrails patterns now that you can place them in a design.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (45 minutes for the mock, plus review)</h2>
+
+  <h3>A. Timed 45-minute mock</h3>
+  <p>Pick <b>one</b> of the four problems. If you cannot decide, take the voice agent (the one with the least familiar numbers). Do not read its section first.</p>
+  <ol class="steps">
+    <li>Close this page. Open <span class="ui">Clock</span> from the Start menu, choose <span class="ui">Stopwatch</span>, and press <span class="ui">Start</span>. Open <span class="ui">Sound Recorder</span> from the Start menu and press the round red <span class="ui">Record</span> button, so you can listen back later.</li>
+    <li>Open <code>excalidraw.com</code> with a blank canvas. Say out loud the question, for example "Design a real-time voice agent." Follow the timeline from <a href="m4-2.html">the 7-step framework</a>: 2 minutes to repeat the question, 5 requirements, 3 estimation, 3 API, 3 data model, 10 high-level design, 14 deep dives, 5 wrap-up. Glance at the stopwatch at each switch.</li>
+    <li>In the estimation step, use <b>tokens and rupees</b>: say your assumed prices out loud ("say Rs 200 per million input tokens"), and do the multiplication on screen.</li>
+    <li>In the deep dives, always include one <b>AI-specific</b> risk (latency per hop, context growth, prompt injection, or cost) and one <b>classic</b> one (queues, caching, idempotency, rate limits).</li>
+    <li>Stop the recording and save it as <code>m7-7 mock.m4a</code> (or the name Sound Recorder suggests) in your Module 7 folder. Save the drawing as <code>m7-7 mock.excalidraw</code>.</li>
+    <li>Now read that problem's section and compare. Tick off: did you do the arithmetic? Did you place a guardrail? Did you say what a wrong answer costs and who reviews it? Write the two things you missed at the top of your drawing.</li>
+  </ol>
+
+  <h3>B. Variation questions</h3>
+  <p>Try each on paper for 5 minutes before opening the answer.</p>
+  <details><summary>1. The support bot must also issue refunds. What changes?</summary>
+    <p>Add a refund tool and move from a pure Q and A bot to a small agent (<a href="m7-5.html">agents and tools</a>). Keep it behind an allow-list, validate the order id and amount, cap the amount, require human approval above a limit, make the call idempotent so a retry never refunds twice, and log every call as an audit trail. Add golden-set cases that try to trick the bot into refunding.</p></details>
+  <details><summary>2. The voice agent's tool call (order lookup) takes 2 seconds. How do you keep the call natural?</summary>
+    <p>Say a short honest filler ("Let me check that for you") while the tool runs, start the lookup early when the intent is clear, cache or prefetch likely data (for example the caller's last order when the call connects), and set a timeout with a spoken fallback ("I am having trouble, shall I transfer you?").</p></details>
+  <details><summary>3. The chat app's monthly bill is double what you planned. Where do you look first?</summary>
+    <p>Per-request token logs (<a href="m7-6.html">traces with cost</a>): input tokens per message usually grow with history length, so check the context window handling. Then the share of cached or routed requests, retry storms, and a few heavy users or bots. Fixes: summarise old turns, cap history and output length, add per-user budgets, route easy messages to a cheaper model.</p></details>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>In the chat app estimate, why are 525 open streams a bigger worry than 35 requests per second?</summary><p>A streamed answer holds a connection open for about 15 seconds, so concurrency is requests per second times duration. Servers, load balancers and provider limits must handle hundreds of simultaneous long-lived connections, and must not time them out.</p></details>
+  <details><summary>What breaks if the support bot filters by tenant after ranking instead of in the SQL query?</summary><p>The top-k can fill with another customer's chunks that then get removed, leaving too few or no results. Worse, a bug in the later filter can leak one company's data to another. Filter before ranking, in the query.</p></details>
+  <details><summary>What breaks in the voice agent if the caller interrupts and you only stop the audio?</summary><p>The LLM and TTS keep running and still bill you, and the saved history says the agent said things the caller never heard, so the next reply is confused. Cancel the streams and keep only what was actually spoken.</p></details>
+  <details><summary>Why is human review, not the LLM, the bottleneck in the outreach pipeline, and what does it lead you to do?</summary><p>500 drafts a day cost only Rs 160 in model calls but need about 8.3 hours of review at a minute each. So you design the review queue (fast approve and edit, show the facts used), track approval rates per prompt version, and sample low-risk segments only at larger scale.</p></details>
+  <details><summary>Your latency budget is 1,000 ms but a test call takes 1,800 ms to the first sound. What is your debugging order?</summary><p>Log the time spent in each hop for each turn. Compare with the budget table, find the hop that is over, and fix that one: slow end-of-speech detection, a large prompt, a slow LLM first token, or non-streaming TTS. Without per-hop timings you are guessing.</p></details>
+  <details><summary>Which of the four problems would you design as a workflow, and which might need an agent? Why?</summary><p>The outreach pipeline and the support RAG bot are workflows: the steps are known and fixed, with model calls inside. The chat app is a single model call with context management. The voice agent may use a small agent loop for tool lookups, with a strict step limit because the caller is waiting.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>I treat the model as a slow, costly, unreliable dependency. So I do the token and rupee arithmetic first, then add streaming, caching, limits and fallbacks around it (<a href="m7-4.html">scaling LLM apps</a>).</blockquote>
+  <blockquote>For a support bot I put most effort into retrieval quality, a citation or "I don't know" path, tenant filtering in SQL, and a human handoff, and I measure it with a golden set before every change.</blockquote>
+  <blockquote>For a voice agent I work backwards from a latency budget per hop, stream every stage into the next, and handle interruption by cancelling the downstream streams.</blockquote>
+  <p><b>Common follow-up question:</b> "How would you evaluate this system before launch?"</p>
+  <p>Build a golden set of real questions with expected answers and sources, score with code checks, a human rubric and an LLM judge calibrated against humans, and run it on every prompt or model change. Add adversarial cases (prompt injection, out-of-scope, private data). After launch, sample live traffic, collect thumbs up or down, and turn failures into new test cases (<a href="m7-6.html">evals and observability</a>).</p>
+  <p><b>Common follow-up question:</b> "How do you control cost?"</p>
+  <p>Measure cost per request in traces first. Then cap input and output tokens, summarise long history, cache repeated answers, route easy requests to a cheaper model, set per-user token budgets, and review the top few spenders each week.</p>
+</section>
+
+</main>
+</body>
+</html>

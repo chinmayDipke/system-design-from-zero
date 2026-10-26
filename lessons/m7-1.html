@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How LLM apps work</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m7-1">
+<main class="lesson">
+
+<section class="story">
+  <h2>The very fast, very forgetful writer</h2>
+  <p>Imagine a writer sitting behind a counter. You slide a note under the glass. He reads it, then writes his reply <b>one small piece at a time</b>, each piece based on everything written so far. He is fast and he has read a huge number of books. But he has <b>no memory</b> of you. Every time you come back, you must slide the whole conversation under the glass again.</p>
+  <p>He also charges by the piece: a few paise for every piece he reads and a bit more for every piece he writes. And his desk is small. If your pile of notes is too big, it does not fit.</p>
+  <p>That writer is a <b>large language model (LLM)</b>. The "pieces" are called <b>tokens</b>, the small desk is the <b>context window</b>, and the bill is the <b>cost per request</b>. An LLM app is a normal app that talks to this writer over the internet.</p>
+</section>
+
+<section class="explain">
+  <h2>The moving parts of an LLM app</h2>
+  <p>An LLM is a <b>stateless API</b>, just like the stateless servers in <a href="m2-4.html">scaling</a>. You send text in, you get text out, and it remembers nothing. Your app supplies the memory, the data and the safety. Providers such as OpenAI, Anthropic, Google Gemini, or open models served by Groq or Hugging Face all work this way.</p>
+
+  <h3>Tokens</h3>
+  <p>The model does not read letters or words. It reads <b>tokens</b>: chunks of text, often a short word or a piece of a long word. A common rule of thumb for English is <b>about 4 characters, or about three-quarters of a word, per token</b>. So 100 tokens is roughly 75 words. This is only a rule of thumb. Code, numbers and rare words use more tokens. <b>Indian-language text usually needs more tokens</b> for the same meaning, because the tokenizer saw less of it while it was built. That means Hindi, Tamil or Marathi users can cost more and also fill the context window sooner. You will measure this yourself below.</p>
+
+  <h3>Context window</h3>
+  <p>The context window is the maximum number of tokens the model can look at in one call, <b>input and output together</b>. Your system prompt, the chat history, any documents you paste in, the user's question and the answer being written all share it. Window sizes differ by model and change often, so always read the provider's docs for the model you use. Never design around a number you remember.</p>
+
+  <h3>Temperature</h3>
+  <p>The model picks the next token from a list of likely options. <b>Temperature</b> controls how adventurous the pick is. Low (near 0): it picks the most likely token, so answers are steadier and repeat more. High: more variety and more surprises. Use low for extraction, classification and code. Use higher for brainstorming. Even at low temperature, do not assume two calls give identical text.</p>
+
+  <h3>Latency: two numbers, not one</h3>
+  <table>
+    <tr><th>Measure</th><th>Meaning</th><th>Why you care</th></tr>
+    <tr><td>Time to first token (TTFT)</td><td>Wait until the first piece of the answer arrives</td><td>This is when the user feels "it is working"</td></tr>
+    <tr><td>Total time</td><td>Wait until the whole answer is done</td><td>Grows with the length of the answer</td></tr>
+  </table>
+  <p>Tokens are produced one after another, so a longer answer takes longer. Example with made-up round numbers: TTFT 0.5 s, then 50 tokens per second. A 300-token answer takes 0.5 + 300 / 50 = <b>6.5 seconds</b>. If you wait for the full answer, the user stares at a spinner for 6.5 s. If you <b>stream</b>, the first words appear after about 0.5 s and the user starts reading while the rest arrives. Streaming usually uses server-sent events or a similar long-lived connection (compare the options in <a href="m2-1.html">the APIs lesson</a>). It does not make the model faster, it makes the wait feel shorter.</p>
+
+  <h3>Cost per request</h3>
+  <p>Providers charge per token, usually a price per <b>million</b> tokens, with <b>output tokens costing more than input tokens</b>. The prices below are <b>invented example numbers</b>. Check the provider's pricing page for real ones.</p>
+  <pre><code>Example prices (NOT real):  Rs 250 per 1M input tokens,  Rs 1000 per 1M output tokens
+One request: 1500 input tokens + 300 output tokens
+  input  = 1500 x 250  / 1,000,000 = Rs 0.375
+  output =  300 x 1000 / 1,000,000 = Rs 0.300
+  total                            = Rs 0.675
+100,000 requests a day  = Rs 67,500 a day  = about Rs 20.25 lakh in 30 days</code></pre>
+  <p>Small per call, large at scale. And chat apps have a trap: because the model has no memory, <b>every turn re-sends the whole history</b>. With the same example prices, a 5-turn chat where each question is 100 tokens and each answer 200 tokens sends 100, 400, 700, 1000 and 1300 input tokens on the five turns, and costs Rs 1.875, not the Rs 1.125 you would guess from "5 small calls". Long chats get expensive turn by turn.</p>
+
+  <h3>Why an LLM call is not like a database call</h3>
+  <table>
+    <tr><th></th><th>Database query</th><th>LLM call</th></tr>
+    <tr><td>Typical time</td><td>Milliseconds</td><td>Seconds</td></tr>
+    <tr><td>Same input again</td><td>Same output</td><td>May differ</td></tr>
+    <tr><td>Cost</td><td>Almost free per query</td><td>Paid per token</td></tr>
+    <tr><td>Failure</td><td>Rare, clear errors</td><td>Timeouts, rate limits (429), overload (5xx), refusals, cut-off answers</td></tr>
+    <tr><td>Output</td><td>Exact data</td><td>Plausible text that may be wrong</td></tr>
+  </table>
+  <p>So you design around it: set <b>timeouts</b>, <b>retry with backoff</b> (see <a href="m3-4.html">idempotency and retries</a>), put long jobs on a <a href="m2-11.html">queue</a>, and treat the answer as untrusted input. <a href="m7-4.html">Scaling LLM apps</a> covers these in detail.</p>
+
+  <h3>Trade-offs: when to use an LLM, when not to</h3>
+  <ul>
+    <li><b>Good fit:</b> messy language in or out: summaries, drafting, extraction from free text, question answering over documents, classification with fuzzy rules.</li>
+    <li><b>Bad fit:</b> exact arithmetic, anything that must be 100% correct and auditable (money, permissions), or anything a plain <code>if</code>, a regex or a SQL query already does cheaply and instantly.</li>
+    <li><b>Bigger model vs smaller model:</b> bigger usually reasons better but is slower and costs more. Many apps send easy requests to a cheap model and hard ones to a strong one.</li>
+    <li><b>Long context vs retrieval:</b> pasting everything is simple but pays for every token on every call. Retrieval (<a href="m7-3.html">RAG</a>) sends only the relevant pieces.</li>
+  </ul>
+  <p class="tip">Your app is the brain around the model: it holds the memory (history), the data (retrieval), the rules (system prompt, guardrails) and the bill. The model is one slow, paid, slightly random function call inside it.</p>
+</section>
+
+<section class="picture">
+  <h2>One request, drawn</h2>
+  <figure>
+    <svg viewBox="0 0 640 260" role="img" aria-label="A user sends a question to your backend. The backend builds a prompt from the system prompt, chat history and the question, calls the LLM API, and streams tokens back to the user.">
+      <defs><marker id="ar-m7-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="95" width="110" height="70" rx="12"/>
+        <rect x="200" y="60" width="170" height="140" rx="12"/>
+        <rect x="470" y="95" width="160" height="70" rx="12"/>
+        <path d="M122 115 H198" marker-end="url(#ar-m7-1)"/>
+        <path d="M372 115 H468" marker-end="url(#ar-m7-1)"/>
+        <path d="M468 145 H374" marker-end="url(#ar-m7-1)" stroke-dasharray="6 5"/>
+        <path d="M198 145 H124" marker-end="url(#ar-m7-1)" stroke-dasharray="6 5"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="65" y="125" font-size="16" font-weight="700">User</text>
+        <text x="65" y="146" font-size="13">(browser)</text>
+        <text x="285" y="84" font-size="16" font-weight="700">Your backend</text>
+        <text x="285" y="110" font-size="13">1. system prompt</text>
+        <text x="285" y="130" font-size="13">2. chat history</text>
+        <text x="285" y="150" font-size="13">3. new question</text>
+        <text x="285" y="176" font-size="13">= one big prompt</text>
+        <text x="550" y="125" font-size="16" font-weight="700">LLM API</text>
+        <text x="550" y="146" font-size="13">(stateless, paid)</text>
+        <text x="160" y="106" font-size="13">question</text>
+        <text x="420" y="106" font-size="13">prompt</text>
+        <text x="420" y="166" font-size="13">tokens</text>
+        <text x="160" y="170" font-size="13">streamed</text>
+        <text x="320" y="240" font-size="13">Dashed = tokens arriving one by one. You pay for tokens in both directions.</text>
+      </g>
+    </svg>
+    <figcaption>Your backend rebuilds the full prompt on every call. The model keeps nothing between calls.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m7-1 llm-request.excalidraw</code> in your Module 7 folder. Add a small database box under "Your backend" for the chat history.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Andrej+Karpathy+intro+to+large+language+models" target="_blank" rel="noopener">YouTube search: "Andrej Karpathy intro to large language models"</a>
+      <span class="meta">Pick the one-hour talk. Watch the first 15 minutes (what a model is, how it predicts the next piece of text).</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+how+LLMs+work" target="_blank" rel="noopener">YouTube search: "ByteByteGo how LLMs work"</a>
+      <span class="meta">Choose a short video under 15 minutes. Focus on tokens and how the answer is produced one token at a time.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://help.openai.com/en/articles/4936856-understanding-and-counting-tokens" target="_blank" rel="noopener">OpenAI Help: Understanding and counting tokens</a>
+      <span class="meta">Short. Focus on the rule of thumb (about 4 characters or three-quarters of a word per token) and why exact counts differ by model.</span></li>
+    <li><a href="https://huggingface.co/learn" target="_blank" rel="noopener">Hugging Face Learn (courses home)</a>
+      <span class="meta">Open the LLM course and skim the chapter on tokenizers when you have spare time.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+
+  <h3>A. See tokens with your own eyes</h3>
+  <ol class="steps">
+    <li>In Chrome, open a new tab with <kbd>Ctrl</kbd> + <kbd>T</kbd> and go to <code>platform.openai.com/tokenizer</code>. (OpenAI's tokenizer page. If it asks you to sign in, or is missing or moved, search the web for "LLM tokenizer online" and use any free one. Each tool counts a little differently, which is fine.)</li>
+    <li>Click the text box and paste this English sentence: <code>Please send my order status on WhatsApp.</code></li>
+    <li>Read the token count and character count the page shows. Divide characters by tokens. For English it is usually somewhere around 4.</li>
+    <li>Clear the box and paste the same meaning in Hindi: <code>कृपया मेरे ऑर्डर की स्थिति व्हाट्सएप पर भेजें।</code></li>
+    <li>Compare. For similar meaning, the Hindi text usually has <b>more tokens per character and more tokens overall</b>. Write both numbers on paper. If the page offers a colour view, notice that Hindi words are cut into many small pieces.</li>
+    <li>Try one more: paste a line of code, such as <code>const total = items.reduce((a, b) =&gt; a + b.price, 0);</code>. Write down the count.</li>
+  </ol>
+
+  <h3>B. Do the cost math in the browser Console</h3>
+  <ol class="steps">
+    <li>Press <kbd>F12</kbd> in Chrome, then click the <span class="ui">Console</span> tab.</li>
+    <li>Click <span class="ui">Copy</span> on the block below, click in the Console, press <kbd>Ctrl</kbd> + <kbd>V</kbd> and then <kbd>Enter</kbd>. If Chrome asks you to type "allow pasting" first, type it, press <kbd>Enter</kbd>, and paste again.
+<pre><code>const inPerM = 250;   // example: rupees per 1 million input tokens
+const outPerM = 1000; // example: rupees per 1 million output tokens
+
+function costRupees(inputTokens, outputTokens) {
+  return (inputTokens * inPerM + outputTokens * outPerM) / 1_000_000;
+}
+
+const one = costRupees(1500, 300);
+console.log("one request: Rs", one.toFixed(3));
+console.log("100,000 requests a day: Rs", Math.round(one * 100000));
+console.log("30 days: Rs", Math.round(one * 100000 * 30));
+
+// Chat history: every turn re-sends all earlier turns.
+let history = 0, total = 0;
+for (let turn = 1; turn &lt;= 5; turn++) {
+  const input = history + 100;   // old history + new question (100 tokens)
+  const output = 200;            // answer
+  total += costRupees(input, output);
+  history = input + output;
+  console.log("turn", turn, "input tokens", input);
+}
+console.log("5-turn chat: Rs", total.toFixed(3));</code></pre></li>
+    <li>You should see:
+<pre><code>one request: Rs 0.675
+100,000 requests a day: Rs 67500
+30 days: Rs 2025000
+turn 1 input tokens 100
+turn 2 input tokens 400
+turn 3 input tokens 700
+turn 4 input tokens 1000
+turn 5 input tokens 1300
+5-turn chat: Rs 1.875</code></pre></li>
+    <li>Now change the two example prices to a real model's numbers from its pricing page, and change the token counts to the Hindi number you wrote down in part A. Run again. How much more does a Hindi user cost?</li>
+  </ol>
+
+  <h3>C. Explain it out loud (5 minutes)</h3>
+  <ol class="steps">
+    <li>Open the Windows voice recorder: press <kbd>⊞ Win</kbd>, type <code>Sound Recorder</code>, press <kbd>Enter</kbd>, then click the round record button.</li>
+    <li>Explain in your own words: why does the model "forget" you, what is a token, and why is a long chat more expensive on turn 10 than on turn 1? Click stop and listen back.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why must a chat app send the whole conversation on every turn?</summary><p>The LLM API is stateless: it remembers nothing between calls. The app stores the history and re-sends it each time, which is also why cost grows turn by turn.</p></details>
+  <details><summary>What is the difference between time to first token and total time?</summary><p>TTFT is the wait until the first piece of the answer arrives. Total time is the wait for the whole answer and grows with its length. Streaming improves how fast the user sees something, not the total time.</p></details>
+  <details><summary>A request has 2,000 input tokens and 500 output tokens. With example prices of Rs 200 per million input tokens and Rs 800 per million output tokens, what does it cost?</summary><p>Input: 2000 x 200 / 1,000,000 = Rs 0.40. Output: 500 x 800 / 1,000,000 = Rs 0.40. Total Rs 0.80.</p></details>
+  <details><summary>Why might the same support bot cost more for Hindi users than for English users?</summary><p>Indian-language text usually needs more tokens for the same meaning, so both input and output bills are higher and the context window fills sooner.</p></details>
+  <details><summary>Your feature needs to total an invoice exactly and check a user's permission. LLM or ordinary code? Why?</summary><p>Ordinary code. Arithmetic and permissions must be exact, fast, cheap and auditable. An LLM is slow, paid, may vary between calls and can be confidently wrong. Use the LLM only for the messy-language parts, for example reading a free-text complaint.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>An LLM API is stateless and billed per token, so my app owns the memory, the data and the guardrails, and I design for seconds of latency and occasional failures.</blockquote>
+  <blockquote>I stream responses so the user sees the first token fast, and I track input and output tokens per request because output tokens usually cost more.</blockquote>
+  <blockquote>I only use an LLM where the input or output is messy language. Exact, cheap, auditable work stays in normal code.</blockquote>
+  <p><b>Common follow-up question:</b> "How would you keep LLM costs under control?"</p>
+  <p>Measure tokens per request first. Then trim the prompt and the history (summarise old turns), cache repeated answers, route easy requests to a cheaper model, cap the output length, and set per-user token budgets. Retrieval instead of pasting whole documents also cuts input tokens. Details are in <a href="m7-4.html">Scaling LLM apps</a>.</p>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embeddings and vector databases</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m7-2">
+<main class="lesson">
+
+<section class="story">
+  <h2>A map where meaning has an address</h2>
+  <p>Imagine a huge shopping mall. Shops that sell similar things stand close together: all the sweet shops in one corner, all the phone shops on the second floor, all the clothes shops on the third. If you want "something to eat", you do not read every signboard. You walk to the food corner and look at the nearest shops.</p>
+  <p>An <b>embedding</b> is the address of a piece of text on such a map. A model reads a sentence and gives back a list of numbers, like map coordinates. The clever part: sentences with <b>similar meaning get nearby addresses</b>, even if they share no words. "How do I get my money back?" lands close to "Refund policy".</p>
+  <p>A <b>vector database</b> is a database that is good at one question: "which addresses are nearest to this one?"</p>
+</section>
+
+<section class="explain">
+  <h2>Embeddings, similarity and vector indexes</h2>
+
+  <h3>What an embedding really is</h3>
+  <p>An embedding is a fixed-length list of decimal numbers (a <b>vector</b>) produced by an embedding model. Real models give hundreds or thousands of numbers per text, for example 384 or 1536. The length is called the <b>dimension</b>. You cannot read the numbers, because the dimensions are not "food" or "travel": the model invented them while learning. Two rules matter:</p>
+  <ul>
+    <li><b>Same model for everything.</b> Documents and queries must be embedded by the same model. Vectors from two different models are not comparable.</li>
+    <li><b>Fixed dimension.</b> A <code>vector(384)</code> column only accepts 384 numbers.</li>
+  </ul>
+  <p>In this lesson you will type tiny 3-number vectors by hand so you can see the idea. In <a href="m7-3.html">the next lesson</a> a real model makes 384 numbers for you.</p>
+
+  <h3>Measuring "nearby"</h3>
+  <p>There are three common ways to measure how close two vectors are. pgvector gives each an operator:</p>
+  <table>
+    <tr><th>Operator</th><th>Measures</th><th>Smaller means</th><th>Use when</th></tr>
+    <tr><td><code>&lt;=&gt;</code></td><td>Cosine distance (angle between the arrows)</td><td>More similar</td><td>Safe default for text</td></tr>
+    <tr><td><code>&lt;-&gt;</code></td><td>Euclidean distance (straight-line gap)</td><td>More similar</td><td>When size of the vector matters</td></tr>
+    <tr><td><code>&lt;#&gt;</code></td><td>Negative inner product</td><td>More similar</td><td>Vectors already normalised (length 1); fastest</td></tr>
+  </table>
+  <p><b>Cosine similarity</b> looks only at the <i>direction</i> the arrow points, not its length. Same direction = 1, unrelated = about 0, opposite = -1. pgvector returns <b>cosine distance</b>, which is <code>1 - similarity</code>, so <b>smaller is better</b> and <code>ORDER BY embedding &lt;=&gt; query</code> puts the best match first. Beginners often get this backwards.</p>
+
+  <h3>Exact search vs approximate search</h3>
+  <p>Without an index, the database compares your query to <b>every row</b>. That is exact (perfect recall) but its cost grows with the number of rows. For a few thousand rows, that is fine. For millions, too slow. So vector indexes do <b>approximate nearest neighbour (ANN)</b> search: they find results that are <i>very probably</i> the true nearest ones, much faster. You trade a little accuracy (<b>recall</b>) for speed.</p>
+  <table>
+    <tr><th></th><th>IVFFlat</th><th>HNSW</th></tr>
+    <tr><td>Idea</td><td>Split the space into clusters ("lists"). Search only the nearest few clusters.</td><td>A layered graph of "friends". Hop from friend to nearer friend until you arrive.</td></tr>
+    <tr><td>Build</td><td>Faster and smaller, but should be built <b>after</b> data is loaded, because it learns the clusters from your rows</td><td>Slower and bigger, but can be created on an empty table</td></tr>
+    <tr><td>Query speed and recall</td><td>Good</td><td>Usually better for read-heavy, low-latency search</td></tr>
+    <tr><td>Typical pick</td><td>Very large data, memory is tight</td><td>Good default for most apps</td></tr>
+  </table>
+  <p class="tip">Supabase's own guide also recommends HNSW for read-heavy workloads where recall matters. Either way, tuning details change between versions, so read the <a href="https://github.com/pgvector/pgvector" target="_blank" rel="noopener">pgvector README</a> when you tune.</p>
+  <div class="warn">An index only helps if the query's <code>ORDER BY</code> uses the same distance operator the index was built for. An index made with <code>vector_cosine_ops</code> serves <code>&lt;=&gt;</code>, not <code>&lt;-&gt;</code>. On a tiny table Postgres will ignore any index and scan everything, and that is the correct choice.</div>
+
+  <h3>pgvector vs a dedicated vector database</h3>
+  <p><b>pgvector</b> is a Postgres extension. Your vectors live in a normal table beside your other columns, so you get SQL, joins, transactions, backups and row-level security for free. A <b>dedicated vector database</b> (Pinecone, Qdrant, Weaviate, Milvus and others) is built only for vector search.</p>
+  <table>
+    <tr><th></th><th>pgvector (in your Postgres)</th><th>Dedicated vector DB</th></tr>
+    <tr><td>Operations</td><td>One database to run. Nothing new.</td><td>One more system to pay for, secure and keep in sync</td></tr>
+    <tr><td>Filtering</td><td>Normal SQL <code>WHERE</code> plus <code>JOIN</code> (for example "only this tenant's documents")</td><td>Metadata filters, usually simpler but less flexible than SQL</td></tr>
+    <tr><td>Consistency</td><td>The vector and its row commit together (<a href="m2-3.html">ACID</a>)</td><td>You must keep it in sync with your main DB</td></tr>
+    <tr><td>Scale</td><td>Great up to a large size; very large or very high query rates may strain one Postgres</td><td>Built to scale out for huge collections</td></tr>
+  </table>
+  <p><b>When to use pgvector:</b> you already use Postgres or Supabase, data is thousands to a few million chunks, and you need per-user filtering. <b>When to look at a dedicated one:</b> very large collections, very high query rates, or a team that wants managed vector features. Start simple, and move only when you can measure a problem.</p>
+  <p>Vectors are a good fit for "find things that mean the same". They are a poor fit for exact lookups (an order number, an email), where a normal index or <a href="m2-14.html">keyword search</a> is faster and exact. Many real systems combine both, called <b>hybrid search</b>.</p>
+</section>
+
+<section class="picture">
+  <h2>A tiny map of meaning</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="A two-dimensional map. Food items samosa and biryani are close together near the top left. Travel items train ticket and flight to Goa are together near the right. Tech items laptop and smartphone are together at the bottom. A query diamond labelled something to eat sits next to the food items, with a dashed circle around its nearest neighbours.">
+      <defs><marker id="ar-m7-2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="10" width="620" height="280" rx="12"/>
+        <circle cx="160" cy="90" r="48" stroke-dasharray="6 5"/>
+        <circle cx="130" cy="75" r="6" fill="currentColor"/>
+        <circle cx="185" cy="105" r="6" fill="currentColor"/>
+        <circle cx="440" cy="70" r="6" fill="currentColor"/>
+        <circle cx="500" cy="95" r="6" fill="currentColor"/>
+        <circle cx="330" cy="235" r="6" fill="currentColor"/>
+        <circle cx="395" cy="255" r="6" fill="currentColor"/>
+        <path d="M155 80 L163 90 L155 100 L147 90 z" fill="currentColor"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif">
+        <text x="55" y="74" font-size="14">samosa</text>
+        <text x="215" y="110" font-size="14">biryani</text>
+        <text x="415" y="55" font-size="14">train ticket</text>
+        <text x="480" y="122" font-size="14">flight to Goa</text>
+        <text x="270" y="262" font-size="14">laptop</text>
+        <text x="405" y="272" font-size="14">smartphone</text>
+        <text x="30" y="190" font-size="14" font-weight="700">Diamond = query: "something to eat"</text>
+        <text x="30" y="212" font-size="13">Dashed circle = its nearest neighbours (top 2)</text>
+        <text x="440" y="190" font-size="13">Nearby = similar meaning</text>
+      </g>
+    </svg>
+    <figcaption>Real embeddings have hundreds of dimensions, but the idea is the same: find the points nearest to the query point.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m7-2 embedding-map.excalidraw</code> in your Module 7 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+vector+database+explained" target="_blank" rel="noopener">YouTube search: "ByteByteGo vector database explained"</a>
+      <span class="meta">Pick a video under 15 minutes. Watch the part on embeddings and how nearest-neighbour search works.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Supabase+pgvector+embeddings+explained" target="_blank" rel="noopener">YouTube search: "Supabase pgvector embeddings explained"</a>
+      <span class="meta">Skim for the part that creates a vector column and runs a similarity query.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://supabase.com/docs/guides/ai" target="_blank" rel="noopener">Supabase docs: AI &amp; Vectors</a>
+      <span class="meta">Open "Vector columns" and "Vector indexes". Focus on how a column is declared and when to use HNSW or IVFFlat.</span></li>
+    <li><a href="https://github.com/pgvector/pgvector" target="_blank" rel="noopener">pgvector README (GitHub)</a>
+      <span class="meta">Read the "Querying" section and the table of distance operators. Skip the rest for now.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+  <p>You will use the Supabase SQL Editor. Do this in a throwaway table and delete it at the end. The SQL was run on a real Postgres with pgvector (PGlite) and the outputs below are real. Your row order for ties, or the exact decimals, may differ in the last digit.</p>
+
+  <h3>A. Turn on vectors and create a tiny table</h3>
+  <ol class="steps">
+    <li>Open <code>supabase.com/dashboard</code>, click your project, then click <span class="ui">SQL Editor</span> in the left bar (it may be shown as a "&gt;_" icon). Click <span class="ui">New query</span> (it may say <span class="ui">+</span> or <span class="ui">New snippet</span>).</li>
+    <li>Click <span class="ui">Copy</span> on the block below, click in the editor, press <kbd>Ctrl</kbd> + <kbd>V</kbd>, then click <span class="ui">Run</span> (or press <kbd>Ctrl</kbd> + <kbd>Enter</kbd>).
+<pre><code>create extension if not exists vector with schema extensions;
+
+create table items (
+  id bigint generated always as identity primary key,
+  name text not null,
+  embedding extensions.vector(3)
+);
+
+insert into items (name, embedding) values
+  ('samosa',        '[0.9, 0.1, 0.0]'),
+  ('biryani',       '[0.8, 0.2, 0.1]'),
+  ('train ticket',  '[0.1, 0.9, 0.1]'),
+  ('flight to Goa', '[0.2, 0.8, 0.2]'),
+  ('laptop',        '[0.0, 0.1, 0.9]'),
+  ('smartphone',    '[0.1, 0.2, 0.8]');</code></pre></li>
+    <li>You should see "Success. No rows returned". If it says a table or extension already exists, that is fine, or change <code>items</code> to <code>items2</code> everywhere. The three numbers mean "how food-like, travel-like, tech-like", which we made up. Real models do not label their dimensions.</li>
+    <li>Optional check: Supabase also shows vector in <span class="ui">Database</span> then <span class="ui">Extensions</span>. Search "vector"; it should be enabled.</li>
+  </ol>
+
+  <h3>B. Find the nearest meaning</h3>
+  <p>Our query vector <code>[0.85, 0.15, 0.05]</code> stands for "something to eat".</p>
+  <ol class="steps">
+    <li>Clear the editor (<kbd>Ctrl</kbd> + <kbd>A</kbd>, <kbd>Delete</kbd>), paste this, and click <span class="ui">Run</span>:
+<pre><code>select name, embedding &lt;=&gt; '[0.85, 0.15, 0.05]' as distance
+from items
+order by embedding &lt;=&gt; '[0.85, 0.15, 0.05]'
+limit 3;</code></pre></li>
+    <li>You should see these rows (decimals may differ in the last digits):
+<pre><code>name            distance
+samosa          0.0037184699510960373
+biryani         0.004420605342517536
+flight to Goa   0.5910695993991616</code></pre>
+    Smaller distance = closer. The two food items are very close. The third place already belongs to a different topic, which shows that top-k always returns something even when nothing is really close.</li>
+    <li>Turn distance into the friendlier similarity (1 minus distance):
+<pre><code>select name,
+       round((1 - (embedding &lt;=&gt; '[0.85, 0.15, 0.05]'))::numeric, 4) as similarity
+from items
+order by embedding &lt;=&gt; '[0.85, 0.15, 0.05]'
+limit 3;</code></pre>
+    Expected: <code>samosa 0.9963</code>, <code>biryani 0.9956</code>, <code>flight to Goa 0.4089</code>.</li>
+    <li>Compare all three operators on the same query:
+<pre><code>select name,
+  round((embedding &lt;-&gt; '[0.85, 0.15, 0.05]')::numeric, 4) as euclidean,
+  round((embedding &lt;=&gt; '[0.85, 0.15, 0.05]')::numeric, 4) as cosine,
+  round((embedding &lt;#&gt; '[0.85, 0.15, 0.05]')::numeric, 4) as neg_inner_product
+from items
+order by 3
+limit 6;</code></pre>
+    Expected:
+<pre><code>name            euclidean  cosine  neg_inner_product
+samosa          0.0866     0.0037  -0.7800
+biryani         0.0866     0.0044  -0.7150
+flight to Goa   0.9314     0.5911  -0.3000
+train ticket    1.0618     0.7143  -0.2250
+smartphone      1.0618     0.7842  -0.1550
+laptop          1.2031     0.9234  -0.0600</code></pre>
+    Notice: samosa and biryani tie on straight-line distance but cosine separates them, because cosine compares direction. Row order for exact ties may differ on your screen.</li>
+  </ol>
+
+  <h3>C. Add an HNSW index and break a rule on purpose</h3>
+  <ol class="steps">
+    <li>Run:
+<pre><code>create index on items using hnsw (embedding vector_cosine_ops);</code></pre>
+    It should succeed with no rows returned. (On Supabase the <code>extensions</code> schema is normally on the search path, so the bare operator class name works. If you get "operator class does not exist", write <code>extensions.vector_cosine_ops</code>.)</li>
+    <li>Search for "travel" (<code>[0.1, 0.85, 0.1]</code>):
+<pre><code>select name from items
+order by embedding &lt;=&gt; '[0.1, 0.85, 0.1]'
+limit 2;</code></pre>
+    Expected: <code>train ticket</code> then <code>flight to Goa</code>.</li>
+    <li>With only 6 rows Postgres would normally ignore the index. To see it used, run these two lines together:
+<pre><code>set enable_seqscan = off;
+explain select name from items order by embedding &lt;=&gt; '[0.1, 0.85, 0.1]' limit 2;</code></pre>
+    The plan should include a line like <code>Index Scan using items_embedding_idx on items</code>. The cost numbers will differ. If the editor shows only the last result or complains, ignore this step. It is a nice-to-have.</li>
+    <li>Break the dimension rule on purpose:
+<pre><code>insert into items (name, embedding) values ('bad', '[1, 2]');</code></pre>
+    You should get an error like <code>expected 3 dimensions, not 2</code>. That is why one embedding model per column matters.</li>
+  </ol>
+
+  <h3>D. Clean up</h3>
+  <ol class="steps">
+    <li>Run <code>drop table items;</code>. Leave the extension on. You need it in the next lesson.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>In one sentence, what is an embedding?</summary><p>A fixed-length list of numbers produced by a model, placed so that texts with similar meaning get nearby points.</p></details>
+  <details><summary>pgvector's <code>&lt;=&gt;</code> returns 0.01 for one row and 0.60 for another. Which is the better match?</summary><p>The 0.01 row. <code>&lt;=&gt;</code> is a distance (1 minus cosine similarity), so smaller means more similar.</p></details>
+  <details><summary>Why can you not mix vectors from two different embedding models in one column?</summary><p>Each model has its own coordinate system and often a different length. Distances between vectors from different models are meaningless.</p></details>
+  <details><summary>What do you give up by using an ANN index like HNSW, and what do you get?</summary><p>You give up a little accuracy (recall): the true nearest neighbour may occasionally be missed. You get much faster search on large tables, instead of comparing against every row.</p></details>
+  <details><summary>A startup already runs Postgres, has 200,000 document chunks and needs "only this customer's documents" filtering. pgvector or a dedicated vector DB? Why?</summary><p>pgvector. The data size is well within its range, it avoids running and syncing another system, and per-customer filtering is a plain SQL <code>WHERE</code> next to the vector search. Revisit only if measurements show a scale or latency problem.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>An embedding turns text into a vector so that similar meaning means a small distance, and a vector database finds the nearest vectors quickly.</blockquote>
+  <blockquote>For small to medium data I start with pgvector in the Postgres I already run, with an HNSW index, and move to a dedicated vector store only when I can show it is the bottleneck.</blockquote>
+  <blockquote>Semantic search is great for fuzzy meaning but poor at exact matches, so I combine it with keyword search when users search for IDs or names.</blockquote>
+  <p><b>Common follow-up question:</b> "How do you choose between IVFFlat and HNSW?"</p>
+  <p>HNSW is usually my default: better query speed and recall, and it can be built on an empty table, at the cost of a slower build and more memory. IVFFlat builds faster and is smaller but needs data loaded first to make good clusters, so I consider it when memory or build time is the constraint. In both cases I measure recall against exact search on a sample before trusting it.</p>
+</section>
+
+</main>
+</body>
+</html>
