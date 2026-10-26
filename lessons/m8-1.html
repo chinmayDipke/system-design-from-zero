@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turn your projects into design stories</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m8-1">
+<main class="lesson">
+
+<section class="story">
+  <h2>The dabbawala who could tell his own story</h2>
+  <p>Ask two tiffin delivery men about their work. The first says, "I carry boxes." The second says, "I pick up 30 boxes from homes in one area, sort them by colour code at the station, hand them to the next man, and every box reaches the right office by 12:30. Once a train was late, so we split the route in two. Now we keep a spare man for monsoon days."</p>
+  <p>Both do the same job. Only the second sounds like someone who <i>understands</i> it. He names the problem, the numbers, one hard choice and what went wrong.</p>
+  <p>Your own projects are the same. "I built a booking app with Next.js" is the first man. This lesson turns it into the second man's story, in about three minutes.</p>
+</section>
+
+<section class="explain">
+  <h2>The design story template</h2>
+  <p>Interviewers often start with "Tell me about a project you built." In a design round this is a free chance to show that you think like an engineer. Most candidates waste it by listing technologies. You will instead fill in <b>seven blanks</b>. Each blank maps to something you already learned.</p>
+  <table>
+    <tr><th>Blank</th><th>What to write</th><th>Course lesson</th></tr>
+    <tr><td>1. Problem</td><td>Who was hurting, and why? One or two sentences, no technology.</td><td><a href="m4-2.html">The 7-step framework</a> (requirements)</td></tr>
+    <tr><td>2. Users and scale</td><td>How many users, how many requests a day, which hour is the busiest.</td><td><a href="m3-9.html">Estimation</a></td></tr>
+    <tr><td>3. Architecture sketch</td><td>Four to six boxes and the arrows between them. You must be able to draw it in two minutes.</td><td><a href="m4-3.html">Drawing a clean diagram</a></td></tr>
+    <tr><td>4. One hard decision</td><td>Two real options, what you picked, what you gave up.</td><td><a href="m4-4.html">How you are scored</a></td></tr>
+    <tr><td>5. What broke</td><td>A real failure, how you found it, how you fixed it.</td><td><a href="m3-7.html">Observability</a>, <a href="m3-4.html">idempotency and retries</a></td></tr>
+    <tr><td>6. Numbers</td><td>One before and after: a time, a cost, an error count.</td><td><a href="m1-5.html">Latency numbers</a></td></tr>
+    <tr><td>7. At 10x</td><td>What breaks first if traffic grows ten times, and what you would change.</td><td><a href="m2-4.html">Scaling</a></td></tr>
+  </table>
+
+  <h3>A fully worked example (invented)</h3>
+  <p class="tip">This project is made up. The numbers are examples, not real data. Use the shape, not the content.</p>
+  <p><b>Project: a tiffin-subscription app.</b></p>
+  <p><b>1. Problem.</b> Home cooks in one city sell monthly meal plans. Customers pause or skip meals by phone call, and the kitchen often cooks too much or too little.</p>
+  <p><b>2. Users and scale.</b> About 5,000 subscribers and 40 kitchens. The next day's lunch list is locked at 9:00 pm. About 80% of skip and pause changes arrive in the last hour: 4,000 changes in 3,600 seconds is about 1 a second on average, say 5 a second at the peak. Small, but a spike with a hard deadline.</p>
+  <p><b>3. Sketch.</b> Customer app and kitchen app, both calling one API server, which talks to a PostgreSQL database. A scheduled job builds the kitchen list at 9:00 pm. A queue sends the push notifications.</p>
+  <p><b>4. Hard decision.</b> <i>Option A:</i> count live, so every kitchen screen runs a query on the changing table. <i>Option B:</i> a batch job freezes a snapshot at 9:00 pm. I chose B. It gave kitchens a stable list and cheap reads. I gave up "last-minute skip at 9:05 pm" and handled it with a small manual exception list. This is a <a href="m3-2.html">consistency</a> trade-off in simple clothes: a fixed deadline is easier to reason about than fresh data.</p>
+  <p><b>5. What broke.</b> The scheduler retried the 9:00 pm job after a timeout, so it ran twice and two copies of the list were sent. Kitchens cooked double. I found it from a log line showing two job ids at the same minute. The fix was an <a href="m3-4.html">idempotency key</a> per kitchen per date, with a unique constraint in the database, so the second run does nothing.</p>
+  <p><b>6. Numbers.</b> Building the list took 40 seconds. After adding an <a href="m2-3.html">index</a> on (kitchen_id, date) it took 2 seconds. Duplicate lists went from 3 in the first month to 0.</p>
+  <p><b>7. At 10x.</b> 50,000 subscribers. First thing to break: the 9:00 pm job and its database reads. I would add a <a href="m2-9.html">read replica</a> for the kitchen app, split the job per city, and put notifications on a <a href="m2-11.html">queue</a> with retries and a <a href="m3-4.html">dead-letter queue</a>.</p>
+
+  <h3>Do and don't</h3>
+  <ul>
+    <li><b>Do</b> pick one hard decision and give both options. "I used Redis" is a tool; "I chose a cache over a faster query because reads outnumbered writes ten to one" is a decision.</li>
+    <li><b>Do</b> include a failure. Interviewers trust people who admit what broke. A story with no problems sounds invented.</li>
+    <li><b>Do</b> say "I do not have exact numbers, but roughly..." when unsure. Never invent a precise figure you cannot defend.</li>
+    <li><b>Don't</b> list every technology. Three minutes is short.</li>
+    <li><b>Don't</b> claim work that was a team's. Say "we" for the team and "I" for what you did.</li>
+    <li><b>Don't</b> read from the page. Practice until you can tell it from the seven keywords.</li>
+  </ul>
+  <p class="warn">If your project was small, that is fine. Tell the honest scale, then spend more time on blank 7 ("at 10x"). That is where design thinking shows, and it is exactly the skill from the <a href="m4-1.html">45-minute round</a>.</p>
+</section>
+
+<section class="picture">
+  <h2>The seven blanks as a flow</h2>
+  <figure>
+    <svg viewBox="0 0 640 230" role="img" aria-label="Seven boxes in a snake: problem, users and scale, sketch, hard decision on the top row going right; then what broke, numbers, at 10x on the bottom row going left">
+      <defs><marker id="ar-m8-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="20" width="130" height="70" rx="10"/>
+        <rect x="175" y="20" width="130" height="70" rx="10"/>
+        <rect x="335" y="20" width="130" height="70" rx="10"/>
+        <rect x="495" y="20" width="130" height="70" rx="10"/>
+        <rect x="495" y="130" width="130" height="70" rx="10"/>
+        <rect x="335" y="130" width="130" height="70" rx="10"/>
+        <rect x="175" y="130" width="130" height="70" rx="10"/>
+        <path d="M147 55 H173" marker-end="url(#ar-m8-1)"/>
+        <path d="M307 55 H333" marker-end="url(#ar-m8-1)"/>
+        <path d="M467 55 H493" marker-end="url(#ar-m8-1)"/>
+        <path d="M560 92 V128" marker-end="url(#ar-m8-1)"/>
+        <path d="M493 165 H467" marker-end="url(#ar-m8-1)"/>
+        <path d="M333 165 H307" marker-end="url(#ar-m8-1)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="80" y="46" font-size="14" font-weight="700">1 Problem</text>
+        <text x="80" y="68" font-size="13">who hurts, why</text>
+        <text x="240" y="46" font-size="14" font-weight="700">2 Users, scale</text>
+        <text x="240" y="68" font-size="13">people + load</text>
+        <text x="400" y="46" font-size="14" font-weight="700">3 Sketch</text>
+        <text x="400" y="68" font-size="13">5 boxes, arrows</text>
+        <text x="560" y="46" font-size="14" font-weight="700">4 Hard decision</text>
+        <text x="560" y="68" font-size="13">A vs B, you pick</text>
+        <text x="560" y="156" font-size="14" font-weight="700">5 What broke</text>
+        <text x="560" y="178" font-size="13">failure + fix</text>
+        <text x="400" y="156" font-size="14" font-weight="700">6 Numbers</text>
+        <text x="400" y="178" font-size="13">real figures</text>
+        <text x="240" y="156" font-size="14" font-weight="700">7 At 10x</text>
+        <text x="240" y="178" font-size="13">what gets hard</text>
+      </g>
+    </svg>
+    <figcaption>Read it like a snake: left to right on the top row, then right to left on the bottom row. Three minutes in total, about 25 seconds a box.</figcaption>
+  </figure>
+  <p>Redraw it in Excalidraw (see <a href="m0-3.html">lesson m0-3</a>) and save it as <code>m8-1 story-template.excalidraw</code> in your module folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+system+design+interview+how+to+talk+about+your+projects" target="_blank" rel="noopener">YouTube search: Hello Interview, talking about your projects in interviews</a>
+      <span class="meta">Pick one video under 20 minutes. Watch how the speaker states the problem and scale before naming any technology.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+system+design+interview+tips" target="_blank" rel="noopener">YouTube search: Gaurav Sen, system design interview tips</a>
+      <span class="meta">Watch any one short video. Notice how every choice is followed by "because".</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: system design learning path</a>
+      <span class="meta">Skim the delivery framework pages. Focus on how requirements and trade-offs are spoken aloud, then copy that tone for blank 4.</span></li>
+    <li><a href="https://github.com/donnemartin/system-design-primer" target="_blank" rel="noopener">System Design Primer on GitHub</a>
+      <span class="meta">Use the "Step 1 to 4" outline as a second checklist for your sketch (blank 3).</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes)</h2>
+  <h3>A. Make the template document</h3>
+  <ol class="steps">
+    <li>Open a new tab with <kbd>Ctrl</kbd> + <kbd>T</kbd>, type <code>docs.google.com</code> and press <kbd>Enter</kbd>. Sign in with your Google account if asked.</li>
+    <li>Click <span class="ui">Blank document</span> (a white page with a plus sign). It may say <span class="ui">Blank</span> instead.</li>
+    <li>Click the title at the top left (it says <span class="ui">Untitled document</span>), type <code>Project story 1</code> and press <kbd>Enter</kbd>.</li>
+    <li>Type these seven headings, each on its own line, pressing <kbd>Enter</kbd> after each: <code>1 Problem</code>, <code>2 Users and scale</code>, <code>3 Sketch</code>, <code>4 Hard decision</code>, <code>5 What broke</code>, <code>6 Numbers</code>, <code>7 At 10x</code>.</li>
+  </ol>
+
+  <h3>B. Fill it in for one of your own projects</h3>
+  <ol class="steps">
+    <li>Pick the project you know best, even a small one. You should see seven headings with empty space under each.</li>
+    <li>Under <b>1 Problem</b>, write two sentences: who needed this and what hurt. Do not write any technology name yet.</li>
+    <li>Under <b>2 Users and scale</b>, write the number of users and requests. If you do not know, estimate with the steps in <a href="m3-9.html">m3-9</a> and write "about".</li>
+    <li>Under <b>3 Sketch</b>, write the boxes in words, for example "browser, Next.js API, Supabase". Then open Excalidraw and draw them in two minutes (a drawing helps, but the words are enough in the doc).</li>
+    <li>Under <b>4 Hard decision</b>, write "Option A: ... Option B: ... I chose ... because ... I gave up ...". If you cannot find a decision, look at where you chose a database, a cache, or sync versus background work.</li>
+    <li>Under <b>5 What broke</b>, write one real bug, outage or slow page, how you noticed it and how you fixed it.</li>
+    <li>Under <b>6 Numbers</b>, write one before and after. If you never measured, open the browser DevTools (<kbd>F12</kbd>, <span class="ui">Network</span> tab) on a slow page and write what you see now.</li>
+    <li>Under <b>7 At 10x</b>, write what would break first and your first two changes. Link each change to a lesson, for example <a href="m2-7.html">caching</a> or <a href="m2-11.html">queues</a>.</li>
+  </ol>
+
+  <h3>C. Say it in three minutes</h3>
+  <ol class="steps">
+    <li>Press the <kbd>⊞ Win</kbd> key, type <code>Clock</code>, press <kbd>Enter</kbd>, click <span class="ui">Stopwatch</span>.</li>
+    <li>Shrink your document to just the seven headings (no sentences). Look only at those.</li>
+    <li>Click ▶ and tell the story out loud, as if to an interviewer.</li>
+    <li>Stop at the end. If you went over 3:00, cut blank 3 to three boxes and blank 5 to one sentence. If you finished under 2:00, add one number or one trade-off.</li>
+    <li>Do it three times. You should hear it get smoother each time.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Name the seven blanks of the design story.</summary><p>Problem, users and scale, architecture sketch, one hard decision, what broke, numbers, what you would change at 10x.</p></details>
+  <details><summary>Why include something that broke?</summary><p>It shows you have run real systems and learned from them. A story with no failure sounds invented or shallow.</p></details>
+  <details><summary>What makes a "hard decision" different from "I used Redis"?</summary><p>A decision names two real options, what you picked, why, and what you gave up. A tool name alone shows no thinking.</p></details>
+  <details><summary>Your project is tiny and has 50 users. What do you do?</summary><p>Say the honest scale, then spend more time on the "at 10x" blank. It shows you can reason about growth even if you have not lived it.</p></details>
+  <details><summary>Which is better: a precise number you are unsure of, or "roughly"?</summary><p>"Roughly" with a clear method. An invented precise number falls apart on the first follow-up question.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>"The problem was a hard 9 pm deadline with about 5 changes a second at the peak, so I chose a frozen snapshot over live counting and gave up last-minute edits."</blockquote>
+  <blockquote>"One thing broke: the scheduled job ran twice after a retry. I fixed it with an idempotency key and a unique constraint."</blockquote>
+  <blockquote>"At ten times the users, the nightly job and its database reads would break first, so I would add a read replica and move notifications to a queue."</blockquote>
+  <p><b>Common follow-up question:</b> "Why did you not choose the other option?" <i>Model answer:</i> "It was better for X, but our users cared more about Y, and the cost of X was Z. If Y changed, I would revisit it."</p>
+</section>
+
+</main>
+</body>
+</html>

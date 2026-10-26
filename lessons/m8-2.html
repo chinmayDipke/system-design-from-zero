@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What each type of company asks</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m8-2">
+<main class="lesson">
+
+<section class="story">
+  <h2>Four different exams, one student</h2>
+  <p>Imagine one student who must sit four exams: a school unit test, a board exam, an entrance test and an interview with a professor. The books are the same. But for the unit test you revise definitions, for the board exam you practise long answers, for the entrance test you race the clock, and for the professor you talk about ideas.</p>
+  <p>Companies are like that too. A big service company, a product company, a startup and a remote global team all hire engineers, but they test different things in different ways. If you prepare for the wrong exam, you waste weeks.</p>
+</section>
+
+<section class="explain">
+  <h2>Four company types, and what to prepare first</h2>
+  <p class="warn">Everything below is a <b>commonly reported pattern by company type</b>, not a rule and not about any named company. Processes change often and differ by team and year. Before each interview, check the real process (see "Where to check" below).</p>
+
+  <table>
+    <tr><th></th><th>Indian service companies</th><th>Indian product companies</th><th>Startups</th><th>Remote / global roles</th></tr>
+    <tr><td><b>Rounds commonly reported</b></td><td>Online test (aptitude, coding), one or two technical talks, HR</td><td>Online coding, two or three coding or problem rounds, one design round, a hiring-manager talk</td><td>A short call, a take-home task or live build, one or two talks with the founder or lead</td><td>Recruiter call, coding screen, several loop rounds including design, a values or behavioural round</td></tr>
+    <tr><td><b>High-level design (HLD)</b></td><td>Light for freshers; for experienced roles, a simple "design X" or "draw your project"</td><td>Often one full round for experienced hires; lighter for freshers</td><td>Usually a conversation: "how would you build our thing?"</td><td>A full 45-60 minute round is common for mid and senior levels</td></tr>
+    <tr><td><b>Low-level design (LLD)</b></td><td>OOP and SOLID questions; sometimes a small class design</td><td>Often asked: a class design with code or a diagram</td><td>Rare as a separate round; shows up in the build task</td><td>Sometimes a "design the code" round, mixed with coding</td></tr>
+    <tr><td><b>AI design</b></td><td>Growing for AI or data roles: how an LLM or RAG feature works</td><td>Common for AI-engineer roles: RAG, cost, evals</td><td>Very likely if the product uses LLMs: they will ask how you would ship it</td><td>For AI-engineer roles, a full AI design round is common</td></tr>
+    <tr><td><b>Prepare first</b></td><td>Fundamentals: HTTP, databases, indexes, OOP, SOLID, patterns, SQL; then your project story</td><td>The classic designs, then LLD, then estimation and the 45-minute method</td><td>Your project stories, a clean full-stack build, and cheap sensible architecture</td><td>The full method, clear spoken English, trade-offs, estimation and written clarity</td></tr>
+    <tr><td><b>Course lessons</b></td><td><a href="m2-2.html">m2-2</a>, <a href="m2-3.html">m2-3</a>, <a href="m1-4.html">m1-4</a>, <a href="m6-1.html">m6-1</a>, <a href="m6-2.html">m6-2</a>, <a href="m6-3.html">m6-3</a>, <a href="m8-1.html">m8-1</a></td><td><a href="m4-2.html">m4-2</a>, <a href="m5-1.html">m5-1 to m5-14</a>, <a href="m6-5.html">m6-5</a>, <a href="m3-9.html">m3-9</a></td><td><a href="m8-1.html">m8-1</a>, <a href="m3-5.html">m3-5</a>, <a href="m2-7.html">m2-7</a>, <a href="m7-3.html">m7-3</a>, <a href="m5-14.html">m5-14</a></td><td><a href="m4-1.html">m4-1</a>, <a href="m4-4.html">m4-4</a>, <a href="m3-1.html">m3-1</a>, <a href="m7-7.html">m7-7</a>, <a href="m5-7.html">m5-7</a></td></tr>
+  </table>
+
+  <h3>Freshers versus experienced hires</h3>
+  <p>The same company asks different things at different levels. This is the most commonly reported difference:</p>
+  <ul>
+    <li><b>Freshers and under about two years:</b> weight on basics (<a href="m1-1.html">client and server</a>, <a href="m2-2.html">SQL versus NoSQL</a>, <a href="m6-1.html">OOP</a>) and on your projects. A full design round is less common. If asked, they want to see that you have a method and ask questions, not that you know every technology.</li>
+    <li><b>Experienced hires (about three years and up):</b> a real design round is likely. They check requirements, estimation, a clean diagram, <a href="m3-1.html">trade-offs</a> and what you do when things fail. Your story from <a href="m8-1.html">lesson 1</a> carries more weight because they expect real production experience.</li>
+    <li><b>Senior roles:</b> they also look at how you decide, how you disagree, and how you grow a system over years. Expect "what would you change at 10x?" in every answer.</li>
+  </ul>
+
+  <h3>How the same question changes by type</h3>
+  <p>Take "design a notification system" (<a href="m5-3.html">m5-3</a>). A service company might want the main boxes and one database choice. A product company might push on queues, retries and <a href="m3-4.html">idempotency</a>. A startup may ask "what is the cheapest version we could ship this week?". A global remote team may want the full seven steps, estimation and a deep dive on one hard part.</p>
+
+  <h3>Where to check the real process</h3>
+  <ul>
+    <li>The company's own careers page often lists the stages.</li>
+    <li>Recent interview-experience posts on public forums (search links below). Read three or four, look for what repeats, and ignore one-off stories.</li>
+    <li>Ask the recruiter directly: "How many rounds are there, and is there a design round?" It is a normal question and most recruiters answer it.</li>
+  </ul>
+
+  <h3>When to use this table, and when not to</h3>
+  <p><b>Use it</b> to decide what to study first when you have limited days. <b>Do not</b> use it to skip topics completely. A product company may still ask you OOP, and a service company may still ask a design question. Treat the table as a priority order, not a fence.</p>
+</section>
+
+<section class="picture">
+  <h2>One kit, four exams</h2>
+  <figure>
+    <svg viewBox="0 0 640 275" role="img" aria-label="A box labelled your kit with arrows pointing to four boxes: service companies, product companies, startups and remote or global roles, each with the main thing they test">
+      <defs><marker id="ar-m8-2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="95" width="200" height="85" rx="12"/>
+        <rect x="300" y="10" width="325" height="54" rx="10"/>
+        <rect x="300" y="76" width="325" height="54" rx="10"/>
+        <rect x="300" y="142" width="325" height="54" rx="10"/>
+        <rect x="300" y="208" width="325" height="54" rx="10"/>
+        <path d="M217 125 L298 37" marker-end="url(#ar-m8-2)"/>
+        <path d="M217 132 L298 103" marker-end="url(#ar-m8-2)"/>
+        <path d="M217 143 L298 169" marker-end="url(#ar-m8-2)"/>
+        <path d="M217 150 L298 235" marker-end="url(#ar-m8-2)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="115" y="127" font-size="16" font-weight="700">Your kit</text>
+        <text x="115" y="150" font-size="13">stories, 7 steps,</text>
+        <text x="115" y="168" font-size="13">classic designs</text>
+        <text x="462" y="32" font-size="15" font-weight="700">Indian service companies</text>
+        <text x="462" y="52" font-size="13">Basics, coding, light LLD, short HLD</text>
+        <text x="462" y="98" font-size="15" font-weight="700">Indian product companies</text>
+        <text x="462" y="118" font-size="13">Coding, LLD, one real HLD round</text>
+        <text x="462" y="164" font-size="15" font-weight="700">Startups</text>
+        <text x="462" y="184" font-size="13">Build talk, one HLD, your projects</text>
+        <text x="462" y="230" font-size="15" font-weight="700">Remote / global roles</text>
+        <text x="462" y="250" font-size="13">Deep HLD, clear speaking, AI design</text>
+      </g>
+    </svg>
+    <figcaption>The kit is the same. Only the order you study it and the depth you show change.</figcaption>
+  </figure>
+  <p>Redraw it in Excalidraw and save it as <code>m8-2 company-types.excalidraw</code> in your module folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+system+design+interview+what+to+expect+by+level" target="_blank" rel="noopener">YouTube search: Hello Interview, what to expect in a system design interview by level</a>
+      <span class="meta">Watch the first 10 minutes of one video. Listen for how junior and senior expectations differ.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Concept+%26%26+Coding+system+design+interview+preparation+India" target="_blank" rel="noopener">YouTube search: Concept &amp;&amp; Coding, system design interview preparation</a>
+      <span class="meta">Pick one video that talks about preparation order. Skip anything that quotes a named company's exact questions as fact.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://www.google.com/search?q=site%3Aleetcode.com%2Fdiscuss+interview+experience+system+design+India" target="_blank" rel="noopener">Search: LeetCode Discuss interview-experience posts</a>
+      <span class="meta">Read three recent posts about one company type. Write down the rounds that repeat.</span></li>
+    <li><a href="https://www.google.com/search?q=glassdoor+software+engineer+interview+process+India" target="_blank" rel="noopener">Search: Glassdoor interview process reviews</a>
+      <span class="meta">Look at the "Interviews" tab of a company you are targeting. Treat each review as one data point, not the truth.</span></li>
+    <li><a href="https://roadmap.sh/system-design" target="_blank" rel="noopener">roadmap.sh: System Design roadmap</a>
+      <span class="meta">Use it as a topic checklist. Tick what you covered in this course.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 40 minutes)</h2>
+  <h3>A. Pick your target and gather evidence</h3>
+  <ol class="steps">
+    <li>Write down the type of company you want first (service, product, startup or remote). Pick one.</li>
+    <li>Open the first search link in "Read more" above. You should see a page of results from the Discuss forum. Click one that is recent. If a result looks old (several years), skip it.</li>
+    <li>Read three posts. For each, note in a Google Doc: number of rounds, whether there was a design round, whether the post is for a fresher or experienced role.</li>
+    <li>Open the company's careers page (search its name plus "careers"). Find the job you would apply to and note any stages it lists.</li>
+  </ol>
+
+  <h3>B. Make your own priority list</h3>
+  <ol class="steps">
+    <li>In the same document, copy the "Course lessons" cell for your company type from the table above.</li>
+    <li>Add one line for each round you found: "Round 2 = coding" or "Round 3 = design".</li>
+    <li>For each round, write the lesson ids that prepare you. For a design round it is usually <a href="m4-2.html">m4-2</a> plus two classic designs from <a href="m5-1.html">Module 5</a>.</li>
+    <li>Mark the first three lessons you will study, in order. This feeds the 14-day plan in <a href="m8-5.html">the final lesson</a>.</li>
+  </ol>
+
+  <h3>C. Say it out loud</h3>
+  <ol class="steps">
+    <li>Explain to an imaginary friend, in 60 seconds: "For my target company type, they usually test X. So I will study Y first."</li>
+    <li>Say one sentence on how a fresher and an experienced candidate would be asked differently. If you stall, re-read the freshers section above.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why not state a company's interview process as fact?</summary><p>Processes change often and differ by team and year. You can only describe commonly reported patterns by company type, and check the real process yourself.</p></details>
+  <details><summary>Which company types more often have a separate LLD round?</summary><p>Product companies, commonly. Service companies ask OOP basics; startups rarely have a separate round.</p></details>
+  <details><summary>How does a fresher's design question differ from an experienced hire's?</summary><p>A fresher is usually judged on basics and method; an experienced hire on estimation, trade-offs, failure handling and real production stories.</p></details>
+  <details><summary>You have 10 days and a startup interview. What do you prepare first?</summary><p>Your project stories (<a href="m8-1.html">m8-1</a>), a sensible low-cost architecture and a short design drill. Startups care about whether you can build, so show real choices and what you would change.</p></details>
+  <details><summary>Where can you check the real process for a company?</summary><p>Its careers page, recent interview-experience posts, and by asking the recruiter how many rounds there are.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>"Before I start, can I confirm the scope? Is this a high-level design with boxes and flow, or should I go deep on one component?"</blockquote>
+  <blockquote>"Given the time, I will cover requirements, a rough estimate, the high-level design and one deep dive, and I will say my trade-offs as I go."</blockquote>
+  <p><b>Common follow-up question:</b> "How did you prepare for this round?" <i>Model answer:</i> "I used a seven-step framework, practised classic designs out loud with a timer, and prepared stories from my own projects with the problem, a trade-off, and what I would change at ten times the scale."</p>
+</section>
+
+</main>
+</body>
+</html>

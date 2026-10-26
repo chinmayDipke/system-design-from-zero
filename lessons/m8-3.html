@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Question bank</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m8-3">
+<main class="lesson">
+
+<section class="story">
+  <h2>The question paper before the exam</h2>
+  <p>Before board exams, students collect old question papers. They do not read them like a story. They pick a paper, set a clock, write the answers, then check the book. After a few papers, every new paper feels like a friend.</p>
+  <p>This lesson is your old question paper for system design. It has 50 questions. Every question points to the lesson that teaches the answer, so when you get stuck you know exactly where to look.</p>
+</section>
+
+<section class="explain">
+  <h2>The 50 questions</h2>
+  <p>The questions are in three groups: <b>Easy</b> (the basic ideas, 14 questions), <b>Medium</b> (trade-offs and the classic problems, 21 questions) and <b>Hard</b> (full designs, failure handling and AI, 15 questions). They cover high-level design (HLD), low-level design (LLD) and AI design. Tags: <b>[HLD]</b>, <b>[LLD]</b>, <b>[AI]</b>. A full design question needs a 45-minute round (<a href="m4-1.html">m4-1</a>); a concept question needs about 2 to 5 minutes.</p>
+
+  <h3>Easy (questions 1 to 14)</h3>
+  <ol>
+    <li>[HLD] What happens when you type a URL in the browser and press Enter? <a href="m1-4.html">m1-4</a></li>
+    <li>[HLD] What are a client and a server, and why are they separate? <a href="m1-1.html">m1-1</a></li>
+    <li>[HLD] What is DNS, and what does it do for a website? <a href="m1-2.html">m1-2</a></li>
+    <li>[HLD] What is the difference between HTTP and HTTPS, and what do the codes 200, 404 and 500 mean? <a href="m1-3.html">m1-3</a></li>
+    <li>[HLD] SQL or NoSQL: how do you choose for a new app? <a href="m2-2.html">m2-2</a></li>
+    <li>[HLD] What is a database index, and what does it cost? <a href="m2-3.html">m2-3</a></li>
+    <li>[HLD] What does a load balancer do, and what happens if it fails? <a href="m2-5.html">m2-5</a>, <a href="m3-3.html">m3-3</a></li>
+    <li>[HLD] Vertical versus horizontal scaling: when do you use each? <a href="m2-4.html">m2-4</a></li>
+    <li>[HLD] What is a cache, and what can go wrong with it? <a href="m2-7.html">m2-7</a></li>
+    <li>[HLD] What is a CDN and what should (and should not) go on it? <a href="m2-8.html">m2-8</a></li>
+    <li>[HLD] REST, GraphQL, gRPC or WebSockets: which one for which job? <a href="m2-1.html">m2-1</a></li>
+    <li>[HLD] Design a URL shortener. <a href="m5-1.html">m5-1</a></li>
+    <li>[LLD] Explain abstraction, encapsulation, inheritance and polymorphism with one example. <a href="m6-1.html">m6-1</a></li>
+    <li>[AI] What is a token in an LLM, and why does it matter for cost and speed? <a href="m7-1.html">m7-1</a></li>
+  </ol>
+
+  <h3>Medium (questions 15 to 35)</h3>
+  <ol start="15">
+    <li>[HLD] Design a rate limiter. <a href="m5-2.html">m5-2</a>, <a href="m2-12.html">m2-12</a></li>
+    <li>[HLD] Design a notification system (email, SMS, push). <a href="m5-3.html">m5-3</a></li>
+    <li>[HLD] Design a chat app like WhatsApp. <a href="m5-4.html">m5-4</a></li>
+    <li>[HLD] Design a news feed like Instagram. <a href="m5-5.html">m5-5</a></li>
+    <li>[HLD] Design ticket booking like BookMyShow. How do you stop two people booking one seat? <a href="m5-6.html">m5-6</a></li>
+    <li>[HLD] How does database replication work, and what is replica lag? <a href="m2-9.html">m2-9</a></li>
+    <li>[HLD] What is sharding, and why use consistent hashing? <a href="m2-10.html">m2-10</a></li>
+    <li>[HLD] When do you add a message queue, and how is pub/sub different? <a href="m2-11.html">m2-11</a></li>
+    <li>[HLD] A customer was charged twice because of a retry. How do you prevent it? <a href="m3-4.html">m3-4</a></li>
+    <li>[HLD] Explain the CAP theorem in simple words with an example. <a href="m3-1.html">m3-1</a></li>
+    <li>[HLD] Strong versus eventual consistency: where is each acceptable? <a href="m3-2.html">m3-2</a></li>
+    <li>[HLD] Monolith or microservices for a five-person startup? Defend your choice. <a href="m3-5.html">m3-5</a></li>
+    <li>[HLD] How do JWT and OAuth work, and when would you use each? <a href="m3-8.html">m3-8</a></li>
+    <li>[HLD] Estimate the storage and requests per second for a photo-sharing app with 1 million daily users. <a href="m3-9.html">m3-9</a></li>
+    <li>[HLD] Design search autocomplete. <a href="m5-11.html">m5-11</a></li>
+    <li>[LLD] Explain the SOLID principles with a small code example. <a href="m6-2.html">m6-2</a></li>
+    <li>[LLD] Which design pattern would you use for several payment methods, and why? <a href="m6-3.html">m6-3</a></li>
+    <li>[LLD] Design a parking lot: classes, methods and relationships. <a href="m6-5.html">m6-5</a>, <a href="m6-4.html">m6-4</a></li>
+    <li>[AI] Explain RAG step by step and say where it can fail. <a href="m7-3.html">m7-3</a></li>
+    <li>[AI] What are embeddings, and when do you need a vector database? <a href="m7-2.html">m7-2</a></li>
+    <li>[AI] The LLM bill is too high. What do you check and change? <a href="m7-4.html">m7-4</a></li>
+  </ol>
+
+  <h3>Hard (questions 36 to 50)</h3>
+  <ol start="36">
+    <li>[HLD] Design a payment system like UPI or Razorpay. <a href="m5-7.html">m5-7</a>, <a href="m3-4.html">m3-4</a></li>
+    <li>[HLD] Design food delivery like Swiggy or Zomato. <a href="m5-8.html">m5-8</a></li>
+    <li>[HLD] Design ride sharing like Uber or Ola. <a href="m5-9.html">m5-9</a></li>
+    <li>[HLD] Design video streaming like YouTube. <a href="m5-10.html">m5-10</a></li>
+    <li>[HLD] Design a web crawler. <a href="m5-12.html">m5-12</a></li>
+    <li>[HLD] Design a distributed key-value store. <a href="m5-13.html">m5-13</a></li>
+    <li>[HLD] Design a multi-tenant SaaS product with isolation between customers. <a href="m5-14.html">m5-14</a></li>
+    <li>[HLD] One slow service is taking the whole app down. How do you stop the spread? <a href="m3-6.html">m3-6</a>, <a href="m3-3.html">m3-3</a></li>
+    <li>[HLD] A request is slow and crosses five services. How do you find the cause? <a href="m3-7.html">m3-7</a></li>
+    <li>[AI] Design a customer-support bot that answers from company documents. <a href="m7-7.html">m7-7</a>, <a href="m7-3.html">m7-3</a></li>
+    <li>[AI] Design an AI agent that can call tools such as refunds. How do you keep it safe? <a href="m7-5.html">m7-5</a>, <a href="m7-6.html">m7-6</a></li>
+    <li>[AI] Design a real-time voice agent with a latency budget. <a href="m7-7.html">m7-7</a></li>
+    <li>[AI] How do you test and monitor an LLM feature after launch? <a href="m7-6.html">m7-6</a></li>
+    <li>[AI] Design a ChatGPT-like chat app for 100,000 daily users, including cost. <a href="m7-7.html">m7-7</a>, <a href="m7-4.html">m7-4</a></li>
+    <li>[LLD] Draw a class diagram for a library system, and say which patterns and SOLID rules you used. <a href="m6-4.html">m6-4</a>, <a href="m6-5.html">m6-5</a></li>
+  </ol>
+
+  <h3>How to use the bank, and how not to</h3>
+  <ul>
+    <li><b>Do</b> answer aloud. Silent thinking feels like understanding but is not. You will find the gaps only when you speak.</li>
+    <li><b>Do</b> use the seven steps (<a href="m4-2.html">m4-2</a>) for every full design question, even a rough version.</li>
+    <li><b>Do</b> repeat the questions you marked red. Repeating is the whole point.</li>
+    <li><b>Don't</b> memorise answers word by word. Interviewers change the question slightly, and memorised answers break.</li>
+    <li><b>Don't</b> only practise your favourite groups. If you love HLD, force yourself to do the [LLD] and [AI] ones.</li>
+  </ul>
+  <p class="tip">Easy questions are 2-5 minute talks. Do not spend 45 minutes on them. Medium and Hard design questions are full rounds, so practise a 10-minute version first (requirements, estimate, boxes, one trade-off), then a full 45 minutes once a week.</p>
+</section>
+
+<section class="picture">
+  <h2>The daily practice loop</h2>
+  <figure>
+    <svg viewBox="0 0 640 215" role="img" aria-label="A loop of five boxes: pick 3 questions, set a timer, answer aloud, check the lesson, mark the sheet, then back to pick questions">
+      <defs><marker id="ar-m8-3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="30" y="20" width="170" height="60" rx="10"/>
+        <rect x="235" y="20" width="170" height="60" rx="10"/>
+        <rect x="440" y="20" width="170" height="60" rx="10"/>
+        <rect x="440" y="130" width="170" height="60" rx="10"/>
+        <rect x="235" y="130" width="170" height="60" rx="10"/>
+        <path d="M202 50 H233" marker-end="url(#ar-m8-3)"/>
+        <path d="M407 50 H438" marker-end="url(#ar-m8-3)"/>
+        <path d="M525 82 V128" marker-end="url(#ar-m8-3)"/>
+        <path d="M438 160 H407" marker-end="url(#ar-m8-3)"/>
+        <path d="M233 160 H115 V82" marker-end="url(#ar-m8-3)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="115" y="46" font-size="14" font-weight="700">1 Pick 3</text>
+        <text x="115" y="66" font-size="13">one per group</text>
+        <text x="320" y="46" font-size="14" font-weight="700">2 Set a timer</text>
+        <text x="320" y="66" font-size="13">10 minutes each</text>
+        <text x="525" y="46" font-size="14" font-weight="700">3 Answer aloud</text>
+        <text x="525" y="66" font-size="13">no notes first</text>
+        <text x="525" y="156" font-size="14" font-weight="700">4 Check the lesson</text>
+        <text x="525" y="176" font-size="13">use the link</text>
+        <text x="320" y="156" font-size="14" font-weight="700">5 Mark the sheet</text>
+        <text x="320" y="176" font-size="13">red, amber, green</text>
+      </g>
+    </svg>
+    <figcaption>One loop is about 40 minutes. Do it daily; red questions come back tomorrow.</figcaption>
+  </figure>
+  <p>Redraw it in Excalidraw and save it as <code>m8-3 practice-loop.excalidraw</code> in your module folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+system+design+mock+interview" target="_blank" rel="noopener">YouTube search: Hello Interview, system design mock interview</a>
+      <span class="meta">Watch the first 15 minutes of one mock. Pause after the question and try answering it yourself first.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+system+design+interview+questions" target="_blank" rel="noopener">YouTube search: ByteByteGo, system design interview questions</a>
+      <span class="meta">Pick one video on a question from the Medium group. Compare its boxes with yours.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer" target="_blank" rel="noopener">System Design Primer on GitHub</a>
+      <span class="meta">Scroll to the interview questions and solutions section for extra practice beyond these 50.</span></li>
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: system design problem breakdowns</a>
+      <span class="meta">Read one breakdown after you try the same problem yourself. Focus on the deep dive section.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (set it up in 20 minutes, then 40 minutes a day)</h2>
+  <h3>A. Make your tracking sheet</h3>
+  <ol class="steps">
+    <li>Open a new tab, type <code>sheets.google.com</code> and press <kbd>Enter</kbd>. Click <span class="ui">Blank spreadsheet</span> (it may say <span class="ui">Blank</span>).</li>
+    <li>Click <span class="ui">Untitled spreadsheet</span> at the top left, type <code>Question bank tracker</code> and press <kbd>Enter</kbd>.</li>
+    <li>In row 1, click each cell and type these headings, pressing <kbd>Tab</kbd> after each: <code>No</code>, <code>Group</code>, <code>Date</code>, <code>Minutes</code>, <code>Colour</code>, <code>Gap to fix</code>.</li>
+    <li>In column A, type the numbers 1 to 50 down rows 2 to 51. Tip: type <code>1</code> and <code>2</code> in the first two cells, select both, and drag the small blue square at the corner downward.</li>
+    <li>In column B, write Easy for rows 2-15, Medium for rows 16-36, and Hard for rows 37-51.</li>
+  </ol>
+
+  <h3>B. A daily session (the 10-minute loop)</h3>
+  <ol class="steps">
+    <li>Pick three questions: one Easy, one Medium, one Hard or [AI]. Choose by number so you do not always take your favourites. For example, use the day of the month as a starting point.</li>
+    <li>Press the <kbd>⊞ Win</kbd> key, type <code>Clock</code>, press <kbd>Enter</kbd>, click <span class="ui">Timer</span>, set 10 minutes and click ▶.</li>
+    <li>Answer the question <b>out loud</b>. For a full design, say the requirements, a rough estimate, the boxes (draw them in Excalidraw) and one trade-off. For a concept question, give the idea, an example, and a trade-off.</li>
+    <li>When the timer rings, open the linked lesson and compare. What did you miss? Write it in the "Gap to fix" column in a few words.</li>
+    <li>Colour column E: green if you covered the main points, amber if half, red if you got stuck. To colour a cell, select it, click the paint-bucket icon in the toolbar and pick a colour.</li>
+    <li>Next day, start with any red questions before choosing new ones.</li>
+  </ol>
+
+  <h3>C. A weekly full round</h3>
+  <ol class="steps">
+    <li>Once a week, pick one Medium or Hard design question and do the full 45 minutes with the timer, using the <a href="m4-2.html">7-step framework</a>.</li>
+    <li>Record the date and "45" in the Minutes column. You should see your green count grow over the weeks.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why answer aloud instead of in your head?</summary><p>Speaking exposes gaps you cannot see silently, and it trains the exact skill the interview tests: explaining while thinking.</p></details>
+  <details><summary>Why not memorise full answers?</summary><p>Interviewers change the question, add constraints or ask a follow-up. Understanding the reasons adapts; a memorised script breaks.</p></details>
+  <details><summary>What do you do with a red question?</summary><p>Re-read the linked lesson, write the gap in the sheet, and retry it the next day before new questions.</p></details>
+  <details><summary>You have only 30 minutes today. What do you pick?</summary><p>Three Easy or Medium concept questions with a 5 to 10 minute timer each, or one full design in a 10-minute short version. Skip a full 45 minutes until you have a longer day.</p></details>
+  <details><summary>Which question tags does the bank use?</summary><p>[HLD] high-level design, [LLD] low-level design and [AI] AI design.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>"I will start by clarifying requirements, then estimate the scale, then draw the high-level boxes, and then dive into the one part that is hardest."</blockquote>
+  <blockquote>"There are two options here. I would pick this one because of that, and the cost is this. If the numbers change, I would switch."</blockquote>
+  <p><b>Common follow-up question:</b> "What would you change if traffic grew ten times?" <i>Model answer:</i> "I would find the first bottleneck, usually the database, then add the cheapest fix such as caching or a read replica, and only then consider sharding. I would also add monitoring so I can see it before users do."</p>
+</section>
+
+</main>
+</body>
+</html>

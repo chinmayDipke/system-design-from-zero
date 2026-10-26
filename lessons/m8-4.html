@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Free mock interviews</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m8-4">
+<main class="lesson">
+
+<section class="story">
+  <h2>Practice match before the real match</h2>
+  <p>A cricketer does not walk into the stadium for his first innings. He plays in the nets, then a practice match, and only then the real one. In the nets, someone bowls at him and a coach says "your elbow was low".</p>
+  <p>A mock interview is the nets for your interview. You sit with another person, a clock runs, and someone tells you honestly what went well and what did not. You can learn all 50 questions from <a href="m8-3.html">the question bank</a> and still freeze in the real round. Mocks fix the freezing.</p>
+</section>
+
+<section class="explain">
+  <h2>Three free ways to practise</h2>
+
+  <h3>1. Peer mocks (a friend or a stranger)</h3>
+  <p>In a peer mock, two learners take turns: one is the interviewer, one is the candidate. Playing the interviewer is as useful as being interviewed, because you see what a good answer looks like from the other chair.</p>
+  <p><b>How to find a partner:</b></p>
+  <ul>
+    <li>A friend or classmate who is also preparing. Ask on your college or office group: "Anyone doing system design mocks this week? 45 minutes, we swap roles."</li>
+    <li>Online study groups for interview preparation (search for "system design study group" or "mock interview partner" on Discord, Reddit or LinkedIn). Be careful: share only a first name and do not give out phone numbers or passwords.</li>
+    <li>A peer-mock platform (next section).</li>
+  </ul>
+  <p class="tip">Agree on rules first: video on, a timer visible, and honest feedback with no hurt feelings. Weak spots found in a mock are free; found in the real interview, they cost the job.</p>
+
+  <h3>2. A free peer platform: Pramp</h3>
+  <p>Pramp is a well-known site that pairs you with another candidate for a live practice session, each taking one role. What a web search confirmed (several review sites, all describing it in similar terms):</p>
+  <ul>
+    <li>Pramp's free peer mock interviews are now hosted on <b>Exponent</b>. Some sources say Exponent has been renamed, so the brand name you see may differ.</li>
+    <li>Free users are reported to get a limited number of peer sessions each month (commonly reported as about five credits, where one session is roughly an hour split between the two roles). A paid subscription is reported to unlock more.</li>
+    <li>Topics are reported to include coding and system design, plus behavioural questions.</li>
+    <li>Some reviews mention partners who do not show up, so have a backup plan.</li>
+  </ul>
+  <p class="warn">Limits, prices and even the brand name on these platforms change often, and the sources disagreed in small ways. Before you rely on it, open the site and read the current free-plan terms yourself. Other platforms exist, but I only name ones I could confirm. If a free one disappears, a friend and the script below work just as well.</p>
+
+  <h3>3. Recording yourself (solo mock)</h3>
+  <p>No partner today? Record yourself. You will hear every "umm", every long silence and every skipped step. It feels awkward for a minute, then it is the fastest feedback you can get. Windows 11 already has what you need (details in the steps below).</p>
+
+  <h3>The 45-minute script (both roles)</h3>
+  <table>
+    <tr><th>Minutes</th><th>Candidate does</th><th>Interviewer does</th></tr>
+    <tr><td>0-5</td><td>Asks questions, writes requirements and what is out of scope (<a href="m4-2.html">step 1</a>)</td><td>Gives a one-line question. Answers clarifying questions. Does not volunteer hints.</td></tr>
+    <tr><td>5-10</td><td>Rough estimate: users, requests per second, storage (<a href="m3-9.html">m3-9</a>)</td><td>Checks the maths is reasonable. Corrects wild numbers gently.</td></tr>
+    <tr><td>10-25</td><td>Draws the high-level design, names the API and data (<a href="m4-3.html">m4-3</a>)</td><td>Asks "why this box?" twice. Watches the diagram for clarity.</td></tr>
+    <tr><td>25-40</td><td>Deep dive on the hardest part, with options and trade-offs</td><td>Adds one failure ("what if the database dies?") and one scale jump ("10x").</td></tr>
+    <tr><td>40-45</td><td>Summarises, names weak points and next steps</td><td>Stops the clock. Does not give feedback yet.</td></tr>
+  </table>
+  <p>After the 45 minutes, spend 10 minutes on feedback, then <b>swap roles</b> with a different question. Pick questions from the <a href="m8-3.html">bank</a>.</p>
+
+  <h3>The scoring sheet</h3>
+  <p>Score each row from 1 (weak) to 4 (strong), write one example, and add the totals. This mirrors <a href="m4-4.html">how you are scored</a>.</p>
+  <table>
+    <tr><th>Row</th><th>What to look for</th></tr>
+    <tr><td>Requirements</td><td>Asked questions first, listed what is in and out of scope</td></tr>
+    <tr><td>Estimation</td><td>Numbers with a method, sensible round figures</td></tr>
+    <tr><td>Design and diagram</td><td>Clear boxes, arrows with direction, a story that flows</td></tr>
+    <tr><td>Trade-offs</td><td>Gave options, picked one, said what was given up</td></tr>
+    <tr><td>Communication</td><td>Spoke steadily, checked in, handled hints well</td></tr>
+  </table>
+
+  <h3>When peer mocks work, and when they do not</h3>
+  <p>Peer mocks are great for practising the method, speaking and timing. They are weaker for judging depth: a peer at your level may not catch a subtle mistake. Mix them with self-checks against the lessons, and if you can, get one mock from someone with real interview experience.</p>
+</section>
+
+<section class="picture">
+  <h2>One mock, start to finish</h2>
+  <figure>
+    <svg viewBox="0 0 640 245" role="img" aria-label="An interviewer asks a question and the candidate answers and draws; the interviewer fills the scoring sheet; the sheet leads to a feedback talk with the candidate">
+      <defs><marker id="ar-m8-4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="20" width="160" height="70" rx="10"/>
+        <rect x="465" y="20" width="160" height="70" rx="10"/>
+        <rect x="15" y="150" width="160" height="70" rx="10"/>
+        <rect x="465" y="150" width="160" height="70" rx="10"/>
+        <path d="M177 50 H463" marker-end="url(#ar-m8-4)"/>
+        <path d="M463 80 H177" marker-end="url(#ar-m8-4)" stroke-dasharray="6 5"/>
+        <path d="M95 92 V148" marker-end="url(#ar-m8-4)"/>
+        <path d="M177 185 H463" marker-end="url(#ar-m8-4)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="95" y="48" font-size="15" font-weight="700">Interviewer</text>
+        <text x="95" y="70" font-size="13">watches the clock</text>
+        <text x="545" y="48" font-size="15" font-weight="700">Candidate</text>
+        <text x="545" y="70" font-size="13">talks and draws</text>
+        <text x="95" y="178" font-size="15" font-weight="700">Scoring sheet</text>
+        <text x="95" y="200" font-size="13">5 rows, 1 to 4</text>
+        <text x="545" y="178" font-size="15" font-weight="700">Feedback talk</text>
+        <text x="545" y="200" font-size="13">last 10 minutes</text>
+        <text x="320" y="38" font-size="13">asks the question</text>
+        <text x="320" y="100" font-size="13">answers and draws</text>
+        <text x="320" y="173" font-size="13">scores shared</text>
+      </g>
+    </svg>
+    <figcaption>Solid arrows: the interviewer asks and then scores. Dashed arrow: the candidate answers. Then swap roles.</figcaption>
+  </figure>
+  <p>Redraw it in Excalidraw and save it as <code>m8-4 mock-flow.excalidraw</code> in your module folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+system+design+mock+interview+with+feedback" target="_blank" rel="noopener">YouTube search: Hello Interview, system design mock interview with feedback</a>
+      <span class="meta">Watch one full mock at 1.25x speed. Score it yourself with the sheet above before the feedback part.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+system+design+mock+interview" target="_blank" rel="noopener">YouTube search: Gaurav Sen, system design mock interview</a>
+      <span class="meta">Watch the first 20 minutes of any mock. Note how the interviewer's questions change the direction of the answer.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="https://www.google.com/search?q=Pramp+free+peer+mock+interviews+Exponent" target="_blank" rel="noopener">Search: Pramp free peer mock interviews</a>
+      <span class="meta">Open the official result and read the current free-plan terms. Platform details change, so check before relying on it.</span></li>
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: system design learning path</a>
+      <span class="meta">Skim the delivery framework section. Use it to judge your own mock.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 90 minutes)</h2>
+  <h3>A. Record a solo mock with Windows 11</h3>
+  <ol class="steps">
+    <li>Press the <kbd>⊞ Win</kbd> key, type <code>Snipping Tool</code> and press <kbd>Enter</kbd>. It may open as a small window.</li>
+    <li>Look for a camera or video icon, or a switch that says <span class="ui">Record</span>, and click it. If you see no such button, your Windows may be older; skip to step 6 and use Sound Recorder.</li>
+    <li>Click <span class="ui">New</span> and drag a rectangle over your Excalidraw window. Click <span class="ui">Start</span>. A short countdown runs, then recording begins.</li>
+    <li>Pick one question from <a href="m8-3.html">the bank</a>. Set a 45-minute timer in Clock, and answer aloud while drawing in Excalidraw. Use the script table above.</li>
+    <li>When done, click the red stop button in the small recording bar. A preview opens; click the save icon (a floppy disk) and save the video to your notes folder.</li>
+    <li>For audio only: press <kbd>⊞ Win</kbd>, type <code>Sound Recorder</code>, press <kbd>Enter</kbd>, click the round red record button, talk, and click the stop button. The recording appears in the list on the left.</li>
+  </ol>
+
+  <h3>B. Review the recording</h3>
+  <ol class="steps">
+    <li>Play your recording at normal speed. Score yourself with the five rows of the scoring sheet.</li>
+    <li>Count your filler words ("umm", "basically") in the first five minutes. Write the number down. Beat it next time.</li>
+    <li>Find the longest silence. Ask yourself what you were stuck on, and open the matching lesson.</li>
+  </ol>
+
+  <h3>C. Set up a peer mock</h3>
+  <ol class="steps">
+    <li>Message one friend: "Free for a 45-minute system design mock on [day] at [time]? We swap roles."</li>
+    <li>Agree on a video tool you both have (a Google Meet link works) and share one Excalidraw page: open <code>excalidraw.com</code> and look for the <span class="ui">Live collaboration</span> button, which gives you a link to send. If it looks different, just share your screen instead.</li>
+    <li>Copy the script table and scoring sheet into a shared Google Doc.</li>
+    <li>Run the 45 minutes, spend 10 minutes on feedback, then swap roles with a new question from the bank.</li>
+    <li>If you have no partner yet, open the Pramp search link above and read the current rules. Do this only after you read them; do not pay anything unless you decide to.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why is playing the interviewer useful?</summary><p>You see what a good answer looks like from the other side, and you learn which gaps are costly.</p></details>
+  <details><summary>Name the five rows of the scoring sheet.</summary><p>Requirements, estimation, design and diagram, trade-offs, communication.</p></details>
+  <details><summary>What should an interviewer not do during the 45 minutes?</summary><p>Give feedback or big hints too early. Feedback comes after the clock stops.</p></details>
+  <details><summary>Why should you check a platform's current terms yourself?</summary><p>Free limits, prices and even names change often, and reviews disagree. The official site is the only reliable source.</p></details>
+  <details><summary>You have no partner this week. What do you do instead?</summary><p>Record a solo mock (screen or audio), review it with the scoring sheet, and look for a partner in a study group for next week.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in the interview</h2>
+  <blockquote>"I have been doing timed mock interviews, so I will keep a clock on the steps: requirements, estimate, design, deep dive."</blockquote>
+  <blockquote>"Let me pause and check that I understood the requirement correctly before I draw anything."</blockquote>
+  <p><b>Common follow-up question:</b> "Did you get stuck on anything while preparing?" <i>Model answer:</i> "Yes. In mock sessions I used to skip estimation. I recorded myself, noticed it, and now I always do a quick estimate in the first ten minutes."</p>
+</section>
+
+</main>
+</body>
+</html>
