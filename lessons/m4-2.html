@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The 7-step framework</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m4-2">
+<main class="lesson">
+
+<section class="story">
+  <h2>The recipe card on the kitchen wall</h2>
+  <p>Even great cooks keep a recipe card. When the kitchen gets hot, they do not want to wonder, "What do I do next?" The card says: wash, chop, heat the oil, add spices, add vegetables, taste, serve. They can spend their brain on the tricky part, the taste.</p>
+  <p>In a design interview you will be nervous and the question will be fuzzy. A fixed list of steps is your recipe card. You always know what to do next, the interviewer can follow you, and you cannot forget the important parts like numbers and trade-offs.</p>
+  <p>This course uses a 7-step card. Learn it until it is automatic.</p>
+</section>
+
+<section class="explain">
+  <h2>Seven steps, same order every time</h2>
+  <table>
+    <tr><th>#</th><th>Step</th><th>Time</th><th>What you produce</th></tr>
+    <tr><td>1</td><td><b>Clarify requirements</b> (functional and non-functional)</td><td>5 min</td><td>A scope list</td></tr>
+    <tr><td>2</td><td><b>Estimate</b> the scale</td><td>3 min</td><td>QPS, storage, bandwidth</td></tr>
+    <tr><td>3</td><td><b>API design</b></td><td>3 min</td><td>3 to 5 endpoints</td></tr>
+    <tr><td>4</td><td><b>Data model</b></td><td>3 min</td><td>Tables, keys, database choice</td></tr>
+    <tr><td>5</td><td><b>High-level design</b></td><td>10 min</td><td>The diagram</td></tr>
+    <tr><td>6</td><td><b>Deep dives</b></td><td>14 min</td><td>Detail on 2 or 3 hard parts</td></tr>
+    <tr><td>7</td><td><b>Trade-offs, bottlenecks, wrap-up</b></td><td>5 min</td><td>A confident close</td></tr>
+  </table>
+  <p>Add them up: 5 + 3 + 3 + 3 + 10 + 14 + 5 = 43 minutes. Add about 2 minutes at the start to listen and repeat the question, and you get the 45 in <a href="m4-1.html">the round timeline</a>.</p>
+
+  <h3>Step 1: clarify requirements</h3>
+  <p><b>Functional requirements</b> are what the system does (users can post, search, pay). <b>Non-functional requirements</b> are how well it does it: speed, scale, reliability, consistency, security. Many candidates forget the second kind, and that is where designs are decided.</p>
+  <p><b>Questions about functional scope:</b></p>
+  <ul>
+    <li>Who are the users? What are the 3 to 5 most important things they can do?</li>
+    <li>What is out of scope for today (for example payments, admin screens)?</li>
+    <li>Is it a mobile app, a website, or both? Do we need notifications?</li>
+  </ul>
+  <p><b>Questions about non-functional needs:</b></p>
+  <ul>
+    <li>How many users, and how many active per day? Which regions?</li>
+    <li>Read-heavy or write-heavy?</li>
+    <li>How fast must it feel (for example, a page in under 200 ms)?</li>
+    <li>Must it always be available, or is a short outage acceptable (<a href="m3-3.html">availability</a>)?</li>
+    <li>Does it need strong consistency, or is slightly old data fine (<a href="m3-1.html">CAP</a>, <a href="m3-2.html">consistency</a>)?</li>
+    <li>How long is data kept? Any privacy or legal rules?</li>
+  </ul>
+  <p>Write the answers on the board as two short lists, then <b>say</b> them back: "So I'll design for ... and leave ... out. Does that sound right?"</p>
+
+  <h3>Step 2: estimate</h3>
+  <p>Daily users to requests per second, storage per year, bandwidth, using round numbers (<a href="m3-9.html">estimation</a>). Finish with the design decision it drives ("so we need a CDN and a cache").</p>
+
+  <h3>Step 3: API design</h3>
+  <p>The handful of calls clients make, for example <code>POST /bookings</code>, <code>GET /lots?lat=..&amp;lng=..</code>. Name the inputs and outputs briefly, and mention authentication, pagination and idempotency where they matter (<a href="m2-1.html">APIs</a>, <a href="m3-4.html">idempotency</a>).</p>
+
+  <h3>Step 4: data model</h3>
+  <p>The main entities, their key columns and relationships, and which database fits (SQL or NoSQL) and why (<a href="m2-2.html">SQL vs NoSQL</a>). Name the indexes your main queries need (<a href="m2-3.html">indexes</a>).</p>
+
+  <h3>Step 5: high-level design</h3>
+  <p>Draw the boxes: client, load balancer, app servers, database, cache, queue, storage. Walk one request through it with numbers. Keep it simple first; do not add Kafka until the requirements need it. See <a href="m4-3.html">drawing a clean diagram</a>.</p>
+
+  <h3>Step 6: deep dives</h3>
+  <p>Pick the two or three parts where the problem is hardest: double booking, hot keys, ordering, search. Go into detail: algorithms, data layout, failure cases. Let the interviewer steer, but come with your own list.</p>
+
+  <h3>Step 7: trade-offs, bottlenecks, wrap-up</h3>
+  <p>Name what you gave up ("I chose consistency over availability here"), where the system will break first as it grows, how you would monitor it (<a href="m3-7.html">observability</a>), and what you would do with more time.</p>
+
+  <h3>Trade-offs of using a framework</h3>
+  <ul>
+    <li>It keeps you organised, but do not read it like a script. If the interviewer jumps to step 6 early, follow, and circle back later.</li>
+    <li>Time per step is a guide. Shorten steps 2 to 4 for problems where the deep dive is what matters.</li>
+    <li>Say the step names aloud ("Now I'll sketch the data model"), so the interviewer sees the structure.</li>
+  </ul>
+  <p class="tip">Template to paste in your notes: <b>1 Requirements</b> (must have, not now, scale, speed, consistency, availability) / <b>2 Numbers</b> (DAU, QPS, peak, storage, cache) / <b>3 API</b> / <b>4 Data</b> / <b>5 Diagram</b> / <b>6 Deep dives</b> (A, B) / <b>7 Trade-offs, bottlenecks, next steps</b>.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 260" role="img" aria-label="Seven boxes in order: requirements, estimate, API, data model, high-level design, deep dives, trade-offs and wrap-up, each with its time in minutes">
+      <defs><marker id="ar-m4-2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="30" width="140" height="60" rx="8"/>
+        <rect x="175" y="30" width="140" height="60" rx="8"/>
+        <rect x="335" y="30" width="140" height="60" rx="8"/>
+        <rect x="495" y="30" width="130" height="60" rx="8"/>
+        <rect x="95" y="150" width="140" height="60" rx="8"/>
+        <rect x="255" y="150" width="140" height="60" rx="8"/>
+        <rect x="415" y="150" width="140" height="60" rx="8"/>
+        <path d="M157 60 H172" marker-end="url(#ar-m4-2)"/>
+        <path d="M317 60 H332" marker-end="url(#ar-m4-2)"/>
+        <path d="M477 60 H492" marker-end="url(#ar-m4-2)"/>
+        <path d="M560 92 V120 H165 V147" marker-end="url(#ar-m4-2)"/>
+        <path d="M237 180 H252" marker-end="url(#ar-m4-2)"/>
+        <path d="M397 180 H412" marker-end="url(#ar-m4-2)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="85" y="55" font-size="14" font-weight="700">1. Requirements</text>
+        <text x="85" y="75" font-size="13">5 min</text>
+        <text x="245" y="55" font-size="14" font-weight="700">2. Estimate</text>
+        <text x="245" y="75" font-size="13">3 min</text>
+        <text x="405" y="55" font-size="14" font-weight="700">3. API</text>
+        <text x="405" y="75" font-size="13">3 min</text>
+        <text x="560" y="55" font-size="14" font-weight="700">4. Data model</text>
+        <text x="560" y="75" font-size="13">3 min</text>
+        <text x="165" y="175" font-size="14" font-weight="700">5. High-level design</text>
+        <text x="165" y="195" font-size="13">10 min</text>
+        <text x="325" y="175" font-size="14" font-weight="700">6. Deep dives</text>
+        <text x="325" y="195" font-size="13">14 min</text>
+        <text x="485" y="175" font-size="14" font-weight="700">7. Trade-offs</text>
+        <text x="485" y="195" font-size="13">wrap-up, 5 min</text>
+        <text x="320" y="245" font-size="13">Plus about 2 minutes at the start to listen and repeat the question.</text>
+      </g>
+    </svg>
+    <figcaption>Follow the arrows 1 to 7. Steps 5 and 6 get the most time.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m4-2 seven-steps.excalidraw</code> in your Module 4 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+system+design+delivery+framework" target="_blank" rel="noopener">YouTube search: "Hello Interview system design delivery framework"</a>
+      <span class="meta">Watch the part that lists the steps of a design answer. Compare their step names with the seven here.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+system+design+interview+framework" target="_blank" rel="noopener">YouTube search: "ByteByteGo system design interview framework"</a>
+      <span class="meta">Short. Watch it all and note which step it spends most time on.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#how-to-approach-a-system-design-interview-question" target="_blank" rel="noopener">System Design Primer: How to approach a system design interview question</a>
+      <span class="meta">Read the four steps and compare them with the seven here.</span></li>
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: System design learning path</a>
+      <span class="meta">Skim for the article on how to structure your answer.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes, Excalidraw)</h2>
+  <p>Problem: <b>"Design a parking-lot booking app."</b> People book a parking spot in advance at lots in a city (think of a mall or airport). Set a timer for 40 minutes and go step by step. After each step, compare with the hints, which are only one possible answer.</p>
+
+  <h3>A. Set up the page</h3>
+  <ol class="steps">
+    <li>Open <code>excalidraw.com</code>. Press <kbd>T</kbd> (text tool), click in the top-left, and type <code>Parking-lot booking</code>.</li>
+    <li>Make seven empty text areas down the page, labelled <code>1 Requirements</code> to <code>7 Wrap-up</code>, with plenty of space. (Or use one Excalidraw page per step.)</li>
+  </ol>
+
+  <h3>B. Step 1: requirements (5 minutes)</h3>
+  <ol class="steps">
+    <li>Write the <b>questions you would ask</b> (at least 6, using the lists above). Then write the answers you assume:
+      <ul>
+        <li>Functional: search lots near a place; see free spots for a time window; book and pay; cancel; the lot operator sees bookings.</li>
+        <li>Out of scope: entry-gate hardware, pricing engine details.</li>
+        <li>Scale: 1 million registered users, 100,000 bookings a day, 10,000 lots.</li>
+        <li>Non-functional: <b>no double booking</b> (strong consistency for bookings); search can be slightly stale; availability 99.9%; booking under 1 second.</li>
+      </ul></li>
+  </ol>
+
+  <h3>C. Step 2: estimate (3 minutes)</h3>
+  <ol class="steps">
+    <li>Bookings: 100,000 per day / 100,000 seconds = <b>1 per second</b> average. Peak 3x = <b>3 per second</b>. Very low.</li>
+    <li>Searches: assume 20 searches per booking: 2,000,000 per day / 100,000 = <b>20 per second</b>; peak <b>60 per second</b>.</li>
+    <li>Storage: a booking row is about 200 bytes. 100,000 per day x 200 B = 20 MB per day; x 365 = <b>about 7.3 GB per year</b>. Small.</li>
+    <li>Write the conclusion: "Scale is modest. One relational database with a replica handles it. The hard part is not volume, it is correctness (no double booking)." That is a decision the numbers drive.</li>
+  </ol>
+
+  <h3>D. Step 3: API (3 minutes)</h3>
+  <ol class="steps">
+    <li>Write 4 endpoints:
+      <pre><code>GET  /lots?lat=..&amp;lng=..&amp;from=..&amp;to=..     -> lots with free spots
+POST /bookings   {lot_id, from, to}       -> booking (Idempotency-Key header)
+GET  /bookings/{id}
+DELETE /bookings/{id}                    -> cancel</code></pre></li>
+    <li>Add a note beside <code>POST /bookings</code>: "Idempotency key, so a retry does not book twice" (<a href="m3-4.html">idempotency</a>).</li>
+  </ol>
+
+  <h3>E. Step 4: data model (3 minutes)</h3>
+  <ol class="steps">
+    <li>Draw three small boxes (press <kbd>R</kbd>) and write the columns:
+      <ul>
+        <li><b>lots</b>: id, name, location (lat, lng), capacity</li>
+        <li><b>bookings</b>: id, lot_id, user_id, start_time, end_time, status, idempotency_key (unique)</li>
+        <li><b>users</b>: id, name, phone</li>
+      </ul></li>
+    <li>Choose the database: PostgreSQL (relational, transactions, constraints; <a href="m2-3.html">ACID</a>). Note: an index on <code>(lot_id, start_time)</code> for availability checks.</li>
+  </ol>
+
+  <h3>F. Step 5: high-level design (10 minutes)</h3>
+  <ol class="steps">
+    <li>Draw, left to right: <b>Users</b> (ellipse, <kbd>O</kbd>) → <b>Load balancer</b> → <b>App servers</b> (two boxes) → <b>PostgreSQL primary</b> with a <b>read replica</b>. Add a <b>Cache</b> (Redis) next to the app servers for lot details and search results.</li>
+    <li>Add a <b>Payment provider</b> box on the right, and a <b>Queue</b> to a <b>Notification worker</b> (SMS or email confirmations).</li>
+    <li>Press <kbd>A</kbd> and add arrows. Number them along the booking path: 1 request, 2 load balancer, 3 app server, 4 check availability and write booking in the database, 5 charge payment, 6 put a "booking confirmed" message on the queue, 7 response.</li>
+  </ol>
+
+  <h3>G. Step 6: deep dives (10 minutes)</h3>
+  <ol class="steps">
+    <li><b>Deep dive 1: no double booking.</b> Write the problem: two users book the last spot at the same moment. Options: lock the lot's row inside a transaction while counting the overlapping bookings; or keep a per-slot row and use a unique constraint; or an optimistic version check. Pick one, say why (a transaction with a row lock is simple, and at 3 bookings a second it is fast enough).</li>
+    <li><b>Deep dive 2: hold the spot during payment.</b> Create a booking as <code>pending</code> with a 5-minute expiry. If payment succeeds, mark it <code>confirmed</code>. A background job releases expired holds.</li>
+    <li>If time remains, a third: searching lots near a location (a geo index or a bounding box query on lat and lng).</li>
+  </ol>
+
+  <h3>H. Step 7: wrap-up (3 minutes)</h3>
+  <ol class="steps">
+    <li>Write three lines: <b>Trade-off</b> (strong consistency for bookings, stale search allowed), <b>Bottleneck</b> (the database primary if we reach a very busy day: shard by city), <b>Next</b> (monitoring: booking success rate and payment errors; <a href="m3-7.html">observability</a>).</li>
+    <li>Save the file as <code>m4-2 parking-lot.excalidraw</code>. Then read your page top to bottom out loud in 5 minutes, as if the interviewer were there.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>List the seven steps in order.</summary><p>Clarify requirements, estimate, API design, data model, high-level design, deep dives, trade-offs and wrap-up.</p></details>
+  <details><summary>What is the difference between functional and non-functional requirements?</summary><p>Functional is what the system does (post, book, search). Non-functional is how well: speed, scale, availability, consistency, security.</p></details>
+  <details><summary>Why estimate before drawing?</summary><p>The numbers decide which problems are real. If scale is small, a simple design is correct; if it is huge, you need caching, a CDN and sharding.</p></details>
+  <details><summary>Which steps get the most time, and why?</summary><p>High-level design (about 10 minutes) and deep dives (about 14 minutes). Deep dives are where depth and judgement show.</p></details>
+  <details><summary>The interviewer says "skip the numbers and go to the data model". What do you do?</summary><p>Follow them. The framework is a guide, not a script. I would state any assumption I need quickly and offer to come back to the numbers if they matter.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I'll follow a structure: requirements, rough numbers, API, data model, a high-level design, then deep dives, and finally trade-offs. Does that work for you?"</blockquote>
+  <blockquote>"The functional scope is X. For non-functional requirements I'd like to confirm scale, latency, availability and whether we need strong consistency."</blockquote>
+  <p><b>Common follow-up question:</b> You have only 20 minutes left and have not finished the design. What do you do?</p>
+  <p>Say so, and prioritise. Get one complete end-to-end flow on the board first, then pick the single hardest component for a deep dive, and finish with a quick list of trade-offs and what I would build next.</p>
+</section>
+
+</main>
+</body>
+</html>

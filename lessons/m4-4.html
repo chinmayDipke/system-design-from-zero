@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Common mistakes and how you are scored</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m4-4">
+<main class="lesson">
+
+<section class="story">
+  <h2>The driving test</h2>
+  <p>In a driving test, the examiner does not ask you to be a racing driver. She has a sheet: Did you check the mirror? Did you signal before turning? Did you stay calm at the roundabout? Marks are lost for small, <b>predictable</b> mistakes: forgetting the mirror, stalling, going too fast.</p>
+  <p>The design interview is the same. Interviewers have a sheet of areas, and candidates lose marks in the same few ways again and again. If you know the usual mistakes and what the sheet looks like, you can avoid them on purpose.</p>
+</section>
+
+<section class="explain">
+  <h2>What goes wrong, and what the scorer looks for</h2>
+
+  <h3>The seven common mistakes</h3>
+  <table>
+    <tr><th>Mistake</th><th>What it looks like</th><th>Fix</th></tr>
+    <tr><td><b>Jumping into a solution</b></td><td>"Design a URL shortener? OK, I'll use a hash and a database..." in the first 20 seconds.</td><td>Pause. Repeat the problem. Ask questions first.</td></tr>
+    <tr><td><b>Not asking questions</b></td><td>Never asks about users, scale or priorities. Builds the wrong thing.</td><td>Ask 5 to 8 requirement questions (<a href="m4-2.html">step 1</a>).</td></tr>
+    <tr><td><b>Over-engineering</b></td><td>Kafka, Kubernetes, microservices and sharding for 40 writes a second.</td><td>Start simple. Add each part only when a number or a requirement demands it.</td></tr>
+    <tr><td><b>Buzzwords without reasons</b></td><td>"We'll use Redis because it is fast." "NoSQL because it scales."</td><td>Say the reason and the cost: what problem it solves here, and what it adds.</td></tr>
+    <tr><td><b>Ignoring non-functional requirements</b></td><td>No word on latency, availability, consistency, or failure.</td><td>Ask about them early and come back to them at the end.</td></tr>
+    <tr><td><b>Silence</b></td><td>Thinks for minutes with no words, or draws without speaking.</td><td>Think aloud. Narrate what you draw and why.</td></tr>
+    <tr><td><b>Not driving</b></td><td>Waits for the interviewer to say what to do next. Answers only what is asked.</td><td>Use the framework, announce the next step, offer deep-dive options.</td></tr>
+  </table>
+
+  <h3>How you are scored: a typical rubric</h3>
+  <p>Every company has its own sheet. This is a common shape. Each area is scored from "no hire" to "strong hire".</p>
+  <table>
+    <tr><th>Area</th><th>Strong looks like</th><th>Weak looks like</th></tr>
+    <tr><td><b>Requirements</b></td><td>Asks sharp questions, separates must-have from out of scope, confirms non-functional needs.</td><td>Starts drawing at once; assumes everything.</td></tr>
+    <tr><td><b>Estimation</b></td><td>Round numbers, states assumptions, links numbers to design choices.</td><td>No numbers, or numbers that change nothing.</td></tr>
+    <tr><td><b>Design</b></td><td>A clear, correct high-level design that fits the requirements; each box has a reason.</td><td>Boxes with no reason; missing pieces (no storage, no failure thinking).</td></tr>
+    <tr><td><b>Depth</b></td><td>Goes deep on the hard parts: data layout, failure cases, algorithms. Knows how things work inside.</td><td>Stays shallow; only names technologies.</td></tr>
+    <tr><td><b>Trade-offs</b></td><td>States options, picks one, says its cost, says when the other would win.</td><td>One option, no downside mentioned.</td></tr>
+    <tr><td><b>Communication</b></td><td>Structured, thinks aloud, checks in, draws tidy diagrams (<a href="m4-3.html">diagrams</a>).</td><td>Silent or rambling; messy drawing.</td></tr>
+    <tr><td><b>Ownership</b></td><td>Drives the interview, manages time, takes hints well, admits gaps.</td><td>Waits to be led; defensive or bluffs.</td></tr>
+  </table>
+
+  <h3>Phrases for trade-offs</h3>
+  <p>Trade-offs are the single most scored skill, so learn a few sentence shapes:</p>
+  <ul>
+    <li>"I'd choose <b>X</b> because <b>reason</b>. The cost is <b>cost</b>, which is acceptable here because <b>why</b>."</li>
+    <li>"The alternative is <b>Y</b>, which is better when <b>condition</b>, but it adds <b>complexity</b>."</li>
+    <li>"For this feature I'd favour consistency over availability, since a wrong balance is worse than a short error" (<a href="m3-1.html">CAP</a>).</li>
+    <li>"At this scale I'd keep it simple: one Postgres with a replica. If writes grow 10 times, I'd consider sharding."</li>
+    <li>"The first bottleneck will be <b>the database writes</b>. I'd watch <b>this metric</b> and then add <b>this</b>."</li>
+    <li>"I'm not sure about the exact numbers, but I'd measure first, then decide."</li>
+  </ul>
+
+  <h3>Trade-offs of "playing safe"</h3>
+  <ul>
+    <li>Being very structured can sound robotic. Keep the structure, but respond to the interviewer's face and hints.</li>
+    <li>Avoiding buzzwords completely is also a mistake: using the right term (<a href="m2-11.html">queue</a>, <a href="m2-10.html">consistent hashing</a>) is good, if you can explain it.</li>
+    <li>Over-asking questions wastes time. Ask the ones that change the design.</li>
+  </ul>
+  <p class="tip">The usual fast self-check: after every box you add, ask "What problem does this solve, and what does it cost?" If you cannot answer, remove the box.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 260" role="img" aria-label="Two columns: a weak answer path with jump to solution, no numbers, many boxes, silence; and a strong answer path with questions, numbers, simple design, deep dive, trade-offs">
+      <defs><marker id="ar-m4-4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="270" height="40" rx="8" stroke-dasharray="6 4"/>
+        <rect x="15" y="100" width="270" height="40" rx="8" stroke-dasharray="6 4"/>
+        <rect x="15" y="160" width="270" height="40" rx="8" stroke-dasharray="6 4"/>
+        <rect x="355" y="40" width="270" height="40" rx="8"/>
+        <rect x="355" y="100" width="270" height="40" rx="8"/>
+        <rect x="355" y="160" width="270" height="40" rx="8"/>
+        <path d="M150 82 V98" marker-end="url(#ar-m4-4)"/>
+        <path d="M150 142 V158" marker-end="url(#ar-m4-4)"/>
+        <path d="M490 82 V98" marker-end="url(#ar-m4-4)"/>
+        <path d="M490 142 V158" marker-end="url(#ar-m4-4)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="150" y="26" font-size="15" font-weight="700">Weak answer</text>
+        <text x="490" y="26" font-size="15" font-weight="700">Strong answer</text>
+        <text x="150" y="66" font-size="14">1. Starts drawing at once</text>
+        <text x="150" y="126" font-size="14">2. Many fancy boxes, no reasons</text>
+        <text x="150" y="186" font-size="14">3. Silent, waits to be led</text>
+        <text x="490" y="66" font-size="14">1. Asks questions, gets numbers</text>
+        <text x="490" y="126" font-size="14">2. Simple design, each box justified</text>
+        <text x="490" y="186" font-size="14">3. Drives, states trade-offs</text>
+        <text x="320" y="235" font-size="13">Same problem, same time. The difference is order, reasons and talking.</text>
+      </g>
+    </svg>
+    <figcaption>Left (dashed): the path that loses marks. Right: the path that scores. Follow each column top to bottom, steps 1 to 3.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m4-4 weak-vs-strong.excalidraw</code> in your Module 4 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=system+design+interview+mistakes+to+avoid+Hello+Interview" target="_blank" rel="noopener">YouTube search: "system design interview mistakes to avoid Hello Interview"</a>
+      <span class="meta">Pick one under 20 minutes. Tick off which of the seven mistakes above it mentions.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=system+design+interview+feedback+what+interviewers+look+for" target="_blank" rel="noopener">YouTube search: "system design interview feedback what interviewers look for"</a>
+      <span class="meta">Watch the part where a former interviewer explains scoring.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: System design learning path</a>
+      <span class="meta">Look for the article on common mistakes or on what interviewers evaluate and read its headings.</span></li>
+    <li><a href="https://github.com/donnemartin/system-design-primer#how-to-approach-a-system-design-interview-question" target="_blank" rel="noopener">System Design Primer: How to approach a question</a>
+      <span class="meta">Re-read the four steps, thinking of them as a scoring sheet.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes, reading and marking)</h2>
+  <p>Below is a written sample answer to <b>"Design a URL shortener"</b>. It has <b>six deliberate mistakes</b>. Your job is to find them. Remember the numbers from <a href="m3-9.html">estimation</a>: 100 million new URLs a month is about 40 writes a second.</p>
+
+  <h3>A. Read the answer</h3>
+  <ol class="steps">
+    <li>Copy these lines into a notes file, or print them. Read once, slowly:
+<pre><code>[1]  Interviewer: Design a URL shortener.
+[2]  Candidate:   OK. I'll use a hash of the long URL as the key and store it in a database.
+[3]  Candidate:   For the database I'll use NoSQL, because it scales and relational databases don't.
+[4]  Candidate:   The architecture: an API gateway, 12 microservices (URL service, user service,
+                  analytics service, billing service and so on) on Kubernetes, Kafka between
+                  all of them, and a sharded database across 20 regions.
+[5]  Interviewer: How many users are we talking about?
+[6]  Candidate:   Uh... a lot, I guess. It's like bit.ly.
+[7]  Candidate:   We'll put Redis in front because Redis is fast.
+[8]  (Candidate is silent for about two minutes while drawing.)
+[9]  Interviewer: How do you handle two long URLs producing the same short code?
+[10] Candidate:   I'm not sure. What would you like me to talk about next?</code></pre></li>
+  </ol>
+
+  <h3>B. Find the six mistakes</h3>
+  <ol class="steps">
+    <li>Get a pen and a fresh page. Write the numbers 1 to 6.</li>
+    <li>For each mistake, write the <b>line number</b>, the <b>name of the mistake</b> (from the seven in the table) and a <b>one-line fix</b>.</li>
+    <li>Do not open the answers until you have six. If you are stuck at four or five, re-read lines 2, 4, 6, 8 and 10.</li>
+    <li>Open the answers:
+      <details><summary>Show the six mistakes</summary>
+        <p><b>1. Line 2: jumped into a solution.</b> No requirements, no questions. Fix: first ask who uses it, how many links, how long they last, whether custom aliases or analytics are needed.</p>
+        <p><b>2. Line 3: a buzzword with no reason.</b> "NoSQL because it scales and relational doesn't" is not a reason, and it is not even true. The load here is small. Fix: "At about 40 writes a second and 3 TB in five years, one Postgres with a replica fits, and a unique index on the code makes collisions easy to catch."</p>
+        <p><b>3. Line 4: over-engineering.</b> Twelve microservices, Kafka, Kubernetes and 20 regions for a tiny load. Fix: a simple service behind a load balancer, one database, one cache. Scale it only when numbers demand.</p>
+        <p><b>4. Lines 5 and 6: no estimation and no non-functional requirements.</b> "A lot" is not a number, so no design choice can be justified. Fix: estimate: 100 million a month is 40 writes a second, 4,000 reads a second, so read-heavy, so cache. (The non-functional side, such as availability of redirects and latency, was never discussed either.)</p>
+        <p><b>5. Line 8: silence.</b> Two minutes of silent drawing loses the interviewer. Fix: narrate: "I'm adding a cache here because reads are 100 times writes."</p>
+        <p><b>6. Line 10: not driving, and no answer to a core problem.</b> The candidate handed control back and had no plan for collisions in the hash. Fix: propose an answer even if unsure: "Generate a unique ID with a counter and encode it in base 62, which has no collisions; or retry on a unique-key conflict." Then offer where to go next: "I'd suggest we go deeper on code generation or on caching; which do you prefer?"</p>
+        <p>Also noticeable: line 7 repeats the "because it is fast" buzzword for Redis. It is a seventh smaller flaw, and a good reason would be "because reads are 100 times writes and the same few links are requested again and again".</p>
+      </details></li>
+  </ol>
+
+  <h3>C. Rewrite the answer</h3>
+  <ol class="steps">
+    <li>Write a corrected version of lines 2 to 4 in 6 to 8 lines. Include: two requirement questions, one number, a simple architecture, and one sentence that follows the pattern "I'd choose X because ..., the cost is ...".</li>
+    <li>Save it as <code>m4-4 rewrite.txt</code> in your Module 4 folder.</li>
+  </ol>
+
+  <h3>D. Make your own checklist</h3>
+  <ol class="steps">
+    <li>Write 7 short questions, one per mistake, to ask yourself before answering: "Did I ask? Did I give a number? Is every box justified? Did I talk? Did I name a cost?" and so on. Keep it beside you during mock interviews.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Name four common design-interview mistakes.</summary><p>Jumping into a solution, not asking questions, over-engineering, buzzwords without reasons, ignoring non-functional requirements, silence, and not driving the interview.</p></details>
+  <details><summary>What does "driving the interview" mean?</summary><p>Taking responsibility for the structure: announce the next step, manage time, propose deep-dive topics and ask for feedback, instead of waiting to be told what to do.</p></details>
+  <details><summary>What is the sentence shape for stating a trade-off?</summary><p>"I'd choose X because (reason). The cost is (cost), which is acceptable because (why). Y would be better if (condition)."</p></details>
+  <details><summary>Why is "I'll use Kafka" a weak statement?</summary><p>It names a technology without saying what problem it solves here or what it costs. A strong version says why a queue is needed (decoupling, buffering spikes) and the cost (extra moving part, at-least-once delivery).</p></details>
+  <details><summary>You realise halfway that your design was wrong for the requirements. What do you do?</summary><p>Say so openly, explain what changed my mind, and fix it. Interviewers value honest correction and adaptability far more than defending a bad design.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I'd choose a single Postgres with a read replica because the load is about 40 writes a second. The cost is that it won't scale writes forever, so I'd plan to shard by user if that changes."</blockquote>
+  <blockquote>"I'm going to think out loud for a moment: I see two options, A and B."</blockquote>
+  <p><b>Common follow-up question:</b> What if you do not know the answer?</p>
+  <p>Say so, state what I do know, reason from first principles to a proposal, and say how I would verify it. For example: "I haven't used that, but I'd expect it to work like a queue, so I'd test it with a small load first." Bluffing is penalised more than a gap.</p>
+</section>
+
+</main>
+</body>
+</html>

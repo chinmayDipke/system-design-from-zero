@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How a 45-minute design round flows</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m4-1">
+<main class="lesson">
+
+<section class="story">
+  <h2>The cooking contest with a judge</h2>
+  <p>Imagine a cooking contest. The judge says, "Make me a nice dinner." A weak cook starts chopping onions at once. A strong cook first asks: "How many people? Anyone allergic? Vegetarian? How much time and what budget?" Then she plans the menu, cooks the main dish first, and explains her choices while she works: "I am using less oil because you said light."</p>
+  <p>The judge is not looking for one correct dinner. There is none. She is watching how you <b>think, ask, decide and explain</b>.</p>
+  <p>A system design interview is the same contest. You get 45 minutes and a vague sentence like "Design WhatsApp". This lesson shows what the judge wants and how the time usually runs.</p>
+</section>
+
+<section class="explain">
+  <h2>What happens in the room (or on the call)</h2>
+
+  <h3>What the interviewer really wants</h3>
+  <p>There is <b>no single right answer</b>. The interviewer watches for four things:</p>
+  <ul>
+    <li><b>Structured thinking:</b> do you break a fuzzy problem into steps, in a sensible order?</li>
+    <li><b>Trade-offs:</b> do you see that every choice has a cost, and say why you chose one side (<a href="m3-1.html">CAP</a>, <a href="m3-5.html">monolith vs microservices</a>)?</li>
+    <li><b>Communication:</b> can you explain your ideas clearly, and draw them, while thinking aloud?</li>
+    <li><b>Depth where it matters:</b> can you go deep into one or two parts instead of staying shallow on everything?</li>
+  </ul>
+  <p>They also watch <b>how you handle hints</b>. If they push back, do you listen and adapt, or defend blindly?</p>
+
+  <h3>A typical 45-minute timeline</h3>
+  <p>The next lesson ( <a href="m4-2.html">the 7-step framework</a> ) explains each step. Here is the clock:</p>
+  <table>
+    <tr><th>Minutes</th><th>What you do</th><th>Output</th></tr>
+    <tr><td>0 to 2</td><td>Listen to the question. Repeat it back in your own words.</td><td>Shared understanding</td></tr>
+    <tr><td>2 to 7</td><td><b>Clarify requirements:</b> what must it do, how big, how fast, how reliable.</td><td>A short list on the board</td></tr>
+    <tr><td>7 to 10</td><td><b>Estimate:</b> users, requests per second, storage (<a href="m3-9.html">estimation</a>).</td><td>A few numbers</td></tr>
+    <tr><td>10 to 13</td><td><b>API design:</b> the main endpoints.</td><td>3 to 5 API lines</td></tr>
+    <tr><td>13 to 16</td><td><b>Data model:</b> main tables or collections.</td><td>Tables with keys</td></tr>
+    <tr><td>16 to 26</td><td><b>High-level design:</b> boxes and arrows for the main flows.</td><td>The diagram</td></tr>
+    <tr><td>26 to 40</td><td><b>Deep dives:</b> 2 or 3 hard parts (the interviewer often picks).</td><td>Detail and reasons</td></tr>
+    <tr><td>40 to 45</td><td><b>Wrap-up:</b> trade-offs, bottlenecks, what you would do next. Then your questions.</td><td>A confident close</td></tr>
+  </table>
+  <p>Check the total: 2 + 5 + 3 + 3 + 3 + 10 + 14 + 5 = 45 minutes. Some interviewers keep 5 minutes at the end for your questions, so be ready to compress.</p>
+
+  <h3>How the round differs by company type</h3>
+  <table>
+    <tr><th>Type</th><th>What to expect</th><th>How to adapt</th></tr>
+    <tr><td><b>Service companies</b> (large IT services)</td><td>Often more about basics: three-tier architecture, databases, caching, scaling a simple app. May be combined with a coding round. Sometimes a low-level design question (classes) instead.</td><td>Be crisp on fundamentals. Explain clearly and avoid fancy buzzwords you cannot back up.</td></tr>
+    <tr><td><b>Product companies</b></td><td>A full design round at senior levels, with deep dives, scale and trade-offs. Often a famous system (a feed, chat, a URL shortener, a payment flow).</td><td>Use the full framework, do the estimates, and be ready for follow-ups like "what if traffic is 10 times?"</td></tr>
+    <tr><td><b>Startups</b></td><td>More practical: "How would you build this with our team of 5?" Cost and speed matter. They may ask about your real projects.</td><td>Prefer simple and cheap (a monolith, managed services). Show you can ship, and say when you would scale later.</td></tr>
+    <tr><td><b>Remote / international roles</b></td><td>The same shape, but the whiteboard is a shared online tool. Communication and writing are judged heavily; time zones and clarity matter.</td><td>Practise on Excalidraw, speak steadily, narrate what you draw, and check in often ("Does this match what you had in mind?").</td></tr>
+  </table>
+
+  <h3>What to do when you are stuck</h3>
+  <ul>
+    <li><b>Say so, calmly.</b> "Let me think about this for a moment" is fine. Thirty seconds of quiet is okay; five minutes is not.</li>
+    <li><b>Go back to what you know.</b> Restate the requirement and ask what a simple version would look like. Start with a single server and a database, and then ask what breaks first.</li>
+    <li><b>Think aloud.</b> "I'm considering X or Y. X is simpler but Y scales better." Interviewers can only help you if they hear your thinking.</li>
+    <li><b>Ask for a nudge.</b> "I'm not sure how to handle the hot-shard case. Would you like me to go deeper there, or move on?" Asking is a strength, not a failure.</li>
+    <li><b>Do not bluff.</b> "I haven't used that, but I'd expect it to work like ..." is better than made-up details.</li>
+  </ul>
+
+  <h3>Trade-offs of the way you spend the time</h3>
+  <ul>
+    <li>Too long on requirements and estimates leaves no time for deep dives, which is where seniors are judged.</li>
+    <li>Rushing to the diagram risks building the wrong thing.</li>
+    <li>Going deep on everything is impossible. Pick the parts that matter most for this problem and say why.</li>
+  </ul>
+  <p class="tip">Keep a clock in your head: by minute 10 you should know what you are building and roughly how big it is. By minute 25 you should have a full picture on the board.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 220" role="img" aria-label="A horizontal timeline of 45 minutes with segments: intro 2, requirements 5, estimate 3, API 3, data 3, high-level design 10, deep dives 14, wrap-up 5">
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="20" y="60" width="18" height="60"/>
+        <rect x="38" y="60" width="45" height="60"/>
+        <rect x="83" y="60" width="27" height="60"/>
+        <rect x="110" y="60" width="27" height="60"/>
+        <rect x="137" y="60" width="27" height="60"/>
+        <rect x="164" y="60" width="90" height="60"/>
+        <rect x="254" y="60" width="126" height="60"/>
+        <rect x="380" y="60" width="45" height="60"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="320" y="24" font-size="15" font-weight="700">45 minutes, drawn to scale (1 minute = 9 pixels)</text>
+        <text x="29" y="95" font-size="13">1</text>
+        <text x="60" y="95" font-size="13">2</text>
+        <text x="96" y="95" font-size="13">3</text>
+        <text x="123" y="95" font-size="13">4</text>
+        <text x="150" y="95" font-size="13">5</text>
+        <text x="209" y="95" font-size="13">6</text>
+        <text x="317" y="95" font-size="13">7</text>
+        <text x="402" y="95" font-size="13">8</text>
+        <text x="20" y="145" font-size="13">min 0</text>
+        <text x="110" y="145" font-size="13">10</text>
+        <text x="425" y="145" font-size="13">45</text><text x="254" y="145" font-size="13">26</text><text x="380" y="145" font-size="13">40</text><text x="164" y="145" font-size="13">16</text>
+        <text x="20" y="175" font-size="13" text-anchor="start">1 intro (2)   2 requirements (5)   3 estimate (3)   4 API (3)   5 data model (3)</text>
+        <text x="20" y="195" font-size="13" text-anchor="start">6 high-level design (10)   7 deep dives (14)   8 wrap-up (5)</text>
+      </g>
+    </svg>
+    <figcaption>The widest blocks, 6 and 7, are where most of your time and score are. Steps 1 to 5 are the quick setup.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m4-1 round-timeline.excalidraw</code> in your Module 4 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+system+design+mock+interview" target="_blank" rel="noopener">YouTube search: "Hello Interview system design mock interview"</a>
+      <span class="meta">Pick one full mock, 40 to 60 minutes. You will watch it in the exercise below.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=system+design+interview+how+to+structure+your+answer+Hello+Interview" target="_blank" rel="noopener">YouTube search: "system design interview how to structure your answer Hello Interview"</a>
+      <span class="meta">Short overview. Watch the first 10 minutes to hear the structure described.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: System design learning path</a>
+      <span class="meta">Open the "delivery" or "how to approach" article if you see one. Read only the introduction and the list of steps.</span></li>
+    <li><a href="https://roadmap.sh/system-design" target="_blank" rel="noopener">roadmap.sh: System Design</a>
+      <span class="meta">Skim the map to see how much territory the interview could touch. You are covering it in this course.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 60 minutes, mostly watching)</h2>
+
+  <h3>A. Prepare your notes page</h3>
+  <ol class="steps">
+    <li>Open a text file or notebook. Make a table with 4 columns: <b>Minute</b>, <b>What the candidate did</b>, <b>What the interviewer said or asked</b>, <b>Your note</b>.</li>
+    <li>Under it add a second list headed <code>Moments I liked</code> and a third <code>Moments I would do differently</code>.</li>
+  </ol>
+
+  <h3>B. Watch a mock interview and fill the timeline</h3>
+  <ol class="steps">
+    <li>Open the first YouTube link above. Click the first result that is a full mock interview (a title with "mock" and a design question such as "design Twitter" or "design a rate limiter"). If you do not like it, pick another.</li>
+    <li>Under the video, check how long it is. Plan to watch the whole thing, with the speed set to normal (click the gear icon on the video, then <span class="ui">Playback speed</span>).</li>
+    <li>Write down the clock time shown on the video at each point the candidate <b>moves to a new stage</b>. Use these stage names: <b>clarify</b>, <b>estimate</b>, <b>API</b>, <b>data</b>, <b>high-level design</b>, <b>deep dive</b>, <b>wrap-up</b>. Pause the video to write (<kbd>K</kbd> pauses and resumes).</li>
+    <li>For each stage, write 1 line on what the candidate said or drew.</li>
+    <li>Compare: how many minutes did the candidate spend on each stage, against the table above? Which stage was skipped or too long?</li>
+    <li>Fill the two lists: 3 things the candidate did well (for example "asked about scale before drawing"), and 3 things you would do differently.</li>
+  </ol>
+
+  <h3>C. Your personal timeline</h3>
+  <ol class="steps">
+    <li>On a fresh page, write the 8 rows of the table in this lesson from memory. Then check against the lesson.</li>
+    <li>Add a "stuck" card: 3 sentences you will say if you freeze. Example: "Let me take a moment to think." "Let me start with the simplest version and see what breaks." "Which part would you like me to go deeper on?"</li>
+    <li>Save the file as <code>m4-1 mock-notes.txt</code> in your Module 4 folder.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is an interviewer really evaluating in a design round?</summary><p>Structured thinking, how you reason about trade-offs, communication, and whether you can go deep on the important parts. There is no single correct design.</p></details>
+  <details><summary>Roughly how should a 45-minute round be split?</summary><p>About 2 minutes of intro, 5 on requirements, 3 on estimates, 3 on API, 3 on data, 10 on high-level design, 14 on deep dives, 5 on wrap-up.</p></details>
+  <details><summary>Why is jumping straight into drawing a risk?</summary><p>You may design the wrong thing, because the problem was vague. Questions first show structure and save time later.</p></details>
+  <details><summary>What would you do if you do not know how to solve one part?</summary><p>Say so calmly, state what I do know, start from the simplest version and reason about what breaks, think aloud, and ask whether the interviewer wants me to go deeper or move on. I would not bluff.</p></details>
+  <details><summary>How would you change your answer for a 5-person startup versus a large product company?</summary><p>For the startup, favour simple, cheap choices like a monolith and managed services, and mention when to scale later. For a large product company, show scale thinking, estimates, and deeper trade-offs.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Before I design anything, I'd like to ask a few questions to make sure I solve the right problem."</blockquote>
+  <blockquote>"I'll spend the first ten minutes on requirements and rough numbers, then draw the high-level design, and then go deep on whichever part you find most interesting."</blockquote>
+  <p><b>Common follow-up question:</b> Where do you want to go deeper?</p>
+  <p>Pick the part that is hardest or most specific to this problem: for a chat app, delivery and ordering of messages; for a feed, how it is built and cached. Say why you picked it, and offer a second option, so the interviewer can steer.</p>
+</section>
+
+</main>
+</body>
+</html>

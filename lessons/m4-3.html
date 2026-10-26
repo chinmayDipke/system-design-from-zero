@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drawing a clean diagram fast</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m4-3">
+<main class="lesson">
+
+<section class="story">
+  <h2>The railway map and the plate of noodles</h2>
+  <p>Look at a metro map. Every line has its own colour, stations are in a neat row, and you can read it in seconds, even in a hurry. Now picture a plate of noodles: the same lines, but tangled in a heap. Both contain the same information. Only one can be understood.</p>
+  <p>In an interview the diagram is how the interviewer follows your thinking. A messy diagram makes them think you are confused, even when you are not. A tidy one makes you look clear. And tidy is not about being an artist: it is a few simple rules, plus practice.</p>
+</section>
+
+<section class="explain">
+  <h2>Rules for a diagram anyone can read</h2>
+
+  <h3>1. Layout: a direction and a place for things</h3>
+  <ul>
+    <li><b>Users on the left, data on the right.</b> Requests travel left to right; the database ends up at the far right.</li>
+    <li><b>Or top to bottom:</b> users at the top, storage at the bottom. Pick one direction and keep to it. Mixing both makes arrows cross.</li>
+    <li><b>Put things in rows and columns.</b> Align boxes of the same kind (all app servers in one column).</li>
+    <li><b>Leave gaps.</b> Cramped drawings cannot be edited. Start with the main flow in the middle and add side parts around it.</li>
+    <li><b>Avoid crossing arrows.</b> If two cross, move a box.</li>
+  </ul>
+
+  <h3>2. Standard shapes</h3>
+  <table>
+    <tr><th>Thing</th><th>Shape</th></tr>
+    <tr><td>Users, clients (browser, phone)</td><td>Ellipse, or a box labelled "Client"</td></tr>
+    <tr><td>Services, servers, load balancers</td><td>Rectangle</td></tr>
+    <tr><td>Database, storage</td><td>Cylinder, or a rectangle labelled "DB". (Excalidraw has no cylinder key; a labelled box is fine.)</td></tr>
+    <tr><td>Queue</td><td>A long thin box (like a line of people), labelled "Queue"</td></tr>
+    <tr><td>Cache</td><td>A small rectangle next to the thing it caches, labelled "Cache"</td></tr>
+    <tr><td>Group (one data centre, one region)</td><td>A big dashed rectangle around the members</td></tr>
+  </table>
+  <p>The exact shape matters less than <b>consistency</b>: the same kind of thing always looks the same, and every box has a name.</p>
+
+  <h3>3. Label the arrows with what flows</h3>
+  <p>An arrow without a label means "something goes here". Write what: <code>GET /feed</code>, <code>order event</code>, <code>image bytes</code>. Use a <b>solid</b> arrow for a request that waits for an answer, and a <b>dashed</b> arrow for async (events and queues). If you use dashed, say so once.</p>
+
+  <h3>4. Number the request path</h3>
+  <p>Put small numbers on the arrows: 1, 2, 3 ... Then walk the interviewer along them: "The user's request goes (1) to the CDN, which on a miss (2) forwards to the load balancer, then (3) to an app server ..." Numbers turn a picture into a story, and stop you from forgetting a step. Keep a separate numbering, or letters, for the background path (a, b, c).</p>
+
+  <h3>5. Colour sparingly</h3>
+  <p>Use at most two or three colours, with a meaning each: for example, one for the main flow, one for async or background parts, and one (red) to mark a problem or a bottleneck you want to discuss. Colour by mood is noise. Black and white also works well.</p>
+
+  <h3>6. Build it up in stages while you talk</h3>
+  <ol>
+    <li><b>Stage 1: the simplest version.</b> Client, one server, one database. Say, "Here is the bare minimum."</li>
+    <li><b>Stage 2: fix the first problem.</b> "One server is a single point of failure and cannot scale, so I add a load balancer and more servers" (<a href="m3-3.html">SPOF</a>).</li>
+    <li><b>Stage 3: add what the numbers need.</b> Cache for reads (<a href="m2-7.html">caching</a>), CDN for static files (<a href="m2-8.html">CDN</a>), a queue for slow background work (<a href="m2-11.html">queues</a>).</li>
+    <li><b>Stage 4: only then deep dives.</b> Zoom on one box and draw its insides separately, rather than cramming everything into one picture.</li>
+  </ol>
+  <p>Drawing silently for five minutes loses the interviewer. Draw one thing, say why you added it, then draw the next.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>Detail versus clarity: a diagram with 25 boxes is unreadable. Show only what the discussion needs; mention the rest in words.</li>
+    <li>Drawing early versus asking first: do the requirements first (<a href="m4-2.html">the 7 steps</a>), so the diagram has a purpose.</li>
+    <li>Fancy icons look nice but cost time. Plain labelled boxes are enough.</li>
+  </ul>
+  <p class="tip">Shortcuts you will use all the time in Excalidraw: <kbd>R</kbd> box, <kbd>A</kbd> arrow, <kbd>O</kbd> ellipse, <kbd>T</kbd> text, <kbd>Ctrl</kbd> + <kbd>D</kbd> duplicate, <kbd>Shift</kbd> for straight lines, and double-click on a shape or arrow to type its label (<a href="m0-3.html">the Excalidraw lesson</a>).</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <p>This is the standard web architecture, drawn by the rules: users on the left, data on the right, numbered request path.</p>
+  <figure>
+    <svg viewBox="0 0 640 330" role="img" aria-label="A standard web architecture: client, CDN, load balancer, app servers, then cache and database on the right, and a queue and workers below. The request path is numbered 1 to 6">
+      <defs><marker id="ar-m4-3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="10" y="60" width="80" height="60" rx="8"/>
+        <rect x="108" y="60" width="80" height="60" rx="8"/>
+        <rect x="206" y="60" width="100" height="60" rx="8"/>
+        <rect x="324" y="60" width="110" height="60" rx="8"/>
+        <rect x="480" y="20" width="145" height="50" rx="8"/>
+        <rect x="480" y="110" width="145" height="50" rx="8"/>
+        <rect x="324" y="215" width="110" height="50" rx="8"/>
+        <rect x="480" y="215" width="145" height="50" rx="8"/>
+        <path d="M92 90 H106" marker-end="url(#ar-m4-3)"/>
+        <path d="M190 90 H204" marker-end="url(#ar-m4-3)"/>
+        <path d="M308 90 H322" marker-end="url(#ar-m4-3)"/>
+        <path d="M436 75 L478 50" marker-end="url(#ar-m4-3)"/>
+        <path d="M436 105 L478 130" marker-end="url(#ar-m4-3)"/>
+        <path d="M379 122 V213" marker-end="url(#ar-m4-3)" stroke-dasharray="6 4"/>
+        <path d="M436 240 H478" marker-end="url(#ar-m4-3)" stroke-dasharray="6 4"/>
+        <path d="M552 213 V162" marker-end="url(#ar-m4-3)" stroke-dasharray="6 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="50" y="87" font-size="14" font-weight="700">Client</text>
+        <text x="50" y="106" font-size="13">1</text>
+        <text x="148" y="87" font-size="14" font-weight="700">CDN</text>
+        <text x="148" y="106" font-size="13">2</text>
+        <text x="256" y="87" font-size="14" font-weight="700">Load balancer</text>
+        <text x="256" y="106" font-size="13">3</text>
+        <text x="379" y="87" font-size="14" font-weight="700">App servers</text>
+        <text x="379" y="106" font-size="13">4</text>
+        <text x="552" y="50" font-size="14" font-weight="700">Cache (5)</text>
+        <text x="552" y="140" font-size="14" font-weight="700">Database (6)</text>
+        <text x="379" y="244" font-size="14" font-weight="700">Queue (a)</text>
+        <text x="552" y="244" font-size="14" font-weight="700">Workers (b)</text>
+        <text x="320" y="292" font-size="13">Solid arrows = request path 1 to 6.  Dashed = background path: app, queue (a), workers (b), database.</text>
+        <text x="320" y="312" font-size="13">Users on the left, data on the right, every box named.</text>
+      </g>
+    </svg>
+    <figcaption>Request path: 1 client, 2 CDN, 3 load balancer, 4 app servers, then 5 cache and 6 database. Letters a and b number the background path.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m4-3 web-architecture.excalidraw</code> in your Module 4 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+system+design+mock+interview+excalidraw" target="_blank" rel="noopener">YouTube search: "Hello Interview system design mock interview excalidraw"</a>
+      <span class="meta">Watch any 10 minutes of a mock and look only at how the diagram is built up while the candidate talks.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+system+design+diagram+tips" target="_blank" rel="noopener">YouTube search: "ByteByteGo system design diagram tips"</a>
+      <span class="meta">Pick a short result. Watch for how they place and label boxes.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://blog.bytebytego.com/" target="_blank" rel="noopener">ByteByteGo blog</a>
+      <span class="meta">Open any free post. Ignore the text; study the diagrams: direction, labels, numbers.</span></li>
+    <li><a href="https://excalidraw.com" target="_blank" rel="noopener">Excalidraw</a>
+      <span class="meta">Press <kbd>?</kbd> there to see the full shortcut list. Learn three more keys you do not know.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes, Excalidraw)</h2>
+  <p>A timed drill: redraw the web architecture from the picture, from memory, in under 5 minutes. Do it three times.</p>
+
+  <h3>A. Prepare the timer and the canvas</h3>
+  <ol class="steps">
+    <li>Open <code>excalidraw.com</code>. If an old drawing is there, click <span class="ui">☰</span> → <span class="ui">Reset the canvas</span> → confirm. (Save the old one first if you want it: <span class="ui">☰</span> → <span class="ui">Save to…</span>.)</li>
+    <li>Open the Windows Clock: press <kbd>⊞ Win</kbd>, type <code>Clock</code>, press <kbd>Enter</kbd>, click <span class="ui">Timer</span> and set 5 minutes. Do not start it yet.</li>
+    <li>Study the picture above for one minute. Then do not look at it again during the run.</li>
+  </ol>
+
+  <h3>B. Run 1: boxes first, then arrows</h3>
+  <ol class="steps">
+    <li>Click the timer's play button.</li>
+    <li>Press <kbd>R</kbd> and draw the first box on the far left. Double-click it and type <code>Client</code>, then <kbd>Esc</kbd>.</li>
+    <li>With the box selected press <kbd>Ctrl</kbd> + <kbd>D</kbd> to copy it, and drag the copy to the right. Double-click, select the old text with <kbd>Ctrl</kbd> + <kbd>A</kbd>, type <code>CDN</code>, then <kbd>Esc</kbd>. Repeat for <code>Load balancer</code> and <code>App servers</code> in one row.</li>
+    <li>Make the right-hand column the same way: <code>Cache</code> above, <code>Database</code> below. Then <code>Queue</code> and <code>Workers</code> underneath.</li>
+    <li>Press <kbd>A</kbd>. Draw an arrow from each box to the next in the order above. Add numbers 1 to 6 beside the main-path arrows (<kbd>T</kbd>, click, type).</li>
+    <li>Make the background arrows (app to queue to workers to database) dashed: press <kbd>V</kbd>, click the arrow, and choose the dashed <span class="ui">Stroke style</span> in the left panel.</li>
+    <li>Stop the timer. Write down your time and what you forgot.</li>
+  </ol>
+
+  <h3>C. Checklist against the rules</h3>
+  <ol class="steps">
+    <li>Tick each: users on the left? Data on the right? Every box named? Arrows labelled or numbered? No crossing arrows? Dashed used only for async?</li>
+    <li>Fix one problem you find. If it takes more than a minute, note that you need to place boxes better the first time.</li>
+  </ol>
+
+  <h3>D. Runs 2 and 3: build in stages while talking</h3>
+  <ol class="steps">
+    <li>Clear the canvas and restart the 5-minute timer.</li>
+    <li>This time say out loud, as you draw: "Stage 1: a client and one server with a database. Stage 2: one server is a single point of failure, so a load balancer and two app servers. Stage 3: reads dominate, so a cache and a CDN. Stage 4: slow jobs go on a queue with workers."</li>
+    <li>You should finish in under 5 minutes. If you did not, practise the shortcuts again: the fast way to make more boxes is <kbd>Ctrl</kbd> + <kbd>D</kbd> and drag.</li>
+    <li>Save your best run as <code>m4-3 drill.excalidraw</code>.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Where do users and data usually go in a diagram?</summary><p>Users on the left (or top), data stores on the right (or bottom), so requests flow in one direction.</p></details>
+  <details><summary>Why label arrows?</summary><p>An unlabelled arrow does not say what flows. Labels such as "GET /feed" or "order event" make the diagram a precise statement.</p></details>
+  <details><summary>Why number the request path?</summary><p>Numbers turn the picture into a story you can walk the interviewer through, and make sure you do not skip a step.</p></details>
+  <details><summary>How many colours should you use?</summary><p>Two or three at most, each with a meaning (for example main flow, async path, problem area).</p></details>
+  <details><summary>Should you draw the final design right away? Explain.</summary><p>No. Start with the simplest version, then add parts one at a time as you explain the problem each part solves. It keeps the interviewer with you and shows reasons for each box.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Let me start with the simplest version and add components as the requirements need them."</blockquote>
+  <blockquote>"I've numbered the request path: one, the client hits the CDN; two, on a miss it goes to the load balancer; and so on."</blockquote>
+  <p><b>Common follow-up question:</b> Can you zoom into this component?</p>
+  <p>Yes. I'd draw it separately, with its own inputs and outputs, and keep the main diagram unchanged. For example, for the queue I'd show producers, the queue, consumers, retries and a dead-letter queue.</p>
+</section>
+
+</main>
+</body>
+</html>

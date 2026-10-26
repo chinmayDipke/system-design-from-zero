@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Practice: explain building blocks out loud</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m4-5">
+<main class="lesson">
+
+<section class="story">
+  <h2>Knowing the way versus telling the way</h2>
+  <p>You know the way to your friend's house. You have been there fifty times. But when a stranger asks, "How do I get there?", you stumble: "Take... um... the left, no, the right after the temple..." Knowing the way and telling the way are two different skills.</p>
+  <p>In an interview you must <b>tell</b>. Your head may be full of facts about caches and queues, but the words must come out clearly, in order, in about a minute, with nobody to help you. The only way to get good at telling is to <b>say it out loud</b>, again and again, like practising a speech.</p>
+  <p>Teachers do this every day, which is why this lesson asks you to explain like a teacher.</p>
+</section>
+
+<section class="explain">
+  <h2>How to practise explaining</h2>
+
+  <h3>The 60-second teacher answer</h3>
+  <p>A good short explanation has the same shape every time. Use this order:</p>
+  <ol>
+    <li><b>What it is</b>, in one plain sentence (an everyday comparison helps).</li>
+    <li><b>Why it exists:</b> what problem it solves.</li>
+    <li><b>How it works</b> in two or three steps.</li>
+    <li><b>The trade-off:</b> what it costs, and when you would not use it.</li>
+  </ol>
+  <p>That is about 120 to 150 spoken words, which fits one minute at a calm speed. Aim for <b>three key points</b> in every answer. More than three and you ramble; fewer and you sound shallow.</p>
+
+  <h3>The drill list</h3>
+  <p>These topics are from Modules 2 and 3. For each, speak for 60 seconds, as if teaching a friend who knows only basic programming. Then open the box to compare with the <b>three points</b> a good answer must contain. If you hit all three, your answer is good. If you miss one, say it again.</p>
+
+  <details><summary>1. API styles: REST, GraphQL, gRPC (<a href="m2-1.html">lesson</a>)</summary>
+    <p>(a) REST: resources and HTTP verbs, simple, cache-friendly. (b) GraphQL: client asks for exactly the fields it wants in one request, at the cost of server complexity and caching difficulty. (c) gRPC: fast binary calls between services, strict contracts, less friendly for browsers.</p></details>
+  <details><summary>2. SQL vs NoSQL (<a href="m2-2.html">lesson</a>)</summary>
+    <p>(a) SQL: structured tables, joins, strong guarantees (ACID). (b) NoSQL: flexible shape and easier horizontal scaling, with weaker joins and often weaker consistency. (c) Choose by access pattern and consistency needs, and default to a relational database until there is a reason not to.</p></details>
+  <details><summary>3. Indexes and ACID (<a href="m2-3.html">lesson</a>)</summary>
+    <p>(a) An index is a sorted lookup structure that makes reads fast without scanning the whole table. (b) The cost: slower writes and extra space. (c) ACID: atomic, consistent, isolated, durable, meaning a transaction fully happens or not at all.</p></details>
+  <details><summary>4. Vertical vs horizontal scaling (<a href="m2-4.html">lesson</a>)</summary>
+    <p>(a) Vertical: a bigger machine, simple but with a ceiling and a single point of failure. (b) Horizontal: more machines, nearly unlimited but needs stateless servers and a load balancer. (c) Scale up first while simple, and out when needed.</p></details>
+  <details><summary>5. Load balancers (<a href="m2-5.html">lesson</a>)</summary>
+    <p>(a) Spreads requests across servers, like a traffic police. (b) Algorithms (round robin, least connections) and health checks to drop dead servers. (c) It must itself be redundant, or it becomes a single point of failure.</p></details>
+  <details><summary>6. Proxies and API gateways (<a href="m2-6.html">lesson</a>)</summary>
+    <p>(a) A forward proxy acts for clients; a reverse proxy sits in front of servers. (b) A gateway is one entry point doing auth, rate limits and routing. (c) Cost: an extra hop and an important component that must stay available.</p></details>
+  <details><summary>7. Caching (<a href="m2-7.html">lesson</a>)</summary>
+    <p>(a) Keep copies of frequent data in fast memory to cut latency and database load. (b) Strategies such as cache-aside, with expiry (TTL) and eviction (LRU). (c) The hard part is stale data and invalidation.</p></details>
+  <details><summary>8. CDN and Redis (<a href="m2-8.html">lesson</a>)</summary>
+    <p>(a) CDN: copies of static files at locations near users, reducing latency and origin load. (b) Redis: an in-memory store for caches, sessions, counters and leaderboards. (c) Both trade freshness for speed, so choose expiry carefully.</p></details>
+  <details><summary>9. Replication and read replicas (<a href="m2-9.html">lesson</a>)</summary>
+    <p>(a) Copy data to several machines for read scaling and safety. (b) Leader takes writes; followers serve reads. (c) Replication lag means reads can be stale, and failover must be planned.</p></details>
+  <details><summary>10. Sharding and consistent hashing (<a href="m2-10.html">lesson</a>)</summary>
+    <p>(a) Split data across machines by a shard key to scale storage and writes. (b) Consistent hashing places keys and servers on a ring so adding a server moves only about 1/N of the keys. (c) The costs are cross-shard queries and transactions, hot shards, and resharding pain.</p></details>
+  <details><summary>11. Message queues and pub/sub (<a href="m2-11.html">lesson</a>)</summary>
+    <p>(a) Producers put messages in a queue; consumers process them later, which decouples services and absorbs spikes. (b) Pub/sub delivers one event to many subscribers. (c) Costs: delays, duplicates (at-least-once), and ordering limits.</p></details>
+  <details><summary>12. Rate limiting (<a href="m2-12.html">lesson</a>)</summary>
+    <p>(a) Limits how many requests a client may send in a time window to protect the service from abuse and overload. (b) Algorithms like token bucket and fixed or sliding window, with counters in Redis. (c) Respond with 429 and a retry hint; the trade-off is false blocks and a shared-state cost.</p></details>
+  <details><summary>13. CAP theorem and consistency (<a href="m3-1.html">CAP</a>, <a href="m3-2.html">models</a>)</summary>
+    <p>(a) Partitions will happen, so the choice is consistency or availability while one lasts. (b) Examples: payments choose consistency, likes choose availability. (c) Even normally there is a latency versus consistency trade-off (PACELC), and quorums with R + W greater than N tune it.</p></details>
+  <details><summary>14. Availability and SPOFs (<a href="m3-3.html">lesson</a>)</summary>
+    <p>(a) Availability is uptime in nines: 99.9% is about 8.76 hours of downtime a year. (b) Series parts multiply and lower it; parallel copies raise it. (c) Remove single points of failure with redundancy across zones, and test failover.</p></details>
+  <details><summary>15. Idempotency, retries and dead-letter queues (<a href="m3-4.html">lesson</a>)</summary>
+    <p>(a) Idempotent means repeating has the same effect as doing once, using idempotency keys. (b) Retry with exponential backoff and jitter to avoid retry storms. (c) Messages that keep failing go to a dead-letter queue; the outbox pattern keeps database and events in sync.</p></details>
+  <details><summary>16. Monolith vs microservices (<a href="m3-5.html">lesson</a>)</summary>
+    <p>(a) Monolith: one deployable, simple, easy transactions. (b) Microservices: independent teams and scaling, but network failures, no easy transactions (sagas) and heavy operations. (c) Start with a modular monolith and split only for a clear reason.</p></details>
+  <details><summary>17. Circuit breakers and timeouts (<a href="m3-6.html">lesson</a>)</summary>
+    <p>(a) Always set timeouts so a slow service cannot hold callers forever. (b) A breaker has closed, open and half-open states and fails fast to stop cascading failure. (c) Bulkheads, fallbacks and load shedding keep the core working.</p></details>
+  <details><summary>18. Observability (<a href="m3-7.html">lesson</a>)</summary>
+    <p>(a) Logs (events), metrics (numbers over time) and traces (a request's path). (b) Structured logs with a request ID; RED metrics: rate, errors, duration. (c) Alert on symptoms users feel, not on causes.</p></details>
+  <details><summary>19. Auth, JWT and OAuth (<a href="m3-8.html">lesson</a>)</summary>
+    <p>(a) Authentication proves who you are; authorization decides what you may do. (b) A JWT is signed, not encrypted, so keep it short-lived with a refresh token. (c) OAuth lets "Login with Google" work without sharing passwords; hash passwords with bcrypt or argon2.</p></details>
+  <details><summary>20. Back-of-the-envelope estimation (<a href="m3-9.html">lesson</a>)</summary>
+    <p>(a) Requests per day divided by about 100,000 gives requests per second. (b) Size for peak, about 2 to 3 times the average. (c) Use numbers to decide: CDN, cache, object storage, or a bigger database.</p></details>
+
+  <h3>The recording routine</h3>
+  <p>Listening to yourself is uncomfortable and very effective. You will hear the "umm"s, the long pauses, the places where you skipped a step. A short routine:</p>
+  <ol>
+    <li>Pick a topic. Read its name only, not the answer.</li>
+    <li>Take 10 seconds to think, then record 60 seconds, no more.</li>
+    <li>Play it back once. Do not judge the voice, only the content.</li>
+    <li>Score yourself with the checklist below. Write the score.</li>
+    <li>Fix the weakest point and record again. Compare the two scores.</li>
+  </ol>
+
+  <h3>Self-scoring checklist (out of 10)</h3>
+  <table>
+    <tr><th>Question</th><th>Points</th></tr>
+    <tr><td>Did I say what it is in one plain sentence?</td><td>0 or 1</td></tr>
+    <tr><td>Did I say why it exists (the problem it solves)?</td><td>0 or 1</td></tr>
+    <tr><td>Did I include all three key points (see the box)?</td><td>0 to 3 (one each)</td></tr>
+    <tr><td>Did I state at least one trade-off or cost?</td><td>0 or 2</td></tr>
+    <tr><td>Did I give one concrete example (a real app, a number)?</td><td>0 or 1</td></tr>
+    <tr><td>Did I finish inside 60 to 75 seconds without long pauses or filler words?</td><td>0 or 1</td></tr>
+    <tr><td>Would a beginner understand it?</td><td>0 or 1</td></tr>
+  </table>
+  <p>Check the total: 1 + 1 + 3 + 2 + 1 + 1 + 1 = 10. Under 6: record again. 6 to 8: good. 9 to 10: very strong, and move on to a harder topic.</p>
+
+  <h3>Trade-offs of this kind of practice</h3>
+  <ul>
+    <li>Memorising a script sounds stiff and breaks under a follow-up. Learn the three points and the order, not the words.</li>
+    <li>Reading silently feels productive but hides the gaps. Speaking out loud is slower and exposes them, which is the point.</li>
+    <li>Do not only practise your favourite topics. Spend more time on the ones you score low.</li>
+  </ul>
+  <p class="tip">Thirty minutes a day of 5 recordings beats a 3-hour weekend cram. Spread the topics over a few days and come back to the weak ones.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 240" role="img" aria-label="A practice loop with five steps: pick a topic, think 10 seconds and record 60 seconds, play back, score with the checklist, fix the weakest point and record again">
+      <defs><marker id="ar-m4-5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="110" height="60" rx="8"/>
+        <rect x="140" y="40" width="110" height="60" rx="8"/>
+        <rect x="265" y="40" width="110" height="60" rx="8"/>
+        <rect x="390" y="40" width="110" height="60" rx="8"/>
+        <rect x="515" y="40" width="110" height="60" rx="8"/>
+        <path d="M127 70 H138" marker-end="url(#ar-m4-5)"/>
+        <path d="M252 70 H263" marker-end="url(#ar-m4-5)"/>
+        <path d="M377 70 H388" marker-end="url(#ar-m4-5)"/>
+        <path d="M502 70 H513" marker-end="url(#ar-m4-5)"/>
+        <path d="M570 102 V170 H70 V102" marker-end="url(#ar-m4-5)" stroke-dasharray="6 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="70" y="65" font-size="14" font-weight="700">1. Pick</text>
+        <text x="70" y="85" font-size="13">a topic</text>
+        <text x="195" y="65" font-size="14" font-weight="700">2. Record</text>
+        <text x="195" y="85" font-size="13">60 seconds</text>
+        <text x="320" y="65" font-size="14" font-weight="700">3. Listen</text>
+        <text x="320" y="85" font-size="13">once</text>
+        <text x="445" y="65" font-size="14" font-weight="700">4. Score</text>
+        <text x="445" y="85" font-size="13">out of 10</text>
+        <text x="570" y="65" font-size="14" font-weight="700">5. Fix</text>
+        <text x="570" y="85" font-size="13">weakest point</text>
+        <text x="320" y="195" font-size="14">Repeat (dashed arrow) until the score is 9 or 10</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 to 5, then back to step 2 until the answer is strong.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m4-5 practice-loop.excalidraw</code> in your Module 4 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=system+design+interview+concepts+explained+in+one+minute" target="_blank" rel="noopener">YouTube search: "system design interview concepts explained in one minute"</a>
+      <span class="meta">Watch two or three of the shortest results. Notice how each one fits what, why, how and trade-off into a minute.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+system+design+101" target="_blank" rel="noopener">YouTube search: "ByteByteGo system design 101"</a>
+      <span class="meta">Pick any short clip on a topic from the list above and compare it with your own answer.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#study-guide" target="_blank" rel="noopener">System Design Primer: Study guide</a>
+      <span class="meta">Skim the headings to see the whole topic list and tick off those you can now explain.</span></li>
+    <li><a href="https://roadmap.sh/system-design" target="_blank" rel="noopener">roadmap.sh: System Design</a>
+      <span class="meta">Use it as a checklist: for each topic you have not yet recorded, add a card in your notes.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 45 minutes)</h2>
+  <p>You will record 5 answers and score each one. You only need your Windows PC, a microphone (the laptop microphone is fine) and the drill list above.</p>
+
+  <h3>A. Set up Sound Recorder</h3>
+  <ol class="steps">
+    <li>Press <kbd>⊞ Win</kbd>, type <code>Sound Recorder</code>, press <kbd>Enter</kbd>. (On some Windows versions it is called <span class="ui">Voice Recorder</span>.)</li>
+    <li>If Windows asks to allow microphone access, click <span class="ui">Yes</span>. If you see a message that no microphone is found, open <span class="ui">Settings</span> → <span class="ui">System</span> → <span class="ui">Sound</span> → <span class="ui">Input</span> and check that a microphone is chosen, then reopen the app.</li>
+    <li>You see a large round button with a microphone. That starts recording. A square or pause button stops or pauses it. Do a 5-second test: click the round button, say "testing", click the stop button. The recording appears in the list on the left.</li>
+    <li>Click the recording and press the play button. If you can hear yourself, the setup works. Delete the test: right-click it and choose <span class="ui">Delete</span>.</li>
+  </ol>
+
+  <h3>B. Prepare the score sheet</h3>
+  <ol class="steps">
+    <li>Open a notes file named <code>m4-5 scores.txt</code>. Write 5 rows: <b>Topic</b>, <b>Score 1</b>, <b>Score 2 (after re-record)</b>, <b>Weakest point</b>.</li>
+    <li>Pick 5 topics from the list. Pick one you feel sure about, two that feel okay and two that scare you. Write them in the sheet.</li>
+  </ol>
+
+  <h3>C. Record each topic (about 6 minutes each)</h3>
+  <ol class="steps">
+    <li>Look at the topic name only. Do not open its box. Think for 10 seconds.</li>
+    <li>Click the round record button. Speak for about 60 seconds, as if teaching a friend: what it is, why it exists, how it works, the trade-off. Click stop.</li>
+    <li>Play it back once. As you listen, tick the checklist from this lesson. Count the filler words ("umm", "like") and the long silences.</li>
+    <li>Now open the topic's box. How many of the three key points did you cover?</li>
+    <li>Add up your score out of 10 and write it in the sheet, with the weakest point.</li>
+    <li>If the score is under 8, record once more, fixing only the weakest point. Write the second score.</li>
+    <li>Rename the best recording: right-click it, choose <span class="ui">Rename</span> and type the topic name. (Recordings are saved in your Documents folder, inside <b>Sound Recordings</b>.)</li>
+  </ol>
+
+  <h3>D. Review after all five</h3>
+  <ol class="steps">
+    <li>Find your lowest-scoring topic. Re-read its lesson (the link is in the box), then record it again tomorrow.</li>
+    <li>Add 2 or 3 more topics to the sheet to do in the next days, until you have covered all 20.</li>
+    <li>Optionally, ask a friend to listen to one recording and tell you one point that was unclear.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What four parts make a 60-second explanation?</summary><p>What it is, why it exists, how it works, and the trade-off (what it costs, and when not to use it).</p></details>
+  <details><summary>Why record yourself instead of just thinking through the answer?</summary><p>Silent thinking hides gaps. Speaking and listening back exposes missing steps, filler words and long pauses, which are exactly what an interviewer would notice.</p></details>
+  <details><summary>Why aim for three key points per answer?</summary><p>Three is enough to show understanding and is easy to remember and deliver. More leads to rambling.</p></details>
+  <details><summary>Explain caching in 20 seconds, with one trade-off.</summary><p>Caching keeps copies of frequently used data in fast memory so repeated reads are quick and the database is less loaded. The trade-off is that the copy can become stale, so we need expiry or invalidation.</p></details>
+  <details><summary>You scored 5 out of 10 on "load balancers". What do you do next?</summary><p>Find the weakest point on the checklist, re-read the lesson for that part, then record again focusing on only that point, and compare the new score.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"A load balancer spreads requests across several servers so no single one is overloaded, and it uses health checks to stop sending traffic to a dead one. The trade-off is that it becomes a critical component, so I'd run it redundantly."</blockquote>
+  <blockquote>"Let me explain it simply first, then I'll go deeper if you'd like."</blockquote>
+  <p><b>Common follow-up question:</b> Can you explain that to someone non-technical?</p>
+  <p>Yes: use an everyday comparison. For example, a load balancer is like a traffic police at a busy crossing who sends cars to different roads so no road is jammed. Then I would connect the comparison back to the technical term and the trade-off.</p>
+</section>
+
+</main>
+</body>
+</html>
