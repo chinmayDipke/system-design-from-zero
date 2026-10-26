@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What happens when you type a URL</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m1-4">
+<main class="lesson">
+
+<section class="story">
+  <h2>Ordering a parcel to a new friend's house</h2>
+  <p>You want to send a gift to a friend. You know only her name. First you look up her address in your phone. Then you call to check she is home and agree on a secret word so nobody else opens the parcel. Then you send the parcel with a note: "Please send me your photo album." She posts it back, and you open it. Inside there are more notes: "Also see the other album", so you ask again.</p>
+  <p>Your browser does exactly this, in less than a second, every time you type a web address and press <kbd>Enter</kbd>.</p>
+</section>
+
+<section class="explain">
+  <h2>The most famous interview question</h2>
+  <p>"What happens when you type <code>https://www.example.com</code> into the browser and press Enter?" is asked everywhere because one answer touches DNS, networking, security, servers and the browser. Here are the steps. Learn them in order.</p>
+
+  <h3>1. The browser reads the URL</h3>
+  <p>A URL has parts: the <b>protocol</b> (<code>https</code>), the <b>host</b> (<code>www.example.com</code>), an optional <b>port</b> (default 443 for https) and the <b>path</b> (<code>/products?id=7</code>). The browser first checks if it already has a saved copy that is still fresh. If it does, the trip may end here.</p>
+
+  <h3>2. DNS: find the IP</h3>
+  <p>The browser needs a number, not a name. It goes through the chain from the last lesson: browser cache, OS cache, resolver, and if needed root, TLD and authoritative servers. Result: an IP address.</p>
+
+  <h3>3. TCP handshake: open a connection</h3>
+  <p><b>TCP</b> is the reliable-delivery layer under HTTP. Before any data, both sides do a three-step greeting: "Hello?" (SYN), "Hello, I hear you" (SYN-ACK), "Great" (ACK). This costs <b>one round trip</b> of waiting. (HTTP/3 uses QUIC instead and merges some of these steps.)</p>
+
+  <h3>4. TLS handshake: make it secure</h3>
+  <p>For HTTPS, the browser and the server then agree on encryption. The server shows its <b>certificate</b>, the browser checks it, and both create a shared secret key. After this, everything is encrypted. This costs about <b>one more round trip</b> with modern TLS.</p>
+
+  <h3>5. HTTP request</h3>
+  <p>Finally the browser sends: <code>GET /products?id=7</code> plus headers (including cookies for that site).</p>
+
+  <h3>6. The server does its work</h3>
+  <p>The request may not go to a single machine directly. Often it first meets a <b>CDN</b> (a network of nearby copy-holders for static files) or a <b>load balancer</b> (a traffic police that spreads requests across many servers). Both come in Module 2; for now, just know the names. A backend server runs the code, may ask a database, and builds a response.</p>
+
+  <h3>7. The response travels back</h3>
+  <p>A status code (<code>200</code>), headers and a body, usually HTML.</p>
+
+  <h3>8. The browser renders</h3>
+  <p>It reads the HTML top to bottom and builds the page structure (the DOM). When it meets <code>&lt;link&gt;</code> for CSS, <code>&lt;script&gt;</code> for JavaScript or <code>&lt;img&gt;</code> for pictures, it <b>makes more requests</b>. Styles and layout get applied, scripts run, and the page is painted on screen. JavaScript may then call APIs for more data, which is yet another request.</p>
+
+  <h3>Where the time goes</h3>
+  <table>
+    <tr><th>Step</th><th>Costs about</th><th>Can be skipped when</th></tr>
+    <tr><td>DNS</td><td>One or more lookups</td><td>It is cached</td></tr>
+    <tr><td>TCP</td><td>1 round trip</td><td>A connection is already open and reused</td></tr>
+    <tr><td>TLS</td><td>1 or more round trips</td><td>Connection reused; or session resumed</td></tr>
+    <tr><td>Request to first byte</td><td>Server work and network</td><td>A cache or CDN answers early</td></tr>
+    <tr><td>Download</td><td>Size divided by bandwidth</td><td>Smaller files; compression</td></tr>
+  </table>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Distance hurts</b>: each round trip across the globe costs 100+ ms, and steps 2 to 5 need several. That is why we put servers and CDNs near users.</li>
+    <li><b>Reusing connections</b> (keep-alive) saves handshakes but holds resources on the server.</li>
+    <li><b>Caching</b> makes things fast but risks showing stale data. Deciding what to cache and for how long is a recurring design question.</li>
+  </ul>
+  <p class="tip">In an interview, speak the steps in order, then say which ones you would optimise and how (cache DNS, reuse connections, add a CDN, compress). That is what turns a memorised list into a design answer.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 340" role="img" aria-label="A vertical timeline: URL parse, DNS lookup, TCP handshake, TLS handshake, HTTP request to server, response, browser renders and fetches more files">
+      <defs><marker id="ar-m1-4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="10" width="190" height="55" rx="8"/>
+        <rect x="225" y="10" width="190" height="55" rx="8"/>
+        <rect x="435" y="10" width="190" height="55" rx="8"/>
+        <rect x="15" y="140" width="190" height="55" rx="8"/>
+        <rect x="225" y="140" width="190" height="55" rx="8"/>
+        <rect x="435" y="140" width="190" height="55" rx="8"/>
+        <rect x="120" y="270" width="400" height="55" rx="8"/>
+        <path d="M208 38 H222" marker-end="url(#ar-m1-4)"/>
+        <path d="M418 38 H432" marker-end="url(#ar-m1-4)"/>
+        <path d="M530 68 V90 H110 V137" marker-end="url(#ar-m1-4)"/>
+        <path d="M208 168 H222" marker-end="url(#ar-m1-4)"/>
+        <path d="M418 168 H432" marker-end="url(#ar-m1-4)"/>
+        <path d="M530 198 V235 H320 V267" marker-end="url(#ar-m1-4)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="110" y="34" font-size="15" font-weight="700">1. Parse URL</text>
+        <text x="110" y="53" font-size="13">https, host, path</text>
+        <text x="320" y="34" font-size="15" font-weight="700">2. DNS</text>
+        <text x="320" y="53" font-size="13">name to IP</text>
+        <text x="530" y="34" font-size="15" font-weight="700">3. TCP</text>
+        <text x="530" y="53" font-size="13">open connection</text>
+        <text x="110" y="164" font-size="15" font-weight="700">4. TLS</text>
+        <text x="110" y="183" font-size="13">encrypt + certificate</text>
+        <text x="320" y="164" font-size="15" font-weight="700">5. HTTP request</text>
+        <text x="320" y="183" font-size="13">to CDN / server</text>
+        <text x="530" y="164" font-size="15" font-weight="700">6–7. Server + response</text>
+        <text x="530" y="183" font-size="13">status + HTML</text>
+        <text x="320" y="294" font-size="15" font-weight="700">8. Render, then fetch CSS, JS, images, API data</text>
+        <text x="320" y="313" font-size="13">more requests, repeat from step 5</text>
+      </g>
+    </svg>
+    <figcaption>Read left to right, then continue on the next row. Later requests often skip steps 2 to 4 because the connection is reused.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m1-4 url-to-page.excalidraw</code> in your Module 1 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+what+happens+when+you+type+a+URL+into+your+browser" target="_blank" rel="noopener">YouTube search: "ByteByteGo what happens when you type a URL into your browser"</a>
+      <span class="meta">Short. Watch it all, then try telling the steps out loud without looking.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+what+happens+when+you+type+google.com" target="_blank" rel="noopener">YouTube search: "Gaurav Sen what happens when you type google.com"</a>
+      <span class="meta">Pick one result you like. Watch the part that walks through DNS, TCP and the response.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/alex/what-happens-when" target="_blank" rel="noopener">GitHub: alex/what-happens-when</a>
+      <span class="meta">Very detailed. Read only the headings and the first paragraph of each, to see how deep this question can go.</span></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/Performance/Guides/How_browsers_work" target="_blank" rel="noopener">MDN: How browsers work (performance guide)</a>
+      <span class="meta">Focus on navigation and the steps up to the first render.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+  <h3>A. Read the Timing tab</h3>
+  <ol class="steps">
+    <li>Open Chrome. Open a <b>new Incognito window</b>: <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd>. (This starts with a cleaner cache, so you see more of the steps.)</li>
+    <li>Press <kbd>F12</kbd>, click the <span class="ui">Network</span> tab. Keep the panel open.</li>
+    <li>Click the address bar, type <code>https://www.wikipedia.org</code> and press <kbd>Enter</kbd>. Rows fill the list.</li>
+    <li>Click the <b>very first row</b>: its type is <code>document</code>. It is the HTML page itself.</li>
+    <li>In the detail pane click the <span class="ui">Timing</span> tab. You see a list of timed phases with a bar for each. Match them:
+      <ul>
+        <li><span class="ui">DNS Lookup</span>: step 2, finding the IP.</li>
+        <li><span class="ui">Initial connection</span>: step 3, the TCP handshake.</li>
+        <li><span class="ui">SSL</span>: step 4, the TLS handshake. (Chrome counts it inside "Initial connection".)</li>
+        <li><span class="ui">Request sent</span> then <span class="ui">Waiting for server response</span> (also called TTFB, time to first byte): steps 5 and 6, the request and the server thinking.</li>
+        <li><span class="ui">Content Download</span>: step 7, the response travelling back.</li>
+      </ul>
+      If DNS, connection or SSL are missing or zero, Chrome reused an existing connection. That is normal; open a different site to see them.</li>
+    <li>Look at the other rows below: scripts, images, styles. These are step 8, the "more requests".</li>
+    <li>Write in your notes the time of each phase and which was the longest.</li>
+  </ol>
+
+  <h3>B. Walk the route with tracert</h3>
+  <ol class="steps">
+    <li>Press <kbd>⊞ Win</kbd>, type <code>cmd</code>, press <kbd>Enter</kbd>.</li>
+    <li>Type this and press <kbd>Enter</kbd> (paste with <kbd>Ctrl</kbd> + <kbd>V</kbd> or right-click):
+      <pre><code>tracert google.com</code></pre></li>
+    <li>It prints a numbered list. Each line is one "hop": a router your packet passes through, with three timings. The first hop is your own router. Some lines show <code>*</code> and "Request timed out"; many routers simply do not reply, and that is normal.</li>
+    <li>It can take up to a minute or two. To stop early, press <kbd>Ctrl</kbd> + <kbd>C</kbd>.</li>
+    <li>Notice how the time generally grows as you go farther along. That is the distance cost from the trade-offs section.</li>
+  </ol>
+
+  <h3>C. Explain out loud</h3>
+  <ol class="steps">
+    <li>Close this page. Set a timer for 2 minutes. Say the 8 steps out loud, as if the interviewer is in front of you. Then open the lesson and check what you missed. Repeat until you do not miss any.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why does the browser need DNS before it can send the request?</summary><p>Networks route by IP address, not by name. DNS turns the host name into an IP.</p></details>
+  <details><summary>What is the point of the TCP handshake and the TLS handshake?</summary><p>TCP sets up a reliable connection between the two machines. TLS then agrees on encryption and checks the server's certificate, so the data is private.</p></details>
+  <details><summary>Which Timing bar do you look at to judge how slow the server itself is?</summary><p>"Waiting for server response" (TTFB).</p></details>
+  <details><summary>Why are later requests to the same site often faster than the first?</summary><p>DNS is cached and the connection (with TCP and TLS already done) is reused. Some files may also come from the browser cache.</p></details>
+  <details><summary>Your page's first byte takes 1.5 seconds. Where do you start looking, and why?</summary><p>On the server side: slow code, slow database queries, or no caching, since TTFB is mostly server time plus network. I would also check whether a CDN or cache could answer instead.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"The browser parses the URL, resolves the domain through DNS, opens a TCP connection, does a TLS handshake, sends the HTTP request, and the server responds, usually via a CDN or load balancer. Then the browser renders the HTML and fetches CSS, JS and images."</blockquote>
+  <blockquote>"Each round trip costs real time, so we cache DNS, reuse connections and put content close to the user."</blockquote>
+  <p><b>Common follow-up question:</b> How would you make that page load faster?</p>
+  <p>Reduce round trips and bytes. Use a CDN so content is near the user, keep connections alive, use HTTP/2 or HTTP/3, cache static files with sensible headers, compress responses, load fewer or smaller files, and make the server's own work (queries, code) faster. I would measure first, using TTFB and the Network timing, then fix the biggest piece.</p>
+</section>
+
+</main>
+</body>
+</html>

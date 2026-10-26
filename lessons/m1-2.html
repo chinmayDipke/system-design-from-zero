@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IP address, ports and DNS</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m1-2">
+<main class="lesson">
+
+<section class="story">
+  <h2>The building, the flat and the phone book</h2>
+  <p>To send a letter you need an address. A computer on the internet has one too. It is called an <b>IP address</b>, like the address of a big apartment building.</p>
+  <p>But a building has many flats. The <b>port</b> is the flat number: it tells the letter which program inside the computer should get it. Web pages go to one flat, the database goes to another.</p>
+  <p>Now, you do not remember the IP address of your friend's house; you save the name in your phone. <b>DNS</b> is the internet's phone book. You say <code>google.com</code>; DNS says the number.</p>
+</section>
+
+<section class="explain">
+  <h2>IP, ports and DNS</h2>
+
+  <h3>IP address</h3>
+  <p>Every device that talks on the internet has a number. Two kinds exist:</p>
+  <table>
+    <tr><th></th><th>IPv4</th><th>IPv6</th></tr>
+    <tr><td>Looks like</td><td><code>142.250.77.46</code> (four numbers, 0 to 255)</td><td><code>2404:6800:4009:81a::200e</code> (long, hex, with colons)</td></tr>
+    <tr><td>How many</td><td>About 4.3 billion in total, which ran short</td><td>An astronomically large number</td></tr>
+    <tr><td>Today</td><td>Still used everywhere</td><td>Growing; many networks use both</td></tr>
+  </table>
+  <p>The two example numbers above are only to show the shape. Real addresses change.</p>
+  <p><b>Public vs private IP.</b> A <b>public</b> IP can be reached from anywhere on the internet; servers need one. A <b>private</b> IP only works inside a local network (your home Wi-Fi, an office, a company's cloud network). Common private ranges start with <code>192.168.</code>, <code>10.</code> or <code>172.16.</code> to <code>172.31.</code>. Your phone and laptop at home usually have private IPs, and the router shares one public IP for all of them.</p>
+
+  <h3>Ports</h3>
+  <p>An IP address finds the computer. A <b>port</b> (a number from 0 to 65535) finds the program on it. Together they look like <code>203.0.113.10:443</code>. Ports you should know:</p>
+  <table>
+    <tr><th>Port</th><th>Usually used for</th></tr>
+    <tr><td>80</td><td>HTTP (plain websites)</td></tr>
+    <tr><td>443</td><td>HTTPS (secure websites)</td></tr>
+    <tr><td>5432</td><td>PostgreSQL database</td></tr>
+    <tr><td>3000</td><td>A common default for local dev servers, such as Next.js or Express</td></tr>
+  </table>
+  <p>Browsers add port 80 or 443 for you, which is why you never type it.</p>
+
+  <h3>DNS: name to number</h3>
+  <p>Computers talk in IP addresses, people remember names. <b>DNS</b> (Domain Name System) converts <code>www.example.com</code> into an IP. Looking it up is called <b>resolving</b>. Asking everyone every time would be slow, so the answer is cached at several levels. The chain, from nearest to farthest:</p>
+  <ol>
+    <li><b>Browser cache</b>: "I looked this up a minute ago."</li>
+    <li><b>Operating system cache</b> (and the hosts file).</li>
+    <li><b>Recursive resolver</b>: a helper run by your internet provider, or a public one such as 8.8.8.8 or 1.1.1.1. It does the legwork for you and caches results.</li>
+    <li><b>Root server</b>: knows who handles <code>.com</code>, <code>.in</code>, and so on.</li>
+    <li><b>TLD server</b> (top-level domain, e.g. <code>.com</code>): knows who handles <code>example.com</code>.</li>
+    <li><b>Authoritative server</b>: the final owner of the records for that domain. It gives the real answer.</li>
+  </ol>
+  <p>Steps 1 to 3 usually finish it. Steps 4 to 6 only happen when nobody has the answer cached.</p>
+
+  <h3>Record types</h3>
+  <table>
+    <tr><th>Record</th><th>Meaning</th></tr>
+    <tr><td>A</td><td>Name to IPv4 address</td></tr>
+    <tr><td>AAAA</td><td>Name to IPv6 address</td></tr>
+    <tr><td>CNAME</td><td>"This name is an alias of that other name"</td></tr>
+    <tr><td>MX</td><td>Which mail servers accept email for this domain</td></tr>
+    <tr><td>TXT</td><td>Free text; used for proofs such as "I own this domain" and email security settings</td></tr>
+  </table>
+  <p><b>TTL</b> (time to live) is a number of seconds on each record: how long others may cache the answer.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Long TTL</b> (say a day): fewer lookups, faster for users, cheaper. But if you move your server to a new IP, some users keep going to the old one until the cache expires.</li>
+    <li><b>Short TTL</b> (say 60 seconds): changes spread fast, which helps for failover. More lookups happen.</li>
+  </ul>
+  <p class="tip">Practical habit: before planning to move a site to a new server, lower the TTL a day earlier. Then the switch is quick.</p>
+  <div class="warn">"DNS issue" is a classic cause of "the site is down for some people but not others". Different resolvers can be holding different cached answers.</div>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="A browser asks a recursive resolver for an address; the resolver asks the root server, then the TLD server, then the authoritative server, and returns the IP address to the browser">
+      <defs><marker id="ar-m1-2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="115" width="140" height="70" rx="10"/>
+        <rect x="235" y="115" width="140" height="70" rx="10"/>
+        <rect x="470" y="15" width="155" height="55" rx="10"/>
+        <rect x="470" y="123" width="155" height="55" rx="10"/>
+        <rect x="470" y="230" width="155" height="55" rx="10"/>
+        <path d="M158 140 H232" marker-end="url(#ar-m1-2)"/>
+        <path d="M232 165 H158" marker-end="url(#ar-m1-2)" stroke-dasharray="6 5"/>
+        <path d="M378 125 L467 55" marker-end="url(#ar-m1-2)"/>
+        <path d="M378 150 H467" marker-end="url(#ar-m1-2)"/>
+        <path d="M378 175 L467 245" marker-end="url(#ar-m1-2)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="85" y="145" font-size="16" font-weight="700">Browser</text>
+        <text x="85" y="166" font-size="13">(cache first)</text>
+        <text x="305" y="143" font-size="16" font-weight="700">Resolver</text>
+        <text x="305" y="164" font-size="13">(does the legwork)</text>
+        <text x="547" y="40" font-size="15" font-weight="700">Root server</text>
+        <text x="547" y="58" font-size="13">"ask .com"</text>
+        <text x="547" y="148" font-size="15" font-weight="700">TLD server</text>
+        <text x="547" y="166" font-size="13">"ask example.com's NS"</text>
+        <text x="547" y="255" font-size="15" font-weight="700">Authoritative</text>
+        <text x="547" y="273" font-size="13">"IP is ..."</text>
+        <text x="195" y="132" font-size="13">1. where?</text>
+        <text x="195" y="190" font-size="13">IP</text>
+      </g>
+    </svg>
+    <figcaption>The resolver walks root, then TLD, then authoritative, only when it has nothing cached.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m1-2 dns-resolution.excalidraw</code> in your Module 1 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+how+DNS+works" target="_blank" rel="noopener">YouTube search: "ByteByteGo how DNS works"</a>
+      <span class="meta">Short video. Watch the whole thing and spot the root, TLD and authoritative steps.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Fireship+DNS+in+100+seconds" target="_blank" rel="noopener">YouTube search: "Fireship DNS in 100 seconds"</a>
+      <span class="meta">About 2 minutes. A quick second look.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://www.cloudflare.com/learning/dns/what-is-dns/" target="_blank" rel="noopener">Cloudflare Learning Center: What is DNS?</a>
+      <span class="meta">Read the part on the four kinds of DNS servers. Skip the rest.</span></li>
+    <li><a href="https://www.cloudflare.com/learning/dns/dns-records/" target="_blank" rel="noopener">Cloudflare Learning Center: DNS records</a>
+      <span class="meta">Focus on A, AAAA, CNAME, MX and TXT.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+  <h3>A. Open Command Prompt</h3>
+  <ol class="steps">
+    <li>Press the <kbd>⊞ Win</kbd> key, type <code>cmd</code>, and press <kbd>Enter</kbd>. A black window with a blinking cursor opens. That is Command Prompt. (It may open inside Windows Terminal; that is fine.)</li>
+    <li>To paste something you copied from this page: <kbd>Ctrl</kbd> + <kbd>V</kbd> works, or <b>right-click</b> inside the window (in Windows Terminal, right-click pastes). Then press <kbd>Enter</kbd> to run it. Or just type the commands yourself.</li>
+  </ol>
+
+  <h3>B. Find your own address</h3>
+  <pre><code>ipconfig</code></pre>
+  <ol class="steps">
+    <li>Type it, press <kbd>Enter</kbd>. A list of network adapters appears.</li>
+    <li>Find the one for Wi-Fi (it says <span class="ui">Wireless LAN adapter Wi-Fi</span>) or Ethernet. Look at <span class="ui">IPv4 Address</span>. It will most likely begin with <code>192.168.</code> or <code>10.</code>: that is your <b>private</b> IP.</li>
+    <li>You may also see <span class="ui">Default Gateway</span>. That is your router.</li>
+    <li>Your public IP is different. To see it, in Chrome search "what is my IP". It will not match the one from <code>ipconfig</code>.</li>
+  </ol>
+
+  <h3>C. Ask DNS for an address</h3>
+  <pre><code>nslookup google.com</code></pre>
+  <ol class="steps">
+    <li>Run it. The top lines show which DNS server answered (your resolver).</li>
+    <li>Below, a line says <span class="ui">Non-authoritative answer</span> (this just means the answer came from a resolver's cache, not directly from the owner), followed by <span class="ui">Name</span> and <span class="ui">Address</span> lines. Those are Google's IPs. You may see an IPv6 one and an IPv4 one.</li>
+    <li>Run it again. The addresses may be the same or different; big sites hand out several.</li>
+  </ol>
+
+  <h3>D. Ask for the mail servers</h3>
+  <pre><code>nslookup -type=mx gmail.com</code></pre>
+  <ol class="steps">
+    <li>You should see lines containing <code>MX preference</code> and <code>mail exchanger</code> followed by names. These are the servers that accept email sent to <code>@gmail.com</code>. The lowest preference number is tried first.</li>
+    <li>Optional: try <code>nslookup -type=txt gmail.com</code> to see TXT records.</li>
+  </ol>
+
+  <h3>E. Ping</h3>
+  <pre><code>ping google.com</code></pre>
+  <ol class="steps">
+    <li>Run it. Four lines appear like <span class="ui">Reply from ... time=XXms</span>. Each is a tiny message to the server and back, and <code>time</code> is the round trip in milliseconds.</li>
+    <li>Note the IP it printed. It is what DNS returned. If it says "Request timed out", the site may block ping; that is normal for some sites. Try another one.</li>
+    <li>You just did, by hand, what your browser does silently every time.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is the difference between an IP address and a port?</summary><p>The IP finds the computer; the port finds the program inside it.</p></details>
+  <details><summary>Which ports do HTTP, HTTPS and PostgreSQL usually use?</summary><p>80, 443 and 5432.</p></details>
+  <details><summary>List the DNS resolution chain in order.</summary><p>Browser cache, OS cache, recursive resolver, root server, TLD server, authoritative server.</p></details>
+  <details><summary>What is a CNAME record?</summary><p>An alias: it says one name is another name, so you look up that other name instead.</p></details>
+  <details><summary>You are moving your site to a new server next week. What do you do with the TTL, and why?</summary><p>Lower it a day or so before the move (say to 60 seconds or a few minutes), so caches forget the old IP quickly. After the move is stable, raise it again to reduce lookups.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"DNS translates a domain name to an IP address. The answer is cached at the browser, the OS and the resolver, and the TTL decides how long."</blockquote>
+  <blockquote>"An IP address finds the machine and a port finds the process on it; HTTPS is 443 and Postgres is 5432."</blockquote>
+  <p><b>Common follow-up question:</b> A user reports your site is down but it works for you. Could DNS be the reason?</p>
+  <p>Yes. If we recently changed the DNS records, different resolvers may still cache the old IP until the TTL expires, so some users reach the new server and others the old one. I would check with <code>nslookup</code> against different resolvers, and I would lower the TTL before future changes.</p>
+</section>
+
+</main>
+</body>
+</html>

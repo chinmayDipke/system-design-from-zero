@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTTP, HTTPS and status codes</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m1-3">
+<main class="lesson">
+
+<section class="story">
+  <h2>The speed-post envelope</h2>
+  <p>When you send a speed-post, the envelope has a fixed format: To, From, what is inside, and a stamp. Because the format is fixed, every post office in India can handle it without asking questions.</p>
+  <p><b>HTTP</b> is that fixed format for the web. A request says <i>what you want</i> and <i>to whom</i>, and the reply starts with a number that says how it went. "200" means fine. "404" means we could not find it.</p>
+  <p><b>HTTPS</b> is the same letter in a locked, sealed envelope, so the postman cannot read or change it.</p>
+</section>
+
+<section class="explain">
+  <h2>HTTP in plain words</h2>
+  <p>A request has three parts: a <b>method and address</b> (<code>GET /products</code>), <b>headers</b> (extra details, like a label on the envelope) and an optional <b>body</b> (the actual content, e.g. a form's data as JSON). A response has a <b>status code</b>, headers and a body.</p>
+
+  <h3>Methods: what do you want to do?</h3>
+  <table>
+    <tr><th>Method</th><th>Meaning</th><th>Example</th></tr>
+    <tr><td>GET</td><td>Read something. Changes nothing.</td><td>Open a product page</td></tr>
+    <tr><td>POST</td><td>Create something new</td><td>Place an order</td></tr>
+    <tr><td>PUT</td><td>Replace a thing completely</td><td>Overwrite a whole profile</td></tr>
+    <tr><td>PATCH</td><td>Change only some fields</td><td>Update just the phone number</td></tr>
+    <tr><td>DELETE</td><td>Remove something</td><td>Delete a comment</td></tr>
+  </table>
+
+  <h3>Headers and body</h3>
+  <p>Headers are name: value pairs. A few you will see a lot: <code>Content-Type</code> (what kind of body, e.g. <code>application/json</code>), <code>Authorization</code> (who you are, usually a token), <code>Cache-Control</code> (how long it may be saved), <code>Set-Cookie</code> and <code>Cookie</code>. A GET normally has no body; POST, PUT and PATCH usually do.</p>
+
+  <h3>Status codes: how did it go?</h3>
+  <p>The first digit tells the family:</p>
+  <table>
+    <tr><th>Family</th><th>Meaning</th></tr>
+    <tr><td>2xx</td><td>Success</td></tr>
+    <tr><td>3xx</td><td>Go somewhere else or use your saved copy</td></tr>
+    <tr><td>4xx</td><td>Your mistake (the client)</td></tr>
+    <tr><td>5xx</td><td>Server's mistake</td></tr>
+  </table>
+  <table>
+    <tr><th>Code</th><th>Name</th><th>Meaning</th></tr>
+    <tr><td>200</td><td>OK</td><td>It worked</td></tr>
+    <tr><td>201</td><td>Created</td><td>New thing was created</td></tr>
+    <tr><td>204</td><td>No Content</td><td>Worked, nothing to send back</td></tr>
+    <tr><td>301</td><td>Moved Permanently</td><td>This address has changed for good</td></tr>
+    <tr><td>304</td><td>Not Modified</td><td>Your saved copy is still fine</td></tr>
+    <tr><td>400</td><td>Bad Request</td><td>The request was malformed or invalid</td></tr>
+    <tr><td>401</td><td>Unauthorized</td><td>You are not logged in (who are you?)</td></tr>
+    <tr><td>403</td><td>Forbidden</td><td>You are known, but not allowed</td></tr>
+    <tr><td>404</td><td>Not Found</td><td>No such thing</td></tr>
+    <tr><td>409</td><td>Conflict</td><td>Clashes with the current state, e.g. email already registered</td></tr>
+    <tr><td>429</td><td>Too Many Requests</td><td>Slow down: rate limited</td></tr>
+    <tr><td>500</td><td>Internal Server Error</td><td>The server code crashed</td></tr>
+    <tr><td>502</td><td>Bad Gateway</td><td>A proxy got a bad answer from the server behind it</td></tr>
+    <tr><td>503</td><td>Service Unavailable</td><td>Overloaded or down for now</td></tr>
+    <tr><td>504</td><td>Gateway Timeout</td><td>A proxy waited too long for the server behind it</td></tr>
+  </table>
+  <p class="tip">Memory trick: 401 = "who are you?", 403 = "I know you, but no." 502 and 504 usually mean there is something in front of your app (a proxy or load balancer) and your app behind it is the problem.</p>
+
+  <h3>HTTPS and TLS</h3>
+  <p>Plain HTTP travels as readable text. Anyone on the path (café Wi-Fi, a router) could read or change it. <b>HTTPS</b> is HTTP wrapped in <b>TLS</b>, which does two jobs: it <b>encrypts</b> the traffic and it <b>proves the server's identity</b>. The proof is a <b>certificate</b>, a digital ID card issued by a trusted authority, saying "this really is example.com". The padlock in the browser means the certificate checked out and the connection is encrypted. It does not mean the site itself is honest.</p>
+
+  <h3>HTTP/1.1, HTTP/2, HTTP/3</h3>
+  <p>HTTP/1.1 is simple and text-based; it handles essentially one request at a time per connection, so browsers open several connections. HTTP/2 sends many requests together over one connection, which is faster for pages with many files. HTTP/3 runs over a newer transport called QUIC (instead of TCP), which recovers better on shaky mobile networks. Your app code stays the same; the server and browser negotiate the version.</p>
+
+  <h3>Cookies</h3>
+  <p>A <b>cookie</b> is a small piece of text the server asks the browser to keep (<code>Set-Cookie</code>) and the browser then sends back with every request to that site (<code>Cookie</code>). That is how a stateless protocol "remembers" your login.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Right method and status code</b> make an API predictable for other developers and for caches. The cost is discipline: a lazy "always 200" API is easy to write and hard to debug.</li>
+    <li><b>HTTPS everywhere</b> costs a tiny bit of CPU and certificate upkeep. Today there is no good reason to skip it; most hosts give certificates free.</li>
+    <li><b>Cookies vs tokens in headers</b>: cookies are sent automatically (convenient, but need care against cross-site misuse); a token in the <code>Authorization</code> header is sent only by your code.</li>
+  </ul>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 280" role="img" aria-label="An HTTP request with method, path, headers and body goes from client to server; the response with status code, headers and body comes back">
+      <defs><marker id="ar-m1-3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="20" width="130" height="240" rx="10"/>
+        <rect x="495" y="20" width="130" height="240" rx="10"/>
+        <rect x="190" y="30" width="260" height="95" rx="8"/>
+        <rect x="190" y="155" width="260" height="95" rx="8" stroke-dasharray="6 5"/>
+        <path d="M148 70 H187" marker-end="url(#ar-m1-3)"/>
+        <path d="M450 70 H492" marker-end="url(#ar-m1-3)"/>
+        <path d="M492 205 H453" marker-end="url(#ar-m1-3)"/>
+        <path d="M187 205 H148" marker-end="url(#ar-m1-3)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="80" y="135" font-size="16" font-weight="700">Client</text>
+        <text x="80" y="156" font-size="13">(browser)</text>
+        <text x="560" y="135" font-size="16" font-weight="700">Server</text>
+        <text x="560" y="156" font-size="13">(backend)</text>
+        <text x="320" y="55" font-size="15" font-weight="700">REQUEST</text>
+        <text x="320" y="78" font-size="13">POST /orders</text>
+        <text x="320" y="97" font-size="13">Headers: Authorization, Content-Type</text>
+        <text x="320" y="116" font-size="13">Body: {"item": 7}</text>
+        <text x="320" y="180" font-size="15" font-weight="700">RESPONSE</text>
+        <text x="320" y="203" font-size="13">201 Created</text>
+        <text x="320" y="222" font-size="13">Headers: Content-Type, Set-Cookie</text>
+        <text x="320" y="241" font-size="13">Body: {"id": 42}</text>
+      </g>
+    </svg>
+    <figcaption>Request = method + path + headers + body. Response = status + headers + body.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m1-3 http-request-response.excalidraw</code> in your Module 1 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+HTTP+status+codes+explained" target="_blank" rel="noopener">YouTube search: "ByteByteGo HTTP status codes explained"</a>
+      <span class="meta">Short video. Watch to the end and match the families 2xx, 3xx, 4xx, 5xx.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hussein+Nasser+HTTP+crash+course" target="_blank" rel="noopener">YouTube search: "Hussein Nasser HTTP crash course"</a>
+      <span class="meta">Long. Watch only the first 15 to 20 minutes: methods, headers, body.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status" target="_blank" rel="noopener">MDN: HTTP response status codes</a>
+      <span class="meta">Use as a reference. Skim the 4xx and 5xx lists.</span></li>
+    <li><a href="https://www.cloudflare.com/learning/ssl/what-is-https/" target="_blank" rel="noopener">Cloudflare Learning Center: What is HTTPS?</a>
+      <span class="meta">Read the opening sections on encryption and certificates.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+  <h3>A. Look at a response with curl</h3>
+  <ol class="steps">
+    <li>Press the <kbd>⊞ Win</kbd> key, type <code>cmd</code>, press <kbd>Enter</kbd>. Command Prompt opens. (To paste: <kbd>Ctrl</kbd> + <kbd>V</kbd>, or right-click in the window.)</li>
+    <li>Run this, then press <kbd>Enter</kbd>. The <code>-I</code> asks only for the headers.
+      <pre><code>curl.exe -I https://www.google.com</code></pre></li>
+    <li>The first line looks like <code>HTTP/2 200</code> (it may be <code>HTTP/1.1</code> or a <code>301</code> or <code>302</code> if Google redirects you). Below it you see headers such as <code>content-type</code> and <code>date</code>. Spot the status code and a few headers.</li>
+  </ol>
+  <p class="tip">Type <code>curl.exe</code>, not <code>curl</code>. In PowerShell, plain <code>curl</code> is an alias for a different command and behaves differently. In Command Prompt either works, but <code>curl.exe</code> is safe in both.</p>
+
+  <h3>B. Make a 404 on purpose</h3>
+  <ol class="steps">
+    <li>Run:
+      <pre><code>curl.exe -i https://httpbin.org/status/404</code></pre></li>
+    <li>The lowercase <code>-i</code> shows headers plus the body. You should see <code>404</code> in the first line. The body is empty.</li>
+    <li>Try other codes by changing the number: <code>/status/200</code>, <code>/status/500</code>, <code>/status/429</code>. httpbin.org is a free practice site that answers with whatever code you ask for. If it is slow or down, try again later.</li>
+  </ol>
+
+  <h3>C. See status codes in Chrome</h3>
+  <ol class="steps">
+    <li>Open Chrome, go to any site (for example <code>https://github.com</code>), press <kbd>F12</kbd>, click the <span class="ui">Network</span> tab, then reload with <kbd>Ctrl</kbd> + <kbd>R</kbd>.</li>
+    <li>Find the column <span class="ui">Status</span>. If it is hidden, right-click any column title and tick <span class="ui">Status</span>. Mostly you will see <code>200</code>.</li>
+    <li>Reload again with a normal <kbd>Ctrl</kbd> + <kbd>R</kbd>. You may now see some <code>304</code> rows, or sizes shown as "(disk cache)": your browser reused saved copies. Which you get depends on the site.</li>
+    <li>Click one request, then the <span class="ui">Headers</span> tab. Find <span class="ui">Request Method</span>, <span class="ui">Status Code</span>, and under <span class="ui">Response Headers</span> look for <code>content-type</code>. Check whether the request has a <code>cookie</code> header too.</li>
+    <li>To see padlock details: click the padlock (or settings icon) left of the address bar, then <span class="ui">Connection is secure</span> → <span class="ui">Certificate is valid</span>. A window shows who issued the certificate. Labels may differ by Chrome version.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is the difference between PUT and PATCH?</summary><p>PUT replaces the whole thing; PATCH changes only some fields.</p></details>
+  <details><summary>401 or 403: the user is logged in but is not an admin, trying an admin page. Which one?</summary><p>403 Forbidden. The server knows who they are but they are not allowed. 401 is for "not logged in".</p></details>
+  <details><summary>What does a 502 or 504 tell you about where to look?</summary><p>There is a proxy or gateway in front of your app, and the app behind it sent a bad answer (502) or took too long (504). Look at the app.</p></details>
+  <details><summary>What do the padlock and a certificate actually guarantee?</summary><p>The traffic is encrypted and the server is really the owner of that domain. It does not prove the website is trustworthy.</p></details>
+  <details><summary>Your API returns 200 with {"error": "not found"} for missing items. Would you change it, and why?</summary><p>Yes, return 404. Caches, monitoring tools, clients and other developers all rely on status codes; a fake 200 hides failures.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"GET reads, POST creates, PUT replaces, PATCH updates part of a resource and DELETE removes it. I return 2xx for success, 4xx for client errors and 5xx for server errors."</blockquote>
+  <blockquote>"HTTPS is HTTP over TLS: it encrypts traffic and uses a certificate to prove the server's identity."</blockquote>
+  <p><b>Common follow-up question:</b> What is the difference between 401 and 403?</p>
+  <p>401 means the request has no valid identity, so the user must log in or send a valid token. 403 means we know who the user is, but they do not have permission for this action.</p>
+</section>
+
+</main>
+</body>
+</html>

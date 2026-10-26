@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Latency, throughput and numbers to know</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m1-5">
+<main class="lesson">
+
+<section class="story">
+  <h2>The water pipe</h2>
+  <p>Imagine a water pipe from a tank to your house. <b>Latency</b> is how long the first drop takes to reach you after you open the tap. <b>Throughput</b> is how much water comes out each second once it is flowing. <b>Bandwidth</b> is how wide the pipe is, the most it could carry.</p>
+  <p>A long, wide pipe: the first drop is slow to arrive, but then a flood comes. A short, thin pipe: the first drop is quick, but only a trickle follows. They are different things. Fixing one does not fix the other.</p>
+  <p>Now think of the class results. If 99 students get 80 marks and one gets 0, the average still looks fine. But that one student had a terrible day. Remember this; it is the secret behind percentiles.</p>
+</section>
+
+<section class="explain">
+  <h2>Measuring speed the way engineers do</h2>
+
+  <h3>Latency, throughput, bandwidth</h3>
+  <table>
+    <tr><th>Word</th><th>Question it answers</th><th>Unit</th></tr>
+    <tr><td>Latency</td><td>How long does one thing take?</td><td>ms, seconds</td></tr>
+    <tr><td>Throughput</td><td>How many things get done per second?</td><td>requests/second, MB/s</td></tr>
+    <tr><td>Bandwidth</td><td>What is the maximum the link can carry?</td><td>Mbps, Gbps</td></tr>
+  </table>
+  <p>A 4K video needs bandwidth. A chat message needs low latency. A server that handles 1,000 requests per second has throughput 1,000 rps, even if each request takes 200 ms.</p>
+  <p class="tip">Network speeds are quoted in <b>bits</b> per second (Mbps), file sizes in <b>bytes</b> (MB). One byte is 8 bits, so a 100 Mbps line moves about 12 MB per second at best.</p>
+
+  <h3>Percentiles: why averages lie</h3>
+  <p>Say 100 requests take these times: 99 take 50 ms and one takes 5,000 ms. The average is about 100 ms. That hides the one awful request. Engineers use <b>percentiles</b>:</p>
+  <ul>
+    <li><b>p50</b> (median): half of requests are faster than this. The "typical" user.</li>
+    <li><b>p95</b>: 95 out of 100 are faster than this. 5 in 100 are slower.</li>
+    <li><b>p99</b>: 99 out of 100 are faster. The slowest 1 in 100.</li>
+  </ul>
+  <p>Why care about p99? A page may make dozens of calls, so most page loads hit at least one slow call. And your heaviest users, who make the most requests, meet the slow tail most often. Goals (called SLOs) are therefore written like "p99 under 300 ms", not "average under 100 ms".</p>
+
+  <h3>Latency numbers worth knowing</h3>
+  <p>These are rounded, from the well-known "latency numbers every programmer should know" list. They are <b>approximate</b> and vary with hardware; use them for the feeling of scale, not for exact maths.</p>
+  <table>
+    <tr><th>Action</th><th>About</th></tr>
+    <tr><td>Read from memory (RAM)</td><td>100 nanoseconds</td></tr>
+    <tr><td>Read from an SSD</td><td>100 microseconds (0.1 ms)</td></tr>
+    <tr><td>Round trip inside one data centre</td><td>0.5 ms</td></tr>
+    <tr><td>Disk seek (spinning hard disk)</td><td>10 ms</td></tr>
+    <tr><td>Round trip India to US</td><td>150 to 250 ms</td></tr>
+  </table>
+  <p>The lesson is the <b>ratios</b>. Memory is about 1,000 times faster than SSD, which is far faster than crossing an ocean. So: avoid network trips when you can, keep hot data in memory (caching, a topic coming later), and put servers near the users.</p>
+
+  <h3>Sizes and powers of two</h3>
+  <table>
+    <tr><th>Unit</th><th>About</th><th>Power</th></tr>
+    <tr><td>1 KB (kilobyte)</td><td>a thousand bytes</td><td>2<sup>10</sup> = 1,024</td></tr>
+    <tr><td>1 MB</td><td>a million bytes</td><td>2<sup>20</sup></td></tr>
+    <tr><td>1 GB</td><td>a billion bytes</td><td>2<sup>30</sup></td></tr>
+    <tr><td>1 TB</td><td>a trillion bytes</td><td>2<sup>40</sup></td></tr>
+  </table>
+  <p>Each step up is about 1,000 times more. Handy facts for quick estimates: a typical short text message or database row is under 1 KB; a web page is around a few MB; a phone photo is a few MB.</p>
+  <p><b>Time:</b> a day has 24 &times; 60 &times; 60 = <b>86,400 seconds</b>, roughly 10<sup>5</sup>. So 1 million requests a day is only about 10 requests per second (1,000,000 / 100,000). Interviewers love this shortcut for converting "per day" into "per second".</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Lower latency vs higher throughput.</b> Batching work (sending 100 items together) raises throughput but makes each item wait. Handling each item at once lowers latency but costs more overhead.</li>
+    <li><b>Caching</b> cuts latency but adds staleness and extra moving parts.</li>
+    <li><b>Closer servers</b> cut latency but cost more to run in many places.</li>
+  </ul>
+  <div class="warn">Do not quote these table values as precise facts. In an interview say "roughly", and use them to compare, for example "memory is orders of magnitude faster than disk".</div>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 280" role="img" aria-label="Latency numbers as horizontal bars growing from memory at 100 nanoseconds to India to US round trip at about 200 milliseconds, each step much larger than the last">
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="260" y="20" width="6" height="30" rx="2" fill="currentColor"/>
+        <rect x="260" y="70" width="40" height="30" rx="2" fill="currentColor"/>
+        <rect x="260" y="120" width="90" height="30" rx="2" fill="currentColor"/>
+        <rect x="260" y="170" width="200" height="30" rx="2" fill="currentColor"/>
+        <rect x="260" y="220" width="360" height="30" rx="2" fill="currentColor"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" font-size="14">
+        <text x="250" y="40" text-anchor="end">Memory read</text>
+        <text x="250" y="90" text-anchor="end">SSD read</text>
+        <text x="250" y="140" text-anchor="end">Same data centre round trip</text>
+        <text x="250" y="190" text-anchor="end">Disk seek</text>
+        <text x="250" y="240" text-anchor="end">India to US round trip</text>
+        <text x="275" y="40">~100 ns</text>
+        <text x="310" y="90">~100 µs</text>
+        <text x="360" y="140">~0.5 ms</text>
+        <text x="470" y="190">~10 ms</text>
+        <text x="630" y="270" text-anchor="end" font-size="13">~150 to 250 ms (bar not to scale)</text>
+      </g>
+    </svg>
+    <figcaption>Not to scale: the real gaps are far bigger than the bars show. Each row is roughly 10 to 1,000 times slower than the one above.</figcaption>
+  </figure>
+  <p>Redraw this as a ladder of boxes in Excalidraw and save it as <code>m1-5 latency-ladder.excalidraw</code> in your Module 1 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+latency+numbers+every+programmer+should+know" target="_blank" rel="noopener">YouTube search: "ByteByteGo latency numbers every programmer should know"</a>
+      <span class="meta">Short video. Watch the whole thing and focus on the ratios between memory, SSD, network.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=latency+vs+throughput+vs+bandwidth+explained+system+design" target="_blank" rel="noopener">YouTube search: "latency vs throughput vs bandwidth explained system design"</a>
+      <span class="meta">Pick one under 10 minutes. Watch just the definitions part.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#latency-numbers-every-programmer-should-know" target="_blank" rel="noopener">System Design Primer: Latency numbers every programmer should know</a>
+      <span class="meta">Look at the table and compare memory, SSD, and network lines. Do not memorise.</span></li>
+    <li><a href="https://www.cloudflare.com/learning/performance/glossary/what-is-latency/" target="_blank" rel="noopener">Cloudflare Learning Center: What is latency?</a>
+      <span class="meta">Read for the difference between latency and bandwidth.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes)</h2>
+  <h3>A. Ping a near site and a far site</h3>
+  <ol class="steps">
+    <li>Press <kbd>⊞ Win</kbd>, type <code>cmd</code>, press <kbd>Enter</kbd>.</li>
+    <li>Run a site likely hosted near you. Type it and press <kbd>Enter</kbd> (paste with <kbd>Ctrl</kbd> + <kbd>V</kbd> or right-click):
+      <pre><code>ping google.co.in</code></pre>
+      Look at the <code>time=</code> values at the end of each reply line. Write down the lowest and highest.</li>
+    <li>Now a faraway site. Try a Japanese or Australian one:
+      <pre><code>ping www.yahoo.co.jp</code></pre>
+      <pre><code>ping www.abc.net.au</code></pre>
+      Write down the times again. Expect larger numbers than the near site, though some sites sit behind a CDN that has a server close to you, so the gap may be smaller than you expect. If a site shows "Request timed out", it blocks ping: try another one.</li>
+    <li>Compare. The difference is mostly distance and the number of network hops. Check the summary lines at the bottom: <span class="ui">Minimum</span>, <span class="ui">Maximum</span>, <span class="ui">Average</span>. Notice how the maximum differs from the average. That is the idea behind percentiles.</li>
+    <li>For a longer sample, run <code>ping -n 20 google.co.in</code> (this sends 20 pings instead of 4).</li>
+  </ol>
+
+  <h3>B. Feel latency with throttling</h3>
+  <ol class="steps">
+    <li>Open Chrome, go to any content-heavy site, press <kbd>F12</kbd>, click the <span class="ui">Network</span> tab.</li>
+    <li>Find the dropdown that says <span class="ui">No throttling</span> (near the top of the Network panel). Click it and choose <span class="ui">Slow 4G</span>. (In some Chrome versions it appears as "Slow 4G" inside a list of presets.)</li>
+    <li>Reload with <kbd>Ctrl</kbd> + <kbd>R</kbd>. Wait. The page now loads noticeably slower, and you can see requests queuing in the list.</li>
+    <li>Look at the bottom bar of the panel. It shows <span class="ui">Finish</span> and <span class="ui">Load</span> times. Write them down.</li>
+    <li>Switch back to <span class="ui">No throttling</span>, reload, and note the same numbers. The gap is the cost of a slow network.</li>
+    <li>Leave throttling off when done, or all your browsing will feel slow.</li>
+  </ol>
+
+  <h3>C. Back-of-envelope practice</h3>
+  <ol class="steps">
+    <li>Pick a number: an app has 5 million requests a day. Divide by 100,000. That is about 50 requests per second on average.</li>
+    <li>Each request stores 2 KB. Per day: 5,000,000 &times; 2 KB = 10,000,000 KB = about 10 GB. Write the working in your notes.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Latency vs throughput: which one is "time for one request" and which is "requests per second"?</summary><p>Latency is the time for one. Throughput is how many are done per second.</p></details>
+  <details><summary>Why is p99 more useful than the average?</summary><p>The average hides rare slow requests. p99 shows how bad the slowest 1% is, and a page making many calls often runs into those.</p></details>
+  <details><summary>Roughly how many seconds are in a day, and how many requests per second is 1 million requests a day?</summary><p>About 86,400, call it 10<sup>5</sup>. So 1 million a day is about 10 per second.</p></details>
+  <details><summary>Roughly rank: memory read, SSD read, India to US round trip, same-datacentre round trip.</summary><p>Fastest to slowest: memory (~100 ns), SSD (~100 µs), same-datacentre (~0.5 ms), India to US (~150 to 250 ms).</p></details>
+  <details><summary>Your users are in India but your server is in the US and pages feel slow. What would you try, and why?</summary><p>Move the server or add a region closer to users, or put a CDN in front for cacheable content. Each round trip across the ocean costs 150 to 250 ms, and a page needs several.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Latency is how long one request takes; throughput is how many we handle per second. I would track p95 and p99, not just the average."</blockquote>
+  <blockquote>"Memory is about a thousand times faster than SSD, and a cross-ocean round trip costs hundreds of milliseconds, so I would cache hot data and keep servers close to users."</blockquote>
+  <p><b>Common follow-up question:</b> Estimate the load for an app with 10 million requests a day.</p>
+  <p>A day is about 100,000 seconds, so the average is about 100 requests per second. Peak traffic is usually a few times the average, so I would plan for around 300 to 500 per second, and then size servers and the database for that with some headroom.</p>
+</section>
+
+</main>
+</body>
+</html>

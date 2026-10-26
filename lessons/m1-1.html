@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Client and server</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m1-1">
+<main class="lesson">
+
+<section class="story">
+  <h2>The restaurant waiter</h2>
+  <p>You sit in a restaurant. You do not walk into the kitchen. You tell the waiter: "One paneer butter masala, two naan." The waiter goes to the kitchen, and comes back with your food.</p>
+  <p>You are the <b>client</b>: the one who asks. The kitchen is the <b>server</b>: the one who serves. What you say is the <b>request</b>. The food that comes back is the <b>response</b>.</p>
+  <p>The kitchen is open all day, ready for anyone who walks in. That is all a server is: a computer that stays on and waits for people to ask.</p>
+</section>
+
+<section class="explain">
+  <h2>Client, server, request, response</h2>
+  <p>Almost everything on the internet works like the restaurant. One side asks, the other side answers.</p>
+  <ul>
+    <li><b>Client</b>: the program that starts the conversation. Your Chrome browser, a mobile app, or even another server.</li>
+    <li><b>Server</b>: the program that waits for requests and sends answers.</li>
+    <li><b>Request</b>: "Please give me this page" or "Please save this order".</li>
+    <li><b>Response</b>: "Here is the page" or "Done, order saved" or "Sorry, I could not find that".</li>
+  </ul>
+
+  <h3>A server is just a computer</h3>
+  <p>There is nothing magic about a server. It is a normal computer with three special habits: it is <b>always on</b>, it has a <b>fixed address</b> so others can find it, and it runs a <b>program that listens</b> for requests. Big companies keep thousands of them in buildings called data centres. You can rent a small one for a few hundred rupees a month, or run one on your own laptop while developing (<code>localhost:3000</code> is your laptop acting as a server).</p>
+  <p>"Client" and "server" are <b>roles</b>, not types of machine. When your Next.js backend calls the Supabase database, your backend is the client in that moment and the database is the server.</p>
+
+  <h3>Frontend and backend</h3>
+  <table>
+    <tr><th></th><th>Frontend</th><th>Backend</th></tr>
+    <tr><td>Where it runs</td><td>In the user's browser or phone</td><td>On a server</td></tr>
+    <tr><td>Job</td><td>Show things, take clicks and typing</td><td>Hold the rules, talk to the database, keep data safe</td></tr>
+    <tr><td>Can the user see the code?</td><td>Yes (press F12 and look)</td><td>No</td></tr>
+    <tr><td>Can you trust it?</td><td>No: a user can change it</td><td>Yes: you control it</td></tr>
+  </table>
+  <p class="tip">Rule to remember: <b>never trust the client</b>. Price checks, permission checks and payment checks must happen on the backend, because anyone can tamper with what runs in their own browser.</p>
+
+  <h3>Stateless vs stateful (just the idea)</h3>
+  <p>A server is <b>stateful</b> if it remembers you between requests, like a waiter who remembers "the table 4 guy wanted less spice". It is <b>stateless</b> if every request must carry everything needed, like a fast-food counter that treats each customer as new.</p>
+  <p>HTTP, the language of the web, is stateless by design: each request stands alone. Websites add memory on top using things like cookies and a session or a login token, so the server can say "ah, this is the same person". You will meet this again when we scale servers up, because stateless servers are much easier to copy and replace.</p>
+
+  <h3>Trade-offs and when to use what</h3>
+  <ul>
+    <li><b>Put logic on the client</b> when it is only about display or comfort (form hints, sorting a list already on screen). It is fast, with no waiting for the network.</li>
+    <li><b>Put logic on the server</b> when it must be correct and safe (money, permissions, data rules). It is slower because it needs a network trip, but it cannot be tampered with.</li>
+    <li><b>Stateless servers</b> are simple to scale and recover. <b>Stateful servers</b> feel natural but make it hard to add more machines, since the "memory" lives on one of them.</li>
+  </ul>
+  <div class="warn">Beginner mistake: thinking the "server" is the whole company. In an interview, one box labelled "server" is fine at first, but later you will split it into many boxes. Always say which one you mean.</div>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 260" role="img" aria-label="Browser and mobile app clients send requests to a backend server, which asks a database; answers return back along the same path">
+      <defs><marker id="ar-m1-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="30" width="150" height="70" rx="10"/>
+        <rect x="15" y="150" width="150" height="70" rx="10"/>
+        <rect x="245" y="90" width="150" height="80" rx="10"/>
+        <rect x="475" y="90" width="150" height="80" rx="10"/>
+        <path d="M168 70 L242 115" marker-end="url(#ar-m1-1)"/>
+        <path d="M168 190 L242 145" marker-end="url(#ar-m1-1)"/>
+        <path d="M398 115 H472" marker-end="url(#ar-m1-1)"/>
+        <path d="M472 145 H398" marker-end="url(#ar-m1-1)" stroke-dasharray="6 5"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="90" y="62" font-size="16" font-weight="700">Browser</text>
+        <text x="90" y="84" font-size="13">(client)</text>
+        <text x="90" y="182" font-size="16" font-weight="700">Mobile app</text>
+        <text x="90" y="204" font-size="13">(client)</text>
+        <text x="320" y="125" font-size="16" font-weight="700">Backend</text>
+        <text x="320" y="147" font-size="13">(server)</text>
+        <text x="550" y="125" font-size="16" font-weight="700">Database</text>
+        <text x="550" y="147" font-size="13">(server)</text>
+        <text x="435" y="108" font-size="13">query</text>
+        <text x="435" y="164" font-size="13">rows</text>
+      </g>
+    </svg>
+    <figcaption>Solid arrows = requests. Dashed arrow = a response. Every box that answers is a server, even the database.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m1-1 client-server.excalidraw</code> in your Module 1 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+client+server+model+explained" target="_blank" rel="noopener">YouTube search: "ByteByteGo client server model explained"</a>
+      <span class="meta">Pick a video under 10 minutes. Watch the first few minutes: who asks, who answers.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Fireship+how+the+web+works+client+server" target="_blank" rel="noopener">YouTube search: "Fireship how the web works client server"</a>
+      <span class="meta">Short intro videos. Watch one, 5 minutes is enough.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://developer.mozilla.org/en-US/docs/Learn_web_development/Getting_started/Web_standards/How_the_web_works" target="_blank" rel="noopener">MDN: How the web works</a>
+      <span class="meta">Read the first sections about clients and servers. Skip the rest for now.</span></li>
+    <li><a href="https://github.com/donnemartin/system-design-primer" target="_blank" rel="noopener">System Design Primer (GitHub)</a>
+      <span class="meta">Just skim the table of contents so you know what is coming in later modules.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 20 minutes)</h2>
+  <h3>A. Watch the conversation between your browser and a server</h3>
+  <ol class="steps">
+    <li>Open Chrome. Go to <code>https://example.com</code> (a tiny, plain website made for testing).</li>
+    <li>Press <kbd>F12</kbd>. A panel opens on the right or bottom. If nothing happens, press <kbd>Fn</kbd> + <kbd>F12</kbd>, or right-click the page and choose <span class="ui">Inspect</span>.</li>
+    <li>At the top of that panel, click the <span class="ui">Network</span> tab. If you do not see it, click the <span class="ui">»</span> arrows to reveal more tabs.</li>
+    <li>With the panel open, reload the page: <kbd>Ctrl</kbd> + <kbd>R</kbd>. A list of rows appears. Each row is <b>one request</b> your browser (the client) made.</li>
+    <li>Click the row named <code>example.com</code> (the first one). A detail pane opens.</li>
+    <li>Click <span class="ui">Headers</span>. Find <span class="ui">Request URL</span>, <span class="ui">Request Method</span> (it says <code>GET</code>) and <span class="ui">Status Code</span> (it says <code>200</code>). That is the request and the first part of the response.</li>
+    <li>Click <span class="ui">Response</span>. You see the HTML the server sent back. That text is what your browser turned into the page.</li>
+  </ol>
+
+  <h3>B. Try a busier site</h3>
+  <ol class="steps">
+    <li>In the same tab, go to a site you use, for example <code>https://github.com</code>. Keep the Network tab open (it keeps working across pages; if the list is empty, reload with <kbd>Ctrl</kbd> + <kbd>R</kbd>).</li>
+    <li>Look at the bottom of the panel: it shows a count like "40 requests". One page made many requests: the HTML, then images, styles and scripts.</li>
+    <li>Click the filter button <span class="ui">Fetch/XHR</span>. These are requests made by the page's own JavaScript to a backend. The names and numbers shown depend on the site.</li>
+  </ol>
+
+  <h3>C. Write it down</h3>
+  <ol class="steps">
+    <li>In your notes, answer in one line each: who was the client, who was the server, what was one request, what was its response.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is a server, in one sentence?</summary><p>A computer (or program) that is always on and waits for requests, then sends back responses.</p></details>
+  <details><summary>Can the same machine be both client and server?</summary><p>Yes. Client and server are roles. Your backend is a server to the browser and a client to the database.</p></details>
+  <details><summary>Why must a price check happen on the backend and not only in the frontend?</summary><p>Frontend code runs on the user's machine, so the user can change it. The backend is under your control.</p></details>
+  <details><summary>What does "HTTP is stateless" mean?</summary><p>Each request stands alone. The server does not automatically remember earlier requests; cookies or tokens are added to carry identity.</p></details>
+  <details><summary>You have to validate an email field. Where do you validate, and why?</summary><p>Both. In the frontend for quick, friendly feedback; in the backend because the frontend can be bypassed.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"A client sends a request and a server sends back a response. Client and server are roles, not machines."</blockquote>
+  <blockquote>"I never trust the client, so all validation and authorization are enforced on the backend."</blockquote>
+  <p><b>Common follow-up question:</b> What does it mean that HTTP is stateless, and how do apps still remember who I am?</p>
+  <p>Each HTTP request is independent, so the server keeps no memory of earlier ones by default. Apps add state on top: after login the server gives the browser a cookie or token, and the browser sends it with every request so the server can identify the user. Keeping the servers themselves stateless, with session data in a shared store or in the token, makes them easy to scale.</p>
+</section>
+
+</main>
+</body>
+</html>
