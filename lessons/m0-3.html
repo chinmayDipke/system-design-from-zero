@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your drawing tool: Excalidraw</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m0-3">
+<main class="lesson">
+
+<section class="story">
+  <h2>Drawing the map before the trip</h2>
+  <p>Before a school trip, the teacher draws a map on the board: "Bus here, lunch there, toilets here." Everyone understands it in one look, faster than any long speech.</p>
+  <p>In a system design interview you do the same thing. You draw <b>boxes</b> (computers and programs) and <b>arrows</b> (messages between them). The drawing <i>is</i> your answer. So you need to draw quickly and neatly, and that takes practice.</p>
+</section>
+
+<section class="explain">
+  <h2>Excalidraw: a free whiteboard</h2>
+  <p><b>Excalidraw</b> is a free drawing website. Its drawings look hand-made, which is exactly what interviewers expect. Many companies even use it in their online interviews. It works in the browser: no install, no account.</p>
+  <p>You only need <b>five tools</b>. Each one has a keyboard key, and using the keys makes you fast:</p>
+  <table>
+    <tr><th>Tool</th><th>Key</th><th>Used for</th></tr>
+    <tr><td>Select / move</td><td><kbd>V</kbd> or <kbd>1</kbd></td><td>Click things to pick them, drag them to move</td></tr>
+    <tr><td>Rectangle</td><td><kbd>R</kbd> or <kbd>2</kbd></td><td>Servers, services, apps</td></tr>
+    <tr><td>Ellipse</td><td><kbd>O</kbd> or <kbd>4</kbd></td><td>Users, or start/end points</td></tr>
+    <tr><td>Arrow</td><td><kbd>A</kbd> or <kbd>5</kbd></td><td>"This sends a message to that"</td></tr>
+    <tr><td>Text</td><td><kbd>T</kbd> or <kbd>8</kbd></td><td>Labels</td></tr>
+  </table>
+  <p>Other handy keys: <kbd>Ctrl</kbd> + <kbd>Z</kbd> undo · <kbd>Ctrl</kbd> + <kbd>D</kbd> duplicate the selected shape · <kbd>Delete</kbd> removes the selected shape · hold <kbd>Shift</kbd> while drawing for perfectly straight arrows and perfect squares · hold the <kbd>Space</kbd> bar and drag to move around the page · <kbd>Ctrl</kbd> + mouse wheel to zoom.</p>
+  <p class="tip">There is a full list of shortcuts inside Excalidraw: press <kbd>?</kbd> (that is <kbd>Shift</kbd> + <kbd>/</kbd>).</p>
+</section>
+
+<section class="picture">
+  <h2>Today's drawing</h2>
+  <p>This is what you will draw. It is the most important picture in all of system design: <b>a client asks, a server answers</b>.</p>
+  <figure>
+    <svg viewBox="0 0 640 200" role="img" aria-label="A phone labelled client sends a request arrow to a box labelled server, and the server sends a response arrow back">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="20" y="50" width="160" height="100" rx="12"/>
+        <rect x="460" y="50" width="160" height="100" rx="12"/>
+        <path d="M185 80 H455" marker-end="url(#ar)"/>
+        <path d="M455 125 H185" marker-end="url(#ar)" stroke-dasharray="6 5"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="100" y="95" font-size="18" font-weight="700">Your phone</text>
+        <text x="100" y="120" font-size="14">(client)</text>
+        <text x="540" y="95" font-size="18" font-weight="700">Server</text>
+        <text x="540" y="120" font-size="14">(a computer far away)</text>
+        <text x="320" y="70" font-size="14">1. "Please give me the page"</text>
+        <text x="320" y="150" font-size="14">2. "Here is the page"</text>
+      </g>
+    </svg>
+    <figcaption>Solid arrow = request (asking). Dashed arrow = response (answering).</figcaption>
+  </figure>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=excalidraw+tutorial+for+beginners" target="_blank" rel="noopener">YouTube search: "Excalidraw tutorial for beginners"</a>
+      <span class="meta">Pick any video under 15 minutes. Watch just the first 5 minutes to see the tools being used.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Draw it yourself (about 30 minutes)</h2>
+  <h3>A. Open Excalidraw</h3>
+  <ol class="steps">
+    <li>New tab: <kbd>Ctrl</kbd> + <kbd>T</kbd>. Type <code>excalidraw.com</code> and press <kbd>Enter</kbd>.</li>
+    <li>A big white page opens with a toolbar at the top. If a welcome message covers the middle, just click anywhere on the white page and it goes away.</li>
+    <li>Bookmark it: <kbd>Ctrl</kbd> + <kbd>D</kbd> → <span class="ui">Done</span>.</li>
+  </ol>
+
+  <h3>B. Draw the client box</h3>
+  <ol class="steps">
+    <li>Press <kbd>R</kbd> (rectangle tool).</li>
+    <li>On the left side of the page, press and hold the left mouse button, drag down-right to make a box, then let go.</li>
+    <li>With the box still selected, <b>double-click inside it</b>. A blinking cursor appears in the middle.</li>
+    <li>Type <code>Your phone (client)</code>. Press <kbd>Esc</kbd> to stop typing.</li>
+  </ol>
+
+  <h3>C. Make the server box (the fast way)</h3>
+  <ol class="steps">
+    <li>Press <kbd>V</kbd>. Click your box once to select it (blue handles appear around it).</li>
+    <li>Press <kbd>Ctrl</kbd> + <kbd>D</kbd>. A copy appears. Drag the copy to the right side of the page.</li>
+    <li>Double-click the text inside the copy. Press <kbd>Ctrl</kbd> + <kbd>A</kbd> to select the old text, and type <code>Server</code>. Press <kbd>Esc</kbd>.</li>
+  </ol>
+
+  <h3>D. Draw the arrows</h3>
+  <ol class="steps">
+    <li>Press <kbd>A</kbd> (arrow tool).</li>
+    <li>Move the mouse to the right edge of the phone box. Press and hold, then hold <kbd>Shift</kbd> too (for a straight line), drag to the left edge of the server box, and let go. The arrow "sticks" to both boxes; if you move a box later, the arrow follows.</li>
+    <li>Double-click the middle of the arrow and type <code>1. Please give me the page</code>. Press <kbd>Esc</kbd>.</li>
+    <li>Draw a second arrow from the server back to the phone, a little lower. Label it <code>2. Here is the page</code>.</li>
+    <li>Make the second arrow dashed: press <kbd>V</kbd>, click the arrow, then in the panel on the left find <span class="ui">Stroke style</span> and click the dashed line.</li>
+  </ol>
+
+  <h3>E. Save it to your computer</h3>
+  <div class="warn">Excalidraw remembers your drawing in the browser, but clearing your history erases it. Always save the drawing as a file.</div>
+  <ol class="steps">
+    <li>Click the <span class="ui">☰</span> menu (three lines, top left).</li>
+    <li>Click <span class="ui">Save to…</span> and then <span class="ui">Save to disk</span>. (On some versions it is just <span class="ui">Save as</span>.)</li>
+    <li>A Windows "Save" window opens. Pick your notes folder (you make it in the next lesson; for now, <b>Documents</b> is fine). In <b>File name</b>, type <code>00 client-server</code>. Click <span class="ui">Save</span>.</li>
+    <li>To open it later: <span class="ui">☰</span> → <span class="ui">Open</span> (or <kbd>Ctrl</kbd> + <kbd>O</kbd>), click your file, then <span class="ui">Open</span>.</li>
+  </ol>
+
+  <h3>F. Export a picture (to share or put in notes)</h3>
+  <ol class="steps">
+    <li>Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>E</kbd> (or <span class="ui">☰</span> → <span class="ui">Export image…</span>).</li>
+    <li>Click <span class="ui">PNG</span>. The picture is saved to your Downloads folder.</li>
+  </ol>
+
+  <h3>G. Speed challenge</h3>
+  <ol class="steps">
+    <li>Clear the page: <span class="ui">☰</span> → <span class="ui">Reset the canvas</span> → <span class="ui">Confirm</span>. (You already saved the file, so nothing is lost.)</li>
+    <li>Open the Windows Clock: press the <kbd>⊞ Win</kbd> key, type <code>Clock</code>, press <kbd>Enter</kbd>, click <span class="ui">Stopwatch</span>, then click ▶.</li>
+    <li>Redraw the whole picture from memory, using only keyboard keys to switch tools. Aim for <b>under 2 minutes</b>. Do it 3 times.</li>
+  </ol>
+  <p class="tip">Optional: Excalidraw has free shape libraries with server, database and cloud icons. Click the <span class="ui">Library</span> button (a book icon, top right) → <span class="ui">Browse libraries</span>, search for "system design" or "architecture", and click <span class="ui">Add to Excalidraw</span>. Plain boxes with clear labels are perfectly fine in interviews, though.</p>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Which key gives you the arrow tool?</summary><p><kbd>A</kbd> (or <kbd>5</kbd>).</p></details>
+  <details><summary>How do you write text inside a box?</summary><p>Double-click inside the box, then type. Press <kbd>Esc</kbd> when done.</p></details>
+  <details><summary>Why save to disk when Excalidraw already remembers your drawing?</summary><p>Because it only remembers it in the browser. Clearing history or switching computers loses it. A file is safe.</p></details>
+  <details><summary>In the picture, which side is the client?</summary><p>The phone. The client is the one that <b>asks</b>; the server is the one that <b>answers</b>.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Why this matters</h2>
+  <p>In online interviews you are often asked to "share your screen and draw". Interviewers notice when someone fumbles with the tool. Being fast lets you spend your time <b>thinking</b>, not hunting for buttons. A clean diagram with clear labels already says "this person is organised".</p>
+</section>
+
+</main>
+</body>
+</html>
