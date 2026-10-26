@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monolith vs microservices</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m3-5">
+<main class="lesson">
+
+<section class="story">
+  <h2>One big kitchen or many small stalls</h2>
+  <p>A family restaurant has one big kitchen. One team makes everything: dosa, biryani, sweets. It is easy: everything is in one place, everyone talks face to face. But as the menu grows, the kitchen gets crowded. If the sweet counter is on fire, the whole kitchen shuts.</p>
+  <p>Another option is a food court: separate stalls for dosa, biryani and sweets. Each stall has its own cook and can open late or hire more staff by itself. But now a thali order needs a runner to fetch from three stalls, the bill must be added up across stalls, and if one runner is slow the customer waits.</p>
+  <p>The big kitchen is a <b>monolith</b>. The food court is <b>microservices</b>. Neither is "better". Each has a price.</p>
+</section>
+
+<section class="explain">
+  <h2>Three ways to organise one product</h2>
+
+  <h3>Monolith</h3>
+  <p>The whole app is <b>one program</b>, deployed as one unit, usually with one database. Users, orders, payments, notifications: all one codebase. Function calls between parts are fast and reliable (they stay inside one process), and a database transaction can cover everything at once (<a href="m2-3.html">ACID</a>).</p>
+
+  <h3>Modular monolith</h3>
+  <p>Still one deployable program, but the code is split into <b>clear modules</b> with strict boundaries: each module owns its tables and exposes a small interface, and other modules may not reach into its insides. It gives most of the organisation benefit of microservices without the network.</p>
+
+  <h3>Microservices</h3>
+  <p>The app is split into many <b>small services</b>, each doing one business job, owning its own data, and deployed on its own. They talk over the network: HTTP/REST or gRPC (<a href="m2-1.html">APIs</a>) or by sending events through a queue (<a href="m2-11.html">message queues</a>).</p>
+
+  <table>
+    <tr><th></th><th>Monolith</th><th>Modular monolith</th><th>Microservices</th></tr>
+    <tr><td>Deploy</td><td>One unit</td><td>One unit</td><td>Each service alone</td></tr>
+    <tr><td>Calls between parts</td><td>Function call</td><td>Function call</td><td>Network call</td></tr>
+    <tr><td>Transactions</td><td>Easy (one DB)</td><td>Easy</td><td>Hard (sagas)</td></tr>
+    <tr><td>Scaling</td><td>Copy the whole app</td><td>Copy the whole app</td><td>Scale just the busy service</td></tr>
+    <tr><td>Team independence</td><td>Low</td><td>Medium</td><td>High</td></tr>
+    <tr><td>Operations work</td><td>Low</td><td>Low</td><td>High</td></tr>
+  </table>
+
+  <h3>The real costs of microservices</h3>
+  <ul>
+    <li><b>Network calls fail and are slow.</b> A call that was a function is now a request with timeouts, retries and partial failure (<a href="m3-4.html">retries</a>, <a href="m3-6.html">circuit breakers</a>).</li>
+    <li><b>No easy transactions.</b> Placing an order may touch orders, payments and stock in three databases. You cannot just <code>BEGIN ... COMMIT</code> across them.</li>
+    <li><b>Operations multiply.</b> Many deploy pipelines, many logs, monitoring, versioned APIs between services.</li>
+    <li><b>Debugging is harder.</b> One user click spans many services; you need tracing (<a href="m3-7.html">observability</a>).</li>
+    <li><b>Data is spread out.</b> A report joining users and orders now needs service calls or copied data.</li>
+  </ul>
+
+  <h3>When to split</h3>
+  <ul>
+    <li><b>Many teams</b> stepping on each other in one codebase (a rough rule of thumb: dozens of engineers, not five).</li>
+    <li>One part needs <b>very different scaling</b> (video processing versus a settings page) or a different technology.</li>
+    <li>Parts need <b>independent release speed</b> or isolation so a failure stays contained.</li>
+  </ul>
+  <p>Do <b>not</b> split because it sounds modern, or with a team of five. Many well-known companies ran a monolith for years.</p>
+  <p class="tip"><b>Strong advice: start with a modular monolith.</b> Keep clean boundaries now, so that when a real reason appears, one module can be lifted out into a service.</p>
+
+  <h3>Service discovery</h3>
+  <p>In a food court of changing stalls, how does the runner know where the dosa stall is today? Service instances start, stop and move, so their addresses change. <b>Service discovery</b> keeps a live directory: services register themselves, and callers ask the directory (or a load balancer, <a href="m2-5.html">load balancers</a>) by name, like <code>payments</code>, instead of a fixed IP. Platforms like Kubernetes and cloud load balancers provide this for you.</p>
+
+  <h3>Sync vs async communication</h3>
+  <table>
+    <tr><th></th><th>Synchronous (REST / gRPC)</th><th>Asynchronous (events)</th></tr>
+    <tr><td>Style</td><td>Ask and wait for the answer</td><td>Drop a message; carry on</td></tr>
+    <tr><td>Good for</td><td>Needs an answer now (price check, login)</td><td>Work that can happen later (email, analytics)</td></tr>
+    <tr><td>Weakness</td><td>If the other service is down or slow, you are stuck (chains of slow calls)</td><td>Harder to follow; results arrive later; duplicates possible</td></tr>
+  </table>
+
+  <h3>The saga pattern, simply</h3>
+  <p>A <b>saga</b> is a way to do one business action across several services <b>without</b> one big transaction. It is a chain of small local transactions. If a step fails, earlier steps are undone by <b>compensating actions</b>.</p>
+  <p>Example: place an order. (1) Order service saves the order as "pending". (2) Payment service charges the card. (3) Stock service reserves items. If stock fails, the saga runs the undo: refund the payment and mark the order "cancelled". Services coordinate either by events passed along (<b>choreography</b>) or by one coordinator telling each what to do (<b>orchestration</b>). Each step must be idempotent (<a href="m3-4.html">idempotency</a>).</p>
+
+  <h3>Trade-offs in one line</h3>
+  <p>Microservices trade <b>simple code and easy transactions</b> for <b>team independence and targeted scaling</b>. Only pay that price when the second matters.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 320" role="img" aria-label="Left: a monolith box containing user, order and payment modules and one database. Right: three separate services, each with its own database, connected by a synchronous arrow and an asynchronous event bus">
+      <defs><marker id="ar-m3-5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="190" height="170" rx="10"/>
+        <rect x="30" y="60" width="160" height="32" rx="6"/>
+        <rect x="30" y="100" width="160" height="32" rx="6"/>
+        <rect x="30" y="140" width="160" height="32" rx="6"/>
+        <rect x="45" y="240" width="130" height="44" rx="8"/>
+        <path d="M110 212 V238" marker-end="url(#ar-m3-5)"/>
+        <rect x="250" y="40" width="110" height="44" rx="8"/>
+        <rect x="390" y="40" width="110" height="44" rx="8"/>
+        <rect x="530" y="40" width="95" height="44" rx="8"/>
+        <rect x="250" y="130" width="110" height="34" rx="8"/>
+        <rect x="390" y="130" width="110" height="34" rx="8"/>
+        <rect x="530" y="130" width="95" height="34" rx="8"/>
+        <path d="M305 86 V128"/>
+        <path d="M445 86 V128"/>
+        <path d="M577 86 V128"/>
+        <path d="M362 62 H388" marker-end="url(#ar-m3-5)"/>
+        <rect x="250" y="215" width="375" height="40" rx="8" stroke-dasharray="6 4"/>
+        <path d="M577 86 V100 H620 V213" stroke-dasharray="6 4" marker-end="url(#ar-m3-5)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="110" y="25" font-size="15" font-weight="700">Monolith</text>
+        <text x="110" y="82" font-size="14">Users module</text>
+        <text x="110" y="122" font-size="14">Orders module</text>
+        <text x="110" y="162" font-size="14">Payments module</text>
+        <text x="110" y="198" font-size="13">function calls</text>
+        <text x="110" y="267" font-size="14">One database</text>
+        <text x="440" y="25" font-size="15" font-weight="700">Microservices</text>
+        <text x="305" y="68" font-size="14">Orders</text>
+        <text x="445" y="68" font-size="14">Payments</text>
+        <text x="577" y="68" font-size="14">Stock</text>
+        <text x="305" y="152" font-size="13">own DB</text>
+        <text x="445" y="152" font-size="13">own DB</text>
+        <text x="577" y="152" font-size="13">own DB</text>
+        <text x="375" y="108" font-size="13">1. sync call</text>
+        <text x="437" y="239" font-size="14">2. Event bus (async): order_placed</text>
+        <text x="437" y="285" font-size="13">1 = ask and wait (REST / gRPC)</text>
+        <text x="437" y="303" font-size="13">2 = drop a message, carry on (events)</text>
+      </g>
+    </svg>
+    <figcaption>One program with one database on the left; separate services with their own databases on the right. Number 1 is a synchronous call, number 2 is asynchronous.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m3-5 monolith-vs-services.excalidraw</code> in your Module 3 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+microservices+vs+monolith" target="_blank" rel="noopener">YouTube search: "ByteByteGo microservices vs monolith"</a>
+      <span class="meta">Short. Watch it all and note the cost list at the end.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=saga+pattern+microservices+explained+simply" target="_blank" rel="noopener">YouTube search: "saga pattern microservices explained simply"</a>
+      <span class="meta">Pick one under 15 minutes. Watch the part with a failing step and the compensating action.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#microservices" target="_blank" rel="noopener">System Design Primer: Microservices</a>
+      <span class="meta">Read the microservices and service discovery paragraphs, including the disadvantages.</span></li>
+    <li><a href="https://martinfowler.com/bliki/MonolithFirst.html" target="_blank" rel="noopener">martinfowler.com: Monolith First</a>
+      <span class="meta">Short essay. Focus on why starting simple is usually safer.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes, Excalidraw)</h2>
+  <p>You get an imaginary food-delivery app (think of a Swiggy-style app) built as one monolith. You will cut it into services, one decision at a time.</p>
+
+  <h3>A. Draw the monolith</h3>
+  <ol class="steps">
+    <li>Open <code>excalidraw.com</code>. Press <kbd>R</kbd> and draw one big box. Write <code>Food-delivery monolith</code> at its top.</li>
+    <li>Inside it draw 7 small boxes: <b>Users and login</b>, <b>Restaurants and menus</b>, <b>Search</b>, <b>Cart and orders</b>, <b>Payments</b>, <b>Delivery tracking</b>, <b>Notifications</b>.</li>
+    <li>Under the big box draw a cylinder or rectangle labelled <code>One Postgres database</code>, with one arrow from the big box to it.</li>
+    <li>Put a user (ellipse, <kbd>O</kbd>) on the left with an arrow to the big box.</li>
+  </ol>
+
+  <h3>B. Decide what to pull out, and why</h3>
+  <ol class="steps">
+    <li>Do not split everything. Pick the parts with a real reason:
+      <ul>
+        <li><b>Search:</b> very different load, different technology (see <a href="m2-14.html">search</a>).</li>
+        <li><b>Delivery tracking:</b> constant location updates from riders, heavy writes.</li>
+        <li><b>Notifications:</b> slow, can fail, can happen later.</li>
+        <li><b>Payments:</b> needs strict security and a separate team.</li>
+      </ul>
+      Keep <b>Users, Restaurants and Cart and orders</b> together as the "core". Write a one-line reason beside each service you pull out.</li>
+    <li>Redraw the picture: the core box, plus four new boxes. Give each service its <b>own</b> small database box (search gets a search index, tracking gets a fast store).</li>
+  </ol>
+
+  <h3>C. Draw the calls and mark them sync or async</h3>
+  <ol class="steps">
+    <li>Press <kbd>A</kbd> and draw an arrow for each call. Use a <b>solid</b> arrow for synchronous (the caller waits), a <b>dashed</b> arrow for asynchronous (event, fire and forget). To dash: press <kbd>V</kbd>, click the arrow, and in the left panel choose the dashed <span class="ui">Stroke style</span>.</li>
+    <li>Suggested answers; label each arrow with what flows:
+      <table>
+        <tr><th>Call</th><th>Sync or async</th><th>Why</th></tr>
+        <tr><td>App to Search: "find biryani"</td><td>Sync</td><td>The user waits for results.</td></tr>
+        <tr><td>Core to Payments: "charge Rs 499"</td><td>Sync</td><td>The order cannot continue until we know it paid.</td></tr>
+        <tr><td>Core to Notifications: "order placed"</td><td>Async (event)</td><td>The email or SMS can arrive a few seconds later; do not make the user wait.</td></tr>
+        <tr><td>Rider app to Tracking: location pings</td><td>Async or streaming</td><td>Many small updates; losing one is fine.</td></tr>
+        <tr><td>Core to Search: "menu updated"</td><td>Async (event)</td><td>The search index can update shortly after.</td></tr>
+      </table></li>
+    <li>Add a box between the services labelled <code>Event bus / queue</code> and route all dashed arrows through it.</li>
+  </ol>
+
+  <h3>D. Walk a saga on your drawing</h3>
+  <ol class="steps">
+    <li>Number the steps of "place order" in small circles: 1 core saves order as pending, 2 payments charges, 3 core confirms order, 4 notification event.</li>
+    <li>Imagine step 2 succeeds but step 3 fails. Write what the undo is: <b>refund the payment</b> and mark the order cancelled.</li>
+    <li>Add a note: "Which team and which tool will debug a slow order that touches 4 services?" (Answer: we will need tracing, see <a href="m3-7.html">observability</a>.)</li>
+    <li>Save as <code>m3-5 food-delivery-split.excalidraw</code>.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is a modular monolith?</summary><p>One deployable program whose code is divided into modules with strict boundaries and their own data, so it is organised like services without network calls.</p></details>
+  <details><summary>Name three real costs of microservices.</summary><p>Network calls that fail and are slower than function calls; no easy transactions across services; more operations work and harder debugging.</p></details>
+  <details><summary>When would you use an asynchronous event instead of a REST call?</summary><p>When the caller does not need the result now, like sending a confirmation email, or when you want to decouple services so one being slow does not block the other.</p></details>
+  <details><summary>What does a saga do when step 3 of 4 fails?</summary><p>It runs compensating actions for the completed steps (for example refund the payment), since there is no single transaction to roll back.</p></details>
+  <details><summary>A startup with 4 engineers wants microservices from day one. What do you advise?</summary><p>Start with a modular monolith. With a small team the network, operations and debugging costs outweigh the benefits. Keep module boundaries clean so a service can be extracted later if a real need appears.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would start with a modular monolith and extract a service only when there is a clear reason: team size, a very different scaling need, or isolation of failures."</blockquote>
+  <blockquote>"Between services I use synchronous calls when the user needs an answer now, and events for work that can happen later, with sagas for multi-step business actions."</blockquote>
+  <p><b>Common follow-up question:</b> How do you keep data consistent across services?</p>
+  <p>Each service owns its data. For a business action across services I use a saga with compensating steps, make each step idempotent, and publish events reliably using the outbox pattern. I accept eventual consistency between services.</p>
+</section>
+
+</main>
+</body>
+</html>

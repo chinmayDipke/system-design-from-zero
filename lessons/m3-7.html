@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observability: logs, metrics, traces</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m3-7">
+<main class="lesson">
+
+<section class="story">
+  <h2>The doctor, the pulse and the X-ray</h2>
+  <p>You feel unwell. A good doctor does three things. She reads your <b>diary of symptoms</b> ("fever on Tuesday, cough on Wednesday"). She checks <b>numbers</b>: temperature, pulse, blood pressure. And if needed she takes an <b>X-ray</b> to follow the problem through the body to find exactly where it is.</p>
+  <p>A running system also gets sick, and nobody can open it up and look. So we make it tell us how it feels: a diary (<b>logs</b>), vital signs (<b>metrics</b>) and a way to follow one request through every part (<b>traces</b>). Having these three is called <b>observability</b>.</p>
+</section>
+
+<section class="explain">
+  <h2>Seeing inside a running system</h2>
+  <p>Monitoring tells you <b>that</b> something is wrong. Observability lets you ask <b>why</b>, even for a problem you did not predict.</p>
+
+  <h3>The three pillars</h3>
+  <table>
+    <tr><th>Pillar</th><th>What it is</th><th>Good at</th><th>Weak at</th></tr>
+    <tr><td><b>Logs</b></td><td>Time-stamped records of events</td><td>Detail about one event: the exact error</td><td>Big volume and cost; hard to see trends</td></tr>
+    <tr><td><b>Metrics</b></td><td>Numbers over time (counts, rates, percentiles)</td><td>Dashboards, trends, alerts. Cheap.</td><td>No detail on one request</td></tr>
+    <tr><td><b>Traces</b></td><td>The path of one request across services, with timings</td><td>Finding which service is slow</td><td>Needs setup in every service; usually sampled</td></tr>
+  </table>
+
+  <h3>Logs: structured, with a request ID</h3>
+  <p>A log line like <code>Something went wrong!</code> helps nobody. Write <b>structured logs</b>: one JSON object per line, with named fields, so tools can search and filter them. Always include:</p>
+  <ul>
+    <li><b>timestamp</b> and <b>level</b> (<code>info</code>, <code>warn</code>, <code>error</code>);</li>
+    <li>a <b>request ID</b> (also called correlation ID): generated at the edge, passed to every service and written in every log line, so you can pull up everything that happened for one user click;</li>
+    <li>who and what: user id, route, status, duration, error message.</li>
+  </ul>
+  <p>Never log passwords, tokens or full card numbers.</p>
+
+  <h3>Metrics: what to measure</h3>
+  <p>You cannot watch everything. Use short checklists:</p>
+  <ul>
+    <li><b>RED</b> (for services, from the request's view): <b>R</b>ate (requests per second), <b>E</b>rrors (failed share), <b>D</b>uration (latency).</li>
+    <li><b>USE</b> (for resources like CPU, disk, queue): <b>U</b>tilisation (how busy), <b>S</b>aturation (how much is waiting), <b>E</b>rrors.</li>
+    <li><b>Four golden signals</b> (from Google's SRE book): latency, traffic, errors, saturation. It combines the two lists.</li>
+  </ul>
+  <p>For latency, use <b>percentiles</b> (p50, p95, p99), not the average, as in <a href="m1-5.html">the latency lesson</a>. An average of 100 ms can hide the 1% of users waiting 5 seconds.</p>
+
+  <h3>Distributed tracing</h3>
+  <p>When one request passes through the gateway, an orders service, a payments service and the database, a <b>trace</b> follows it. Each unit of work inside is a <b>span</b>, with a start time, a duration and a parent. Drawn on a timeline, the spans show which step took the time. The trace ID is passed along with the request (in headers), which is the same idea as the request ID.</p>
+
+  <h3>Alerts and dashboards</h3>
+  <ul>
+    <li><b>Alert on symptoms, not causes.</b> Users feel "checkout is failing" or "pages take 5 s". Alert on that (error rate, latency, SLO burn). Do not page someone at 3 a.m. because "CPU is 80%" when users are fine.</li>
+    <li>Every alert should be <b>actionable</b>: someone knows what to do. Too many noisy alerts teach people to ignore them (alert fatigue).</li>
+    <li><b>Dashboards:</b> one overview page per service with the RED numbers; deeper pages for resources. They are for looking during an incident, not a replacement for alerts.</li>
+  </ul>
+
+  <h3>Tools, by name</h3>
+  <ul>
+    <li><b>Prometheus</b>: collects and stores metrics. <b>Grafana</b>: draws dashboards and alerts from them.</li>
+    <li><b>OpenTelemetry</b>: a standard way for your code to produce logs, metrics and traces for many backends.</li>
+    <li><b>Sentry</b>: catches application errors with stack traces and groups them.</li>
+    <li>Hosted platforms and cloud providers offer the same ideas (for example the logs tab of your database host).</li>
+  </ul>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>More data means more cost and noise. Log less at <code>info</code>, sample traces (keep 1 in 100, plus all errors).</li>
+    <li>High-cardinality labels in metrics (a label per user id) can overload the metrics store; put those details in logs.</li>
+    <li>Instrumentation costs a bit of performance and developer time, but you pay far more without it during an outage.</li>
+  </ul>
+  <p class="tip">The usual debugging path: an alert says error rate is up (metric), a dashboard shows which route, a trace shows which service is slow, and the logs for that request ID show the exact error.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="A request flows through a gateway, orders service and payments service. Each emits logs, metrics and traces to collectors, which feed dashboards, alerts and a trace viewer">
+      <defs><marker id="ar-m3-7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="30" width="130" height="50" rx="8"/>
+        <rect x="175" y="30" width="130" height="50" rx="8"/>
+        <rect x="335" y="30" width="130" height="50" rx="8"/>
+        <path d="M147 55 H172" marker-end="url(#ar-m3-7)"/>
+        <path d="M307 55 H332" marker-end="url(#ar-m3-7)"/>
+        <path d="M80 82 V150 H230" marker-end="url(#ar-m3-7)"/>
+        <path d="M240 82 V148" marker-end="url(#ar-m3-7)"/>
+        <path d="M400 82 V150 H300" marker-end="url(#ar-m3-7)"/>
+        <rect x="232" y="130" width="66" height="40" rx="8" stroke-dasharray="0"/>
+        <path d="M265 172 V205" marker-end="url(#ar-m3-7)"/>
+        <rect x="40" y="208" width="160" height="50" rx="8"/>
+        <rect x="240" y="208" width="160" height="50" rx="8"/>
+        <rect x="440" y="208" width="170" height="50" rx="8"/>
+        <path d="M232 160 H120 V205" marker-end="url(#ar-m3-7)"/>
+        <path d="M298 160 H520 V205" marker-end="url(#ar-m3-7)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="80" y="60" font-size="14">1. Gateway</text>
+        <text x="240" y="60" font-size="14">2. Orders</text>
+        <text x="400" y="60" font-size="14">3. Payments</text>
+        <text x="265" y="155" font-size="13">collect</text>
+        <text x="120" y="228" font-size="14" font-weight="700">Logs</text>
+        <text x="120" y="246" font-size="13">search by request ID</text>
+        <text x="320" y="228" font-size="14" font-weight="700">Metrics</text>
+        <text x="320" y="246" font-size="13">dashboards + alerts</text>
+        <text x="525" y="228" font-size="14" font-weight="700">Traces</text>
+        <text x="525" y="246" font-size="13">timeline of spans</text>
+        <text x="520" y="100" font-size="13">Same request ID in every service</text>
+        <text x="520" y="118" font-size="13">(steps 1, 2 and 3)</text>
+        <text x="320" y="285" font-size="13">Steps 1 to 3 are one user request. Every service sends its logs, metrics and spans out.</text>
+      </g>
+    </svg>
+    <figcaption>One request (steps 1 to 3) leaves three kinds of evidence. Together they let you find the slow or broken step.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m3-7 three-pillars.excalidraw</code> in your Module 3 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+logging+metrics+tracing" target="_blank" rel="noopener">YouTube search: "ByteByteGo logging metrics tracing"</a>
+      <span class="meta">Short. Watch it all and note what each pillar is best at.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=distributed+tracing+explained+spans+OpenTelemetry+beginners" target="_blank" rel="noopener">YouTube search: "distributed tracing explained spans OpenTelemetry beginners"</a>
+      <span class="meta">Pick one under 15 minutes. Watch the part that shows a trace as a timeline of spans.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://sre.google/sre-book/monitoring-distributed-systems/" target="_blank" rel="noopener">Google SRE Book: Monitoring Distributed Systems</a>
+      <span class="meta">Read "The Four Golden Signals" and the section on symptoms versus causes. Skip the rest.</span></li>
+    <li><a href="https://opentelemetry.io/docs/concepts/observability-primer/" target="_blank" rel="noopener">OpenTelemetry: Observability primer</a>
+      <span class="meta">Read the parts on logs, metrics and distributed traces. Skim the rest.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes)</h2>
+
+  <h3>A. Find your own request in the Supabase logs</h3>
+  <p>The Supabase dashboard changes its layout from time to time, so a menu may have a slightly different name from the one below. Look for the same idea.</p>
+  <ol class="steps">
+    <li>Open <code>supabase.com/dashboard</code> and click a project. In the left sidebar click <span class="ui">Settings</span> (gear icon) → <span class="ui">Data API</span> (it may say <span class="ui">API</span>) and copy the <b>Project URL</b>. It looks like <code>https://abcdefgh.supabase.co</code>.</li>
+    <li>In a new browser tab, type that URL followed by a path and a unique marker, then press <kbd>Enter</kbd>. Replace the first part with yours:
+      <pre><code>https://YOUR-PROJECT.supabase.co/rest/v1/?lesson=m3-7</code></pre>
+      You will probably see a short error message (for example saying no API key was given). That is fine: the request still reached the server and was logged. Do it 2 or 3 times.</li>
+    <li>Go back to the dashboard. In the left sidebar click <span class="ui">Logs</span> (older versions: <span class="ui">Logs &amp; Analytics</span>, or <span class="ui">Logs Explorer</span>).</li>
+    <li>Pick the log source for the API: look for <span class="ui">API Gateway</span>, <span class="ui">Edge Logs</span> or <span class="ui">API Edge</span>. Click it.</li>
+    <li>Set the time range (top right) to <span class="ui">Last hour</span>. Click a refresh button if there is one.</li>
+    <li>In the search or filter box type <code>lesson=m3-7</code> (or just <code>m3-7</code>) and press <kbd>Enter</kbd>. Logs may take up to a minute to appear; if the list is empty, wait, refresh and try again.</li>
+    <li>Click one row to open its details. Find and write down: the <b>method</b> (GET), the <b>path</b>, the <b>status code</b> (probably 401 or 404), the <b>timestamp</b> and any <b>request ID</b> (it may be named <code>x-request-id</code> or <code>request_id</code>) and the <b>latency</b> if shown.</li>
+    <li>Now remove your filter and look at other rows. Which has the most rows? Which status codes do you see? This is a metric in disguise: counting log lines by status.</li>
+  </ol>
+
+  <h3>B. Write 3 structured log lines</h3>
+  <ol class="steps">
+    <li>Open a notepad file called <code>m3-7 observability.txt</code>.</li>
+    <li>Copy these three example lines of an orders service. Notice that the <code>request_id</code> ties them together:
+      <pre><code>{"ts":"2026-11-02T10:15:01.120Z","level":"info","service":"orders","request_id":"req-8f3a","route":"POST /orders","user_id":"u_42","msg":"order created","order_id":"o_901","duration_ms":84}
+{"ts":"2026-11-02T10:15:01.150Z","level":"warn","service":"payments","request_id":"req-8f3a","msg":"gateway slow","upstream":"card-gateway","duration_ms":2300}
+{"ts":"2026-11-02T10:15:03.480Z","level":"error","service":"payments","request_id":"req-8f3a","msg":"payment failed","error":"timeout after 3000ms","order_id":"o_901"}</code></pre></li>
+    <li>Answer in the file: if a customer says "my order o_901 failed", what do you search for, and how do the lines tell the story? (Search <code>request_id = req-8f3a</code> and read the lines in time order: created, then slow gateway, then timeout.)</li>
+    <li>Write 3 more lines of your own, for a login service: a successful login, a wrong password (warn, with no password in the line) and a database error.</li>
+  </ol>
+
+  <h3>C. Write 3 alert rules</h3>
+  <ol class="steps">
+    <li>In the same file, write each rule as: <b>condition, duration, who is told, what they do first</b>. Example for you to copy the style:
+      <pre><code>1. Error rate on checkout above 2% for 5 minutes -> page on-call -> check the latest deploy, roll back if needed.</code></pre></li>
+    <li>Write two more of your own. Good candidates: p99 latency of the product page above 1 s for 10 minutes; payment success rate below 98% over 5 minutes; the dead-letter queue has more than 0 messages (<a href="m3-4.html">DLQ</a>).</li>
+    <li>Check each rule: does it describe something a <b>user would feel</b> (symptom)? Rewrite any that say only "CPU above 90%" unless you can say why that hurts users.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What are the three pillars of observability, and one strength of each?</summary><p>Logs: detail of one event. Metrics: cheap trends, dashboards and alerts. Traces: following one request across services to find the slow step.</p></details>
+  <details><summary>Why include a request ID in every log line?</summary><p>So you can find every line from every service for one user request, by searching one ID.</p></details>
+  <details><summary>What do RED and USE stand for?</summary><p>RED: Rate, Errors, Duration (for services). USE: Utilisation, Saturation, Errors (for resources).</p></details>
+  <details><summary>Why alert on symptoms instead of causes?</summary><p>Symptoms are what users actually feel and catch many causes, including unknown ones. Cause-based alerts (high CPU) often fire when nobody is hurt and miss problems they did not think of.</p></details>
+  <details><summary>Users say checkout is slow. In what order would you use metrics, traces and logs?</summary><p>Metrics first to confirm and scope it (which route, since when). Then a trace of a slow request to find the slow service. Then the logs for that request ID to read the exact error or slow query.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I would instrument with structured logs carrying a request ID, RED metrics per service, and distributed tracing, and alert on user-visible symptoms like error rate and p99 latency."</blockquote>
+  <blockquote>"Metrics tell me something is wrong, traces tell me where, and logs tell me why."</blockquote>
+  <p><b>Common follow-up question:</b> How do you avoid alert fatigue?</p>
+  <p>Alert only on symptoms that need a human now, tie each alert to a runbook, route low-urgency items to a ticket or a daily review rather than a page, and delete or tune any alert that fires without action.</p>
+</section>
+
+</main>
+</body>
+</html>

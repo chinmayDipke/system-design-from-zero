@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consistency models</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m3-2">
+<main class="lesson">
+
+<section class="story">
+  <h2>The class monitor and the notice board</h2>
+  <p>A school has three notice boards: one in the corridor, one in the canteen, one in the library. When the principal changes the exam date, a peon walks to each board and updates it. For a few minutes, the corridor board says "Monday" while the library board still says "Friday".</p>
+  <p>If you read the corridor board you are right. If you read the library board you are briefly wrong, but soon it catches up. How strict should the school be? It could make you wait until all three boards agree (always right, but slow). Or let you read any board (fast, but sometimes old).</p>
+  <p>Those are <b>consistency models</b>: promises about how fresh and how orderly the data you read is.</p>
+</section>
+
+<section class="explain">
+  <h2>How fresh is "fresh enough"?</h2>
+  <p>Once data is copied to several machines (<a href="m2-9.html">replication</a>), a read may hit a copy that has not received the latest write yet. A <b>consistency model</b> is the promise the database makes about that. Stronger promise means simpler for you but slower, as <a href="m3-1.html">PACELC</a> said.</p>
+
+  <h3>The models, strongest to weakest</h3>
+  <table>
+    <tr><th>Model</th><th>Promise</th><th>Example</th></tr>
+    <tr><td><b>Strong (linearizable)</b></td><td>Once a write is done, every later read, from anywhere, sees it. It behaves like one single copy.</td><td>Bank balance, seat booking</td></tr>
+    <tr><td><b>Causal</b></td><td>If B happened because of A (a reply to a comment), everyone sees A before B. Unrelated things may appear in any order.</td><td>A comment never shows before the post it answers</td></tr>
+    <tr><td><b>Read-your-writes</b></td><td>You always see your own updates, though others may still see old data.</td><td>You change your profile photo and refresh: you see the new one</td></tr>
+    <tr><td><b>Monotonic reads</b></td><td>You never see data go backwards in time. Once you saw version 5, you will not then see version 4.</td><td>A post count that jumps 10, 9, 10 would be confusing</td></tr>
+    <tr><td><b>Eventual</b></td><td>If no new writes come, all copies end up the same, "eventually". No promise about when.</td><td>Likes count, DNS, follower counts</td></tr>
+  </table>
+
+  <h3>The classic bugs these fix</h3>
+  <ul>
+    <li><b>You post a comment, refresh, and it vanishes.</b> The write went to the leader, the read to a lagging replica. Fix: <b>read-your-writes</b>, for example by reading your own recent changes from the leader, or by sticking you to one replica.</li>
+    <li><b>You refresh twice and see newer data, then older.</b> Two reads hit two replicas at different lag. Fix: <b>monotonic reads</b>, by always sending the same user to the same replica.</li>
+    <li><b>A reply appears before the question.</b> Fix: <b>causal</b> ordering.</li>
+  </ul>
+
+  <h3>Quorums: N, R, W</h3>
+  <p>Some databases (Cassandra, DynamoDB-style systems) let you choose how strict each operation is using three numbers:</p>
+  <ul>
+    <li><b>N</b>: how many copies (replicas) of each item exist.</li>
+    <li><b>W</b>: how many replicas must confirm a <b>write</b> before it counts as successful.</li>
+    <li><b>R</b>: how many replicas you ask on a <b>read</b> before answering.</li>
+  </ul>
+  <p><b>The rule: if R + W &gt; N, every read set overlaps every write set in at least one replica,</b> so the read must meet at least one replica holding the newest value. Each value carries a version number (or timestamp); the reader takes the highest.</p>
+  <p><b>Worked example, N = 3.</b></p>
+  <table>
+    <tr><th>W</th><th>R</th><th>R + W</th><th>Greater than 3?</th><th>Result</th></tr>
+    <tr><td>2</td><td>2</td><td>4</td><td>Yes</td><td>Always sees the latest write. Balanced.</td></tr>
+    <tr><td>3</td><td>1</td><td>4</td><td>Yes</td><td>Fast reads, slow writes (all 3 must answer; one down blocks writes).</td></tr>
+    <tr><td>1</td><td>3</td><td>4</td><td>Yes</td><td>Fast writes, slow reads.</td></tr>
+    <tr><td>1</td><td>1</td><td>2</td><td>No</td><td>Fastest, but a read can miss the latest write: eventual consistency.</td></tr>
+  </table>
+  <p>With W = 2, R = 2, N = 3 you can lose <b>one</b> replica and still read and write. That is a common default.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>Higher W or R means more consistency but slower answers and less availability (more nodes must be up).</li>
+    <li>Lower W or R means faster and more available but possibly stale reads.</li>
+    <li>R + W &gt; N is not magic: it does not help if replicas are clocks-skewed, or while a write is only half-finished. Real databases add extra repair steps. Treat it as the idea to explain, not a full guarantee of strong consistency.</li>
+  </ul>
+  <p class="tip">Choose the weakest model that does not hurt the user. Strong everywhere is expensive. A like count can be eventual; your own profile edit needs read-your-writes; money needs strong.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="Three replicas A, B, C. A write of version 2 reaches A and B but not C. A read that asks B and C still gets version 2 from B">
+      <defs><marker id="ar-m3-2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="250" y="20" width="140" height="44" rx="8"/>
+        <rect x="40" y="140" width="150" height="70" rx="10"/>
+        <rect x="245" y="140" width="150" height="70" rx="10"/>
+        <rect x="450" y="140" width="150" height="70" rx="10" stroke-dasharray="6 4"/>
+        <path d="M280 66 L120 137" marker-end="url(#ar-m3-2)"/>
+        <path d="M320 66 V137" marker-end="url(#ar-m3-2)"/>
+        <path d="M360 66 L520 137" stroke-dasharray="3 5"/>
+        <path d="M245 240 H320 V215" marker-end="url(#ar-m3-2)"/>
+        <path d="M600 240 H520 V215" marker-end="url(#ar-m3-2)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="320" y="48" font-size="15" font-weight="700">Write x = 9 (v2)</text>
+        <text x="115" y="168" font-size="16" font-weight="700">A</text>
+        <text x="115" y="192" font-size="14">x = 9, v2</text>
+        <text x="320" y="168" font-size="16" font-weight="700">B</text>
+        <text x="320" y="192" font-size="14">x = 9, v2</text>
+        <text x="525" y="168" font-size="16" font-weight="700">C (slow)</text>
+        <text x="525" y="192" font-size="14">x = 5, v1</text>
+        <text x="160" y="105" font-size="14">1. ack</text>
+        <text x="345" y="105" font-size="14" text-anchor="start">2. ack</text>
+        <text x="515" y="105" font-size="14">3. missed</text>
+        <text x="320" y="270" font-size="14">4. Read asks B and C: sees v2 and v1, picks the higher version, v2.</text>
+        <text x="320" y="290" font-size="14">W = 2 acks (A, B) means the write succeeded.  R = 2.  2 + 2 &gt; 3.</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 and 2: two acks make the write succeed (W = 2). Step 3: C missed it. Step 4: any two replicas include at least one that has v2.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m3-2 quorum.excalidraw</code> in your Module 3 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+consistency+models+eventual+strong" target="_blank" rel="noopener">YouTube search: "ByteByteGo consistency models eventual strong"</a>
+      <span class="meta">Watch the first half: it separates strong, eventual and the in-between ones.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=quorum+read+write+R+W+N+replication+explained" target="_blank" rel="noopener">YouTube search: "quorum read write R W N replication explained"</a>
+      <span class="meta">Pick a short result. Watch only the part with the R + W &gt; N rule and an example.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#consistency-patterns" target="_blank" rel="noopener">System Design Primer: Consistency patterns</a>
+      <span class="meta">Read weak, eventual and strong consistency. Three short paragraphs.</span></li>
+    <li><a href="https://en.wikipedia.org/wiki/Eventual_consistency" target="_blank" rel="noopener">Wikipedia: Eventual consistency</a>
+      <span class="meta">Skim for the plain-words definition and the example of when it is fine.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes, paper only)</h2>
+  <p>You are a database with 3 replicas, <b>A</b>, <b>B</b> and <b>C</b>. N = 3, W = 2, R = 2. Each holds a value <code>balance</code> with a version number.</p>
+
+  <h3>A. Set up the board</h3>
+  <ol class="steps">
+    <li>On paper (or Excalidraw), draw three boxes labelled A, B, C, side by side.</li>
+    <li>Write inside each box: <code>balance = 100, v1</code>.</li>
+    <li>Make a "log" column on the right where you will write each step.</li>
+  </ol>
+
+  <h3>B. A write that one replica misses</h3>
+  <ol class="steps">
+    <li>A client sends <b>write balance = 70 (version 2)</b> to all three replicas.</li>
+    <li>A receives it. Update box A to <code>70, v2</code>. Write in the log: "A acks".</li>
+    <li>B receives it. Update box B to <code>70, v2</code>. Log: "B acks".</li>
+    <li>C is slow: the message is delayed. Leave box C as <code>100, v1</code>.</li>
+    <li>Two acks have arrived and W = 2, so tell the client: <b>write succeeded</b>. Log it. Note that C is still stale.</li>
+  </ol>
+
+  <h3>C. Read from every possible pair</h3>
+  <ol class="steps">
+    <li>A read asks any <b>R = 2</b> replicas. There are three possible pairs. Try each one and write the answer in the log:
+      <table>
+        <tr><th>Pair asked</th><th>Values returned</th><th>Highest version</th><th>Client gets</th></tr>
+        <tr><td>A and B</td><td>70 v2, 70 v2</td><td>v2</td><td>70</td></tr>
+        <tr><td>A and C</td><td>70 v2, 100 v1</td><td>v2</td><td>70</td></tr>
+        <tr><td>B and C</td><td>70 v2, 100 v1</td><td>v2</td><td>70</td></tr>
+      </table>
+      Cover the last two columns first and work them out yourself.</li>
+    <li>Write one sentence: "Every pair of 2 replicas out of 3 includes at least one of A or B, the two that have v2, so a read always meets the latest write."</li>
+  </ol>
+
+  <h3>D. Break the rule</h3>
+  <ol class="steps">
+    <li>Reset the boxes to the state after step B (A and B at v2, C at v1).</li>
+    <li>Change to <b>W = 1, R = 1</b>. Imagine the write had been acked by A only, so only A has v2 and B and C hold v1.</li>
+    <li>Now a read asks only C. What does the client get? <b>100 (old).</b> Write down why: R + W = 2, which is not greater than 3, so the read set and the write set need not overlap.</li>
+    <li>Now try <b>W = 3, R = 1</b>: the write needs all three acks. Confirm any single replica read is now up to date (R + W = 4 &gt; 3). What happens to writes if C is down? They cannot complete. Write that cost down.</li>
+  </ol>
+
+  <h3>E. Match the model to the bug</h3>
+  <ol class="steps">
+    <li>For each, write which model fixes it (strong, causal, read-your-writes, monotonic reads, eventual):
+      <ol>
+        <li>You post a comment, refresh, and it is gone.</li>
+        <li>A friend's reply shows up before the message it replies to.</li>
+        <li>The follower count of a celebrity is slightly old. Acceptable?</li>
+        <li>You see 12 comments, refresh, see 10, refresh again, see 12.</li>
+      </ol></li>
+    <li>Check: 1 read-your-writes; 2 causal; 3 eventual is fine; 4 monotonic reads.</li>
+    <li>Save your boxes as <code>m3-2 quorum-simulation.excalidraw</code>.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What is the difference between strong and eventual consistency?</summary><p>Strong: after a write completes, every read sees it. Eventual: reads may see old data for a while, but all copies converge if writes stop.</p></details>
+  <details><summary>What does read-your-writes guarantee, and what does it not?</summary><p>You always see your own updates. It does not promise that other users see them immediately.</p></details>
+  <details><summary>N = 5, W = 3, R = 3. Does a read always see the latest write?</summary><p>Yes by the rule: R + W = 6, which is greater than N = 5, so the sets overlap in at least one replica.</p></details>
+  <details><summary>N = 3, W = 1, R = 1. What do you gain and lose?</summary><p>Gain: the fastest reads and writes, and the system survives two failures. Lose: R + W = 2 is not greater than 3, so reads can be stale.</p></details>
+  <details><summary>A news site shows article view counts, and a banking app shows balances. Which consistency would you choose for each, and why?</summary><p>View counts: eventual, being a little off is harmless and it keeps the system fast. Balances: strong, a wrong balance can cause real harm, and the extra latency is acceptable.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"For money I would use strong consistency. For feeds and counters, eventual consistency is fine, with read-your-writes so a user sees their own post."</blockquote>
+  <blockquote>"With N replicas, if R + W is greater than N the read and write sets overlap, so a read sees the latest write. I tune R and W to trade speed against safety."</blockquote>
+  <p><b>Common follow-up question:</b> Why not make everything strongly consistent?</p>
+  <p>It costs latency and availability: more replicas must agree before answering, and if some are unreachable the system may have to refuse requests. Most data does not need it, so I use the weakest model that keeps the user experience correct.</p>
+</section>
+
+</main>
+</body>
+</html>

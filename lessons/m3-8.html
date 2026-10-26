@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security basics: auth, JWT, OAuth</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m3-8">
+<main class="lesson">
+
+<section class="story">
+  <h2>The college gate, the ID card and the library</h2>
+  <p>At a college gate the guard asks, "Who are you?" You show your <b>ID card</b>. He checks the photo and the stamp, and lets you in. That is <b>authentication</b>: proving who you are.</p>
+  <p>Inside, you walk to the library. The librarian does not ask who you are again: she looks at your card, sees "Student, Year 2", and lets you borrow books, but not enter the staff room. That is <b>authorization</b>: deciding what you are allowed to do.</p>
+  <p>A good ID card is hard to fake (stamp, hologram), has an <b>expiry date</b>, and carries just enough information. A <b>JWT</b> is exactly that kind of card for websites.</p>
+</section>
+
+<section class="explain">
+  <h2>Proving who you are, and what you may do</h2>
+
+  <h3>Authentication vs authorization</h3>
+  <table>
+    <tr><th></th><th>Question</th><th>Example</th><th>Failure code</th></tr>
+    <tr><td><b>Authentication</b> (authn)</td><td>Who are you?</td><td>Login with password or Google</td><td>401 Unauthorized</td></tr>
+    <tr><td><b>Authorization</b> (authz)</td><td>What may you do?</td><td>Can this user read this order?</td><td>403 Forbidden</td></tr>
+  </table>
+  <p>(<a href="m1-3.html">Status codes</a>: the name "Unauthorized" for 401 is historic; it really means "not authenticated".)</p>
+
+  <h3>Sessions with cookies</h3>
+  <p>After login, the server creates a <b>session</b>: a record in its memory or database (<code>session abc123 = user 42</code>) and gives the browser a <b>cookie</b> with only the random ID. Every request carries the cookie, and the server looks the ID up.</p>
+  <ul>
+    <li>Plus: the server can end a session instantly (logout, banned user).</li>
+    <li>Minus: every server must reach the session store (often Redis, <a href="m2-8.html">Redis</a>), which is extra state to scale.</li>
+  </ul>
+
+  <h3>JWT (JSON Web Token)</h3>
+  <p>A <b>JWT</b> is a self-contained token with three parts, separated by dots: <code>header.payload.signature</code>. Each of the first two is JSON, encoded in base64url.</p>
+  <ul>
+    <li><b>Header:</b> the signing algorithm (for example <code>HS256</code> or <code>RS256</code>).</li>
+    <li><b>Payload (claims):</b> data such as <code>sub</code> (user id), <code>role</code>, <code>iat</code> (issued at) and <code>exp</code> (expiry time).</li>
+    <li><b>Signature:</b> a hash made with a secret (or private key) over the header and payload. Anyone with the matching key can check that nobody changed it.</li>
+  </ul>
+  <div class="warn"><b>Signed is not encrypted.</b> Base64 is just a way of writing, not a lock. Anyone who holds a JWT can read its payload (you will do it below). Never put secrets or private data in it. The signature only guarantees it has not been <b>changed</b>.</div>
+  <p>Because the server can verify it with the key alone, it does not need to look anything up. That suits many servers and many services (<a href="m3-5.html">microservices</a>). The cost: you cannot easily cancel a JWT before it expires.</p>
+
+  <h3>Expiry and refresh tokens</h3>
+  <p>Make the <b>access token</b> short-lived (for example 15 minutes), so a stolen one stops working soon. Alongside it, issue a longer-lived <b>refresh token</b> (days or weeks), stored more carefully and kept on the server side so it <b>can</b> be revoked. When the access token expires, the app swaps the refresh token for a new access token without asking for the password again.</p>
+
+  <h3>Where to store a token in the browser</h3>
+  <table>
+    <tr><th>Place</th><th>Risk</th></tr>
+    <tr><td><code>localStorage</code></td><td>Any JavaScript on the page can read it, so an XSS bug (injected script) steals it.</td></tr>
+    <tr><td>Cookie marked <code>HttpOnly</code> + <code>Secure</code> + <code>SameSite</code></td><td>JavaScript cannot read it; sent only over HTTPS. Needs care against CSRF (SameSite helps). Usually the safer default for web apps.</td></tr>
+  </table>
+
+  <h3>OAuth 2.0 and "Login with Google"</h3>
+  <p><b>OAuth 2.0</b> lets a user give an app <b>limited access</b> without giving their password. (Logging in with Google is OAuth with an identity layer on top, called OpenID Connect.) The roles: you (the user), the <b>app</b>, and <b>Google</b> (the authorization server). Simple steps:</p>
+  <ol>
+    <li>You click "Continue with Google" in the app.</li>
+    <li>The app redirects your browser to Google with its client ID and the permissions it wants (scopes, like "email").</li>
+    <li>You log in at <b>Google</b> (the app never sees your password) and click Allow.</li>
+    <li>Google redirects back to the app with a short-lived <b>code</b>.</li>
+    <li>The app's server sends the code and its client secret to Google, and receives tokens (an access token, and an ID token telling who you are).</li>
+    <li>The app logs you in and creates its own session or token.</li>
+  </ol>
+
+  <h3>Other basics</h3>
+  <ul>
+    <li><b>HTTPS everywhere:</b> encrypts traffic so nobody on the Wi-Fi can read or change it (<a href="m1-3.html">HTTP and HTTPS</a>).</li>
+    <li><b>Hash passwords, never store them.</b> Use a slow, salted password hash: <b>bcrypt</b>, <b>argon2</b> or scrypt. Not plain text, and not plain SHA-256 or MD5 (too fast to attack). A hash cannot be turned back into the password; at login you hash what was typed and compare.</li>
+    <li><b>Secrets in environment variables</b> (or a secrets manager), never in code or git. Rotate them if leaked. Different secrets for dev and production.</li>
+  </ul>
+
+  <h3>OWASP Top 10: common risks in one line each</h3>
+  <p>OWASP publishes a list of the most common web security risks. A few to know:</p>
+  <ul>
+    <li><b>Broken access control:</b> a user reaching data they should not (change <code>/orders/5</code> to <code>/orders/6</code> and see someone else's). Always check authorization on the server.</li>
+    <li><b>Injection (SQL):</b> user input becomes part of a command. Use parameterized queries.</li>
+    <li><b>Cryptographic failures:</b> no HTTPS, weak hashing, secrets in plain sight.</li>
+    <li><b>Authentication failures:</b> weak passwords, no rate limit on login (<a href="m2-12.html">rate limiting</a>).</li>
+    <li><b>Security misconfiguration:</b> default passwords, open buckets, debug mode in production.</li>
+    <li><b>Vulnerable components:</b> old libraries with known holes. Keep dependencies updated.</li>
+    <li><b>XSS (cross-site scripting):</b> attacker script runs in the victim's page. Escape output.</li>
+  </ul>
+
+  <h3>Row-level security: authorization inside the database</h3>
+  <p>Instead of trusting every query in your app to add <code>where user_id = ...</code>, the database itself can enforce it. In Postgres and Supabase this is <b>row-level security (RLS)</b>: policies that say which rows each user may see or change.</p>
+  <pre><code>alter table notes enable row level security;
+
+create policy "users read own notes"
+on notes for select
+using (auth.uid() = user_id);</code></pre>
+  <p>Now even a bug in the app cannot leak another user's notes through that table. In Supabase, <code>auth.uid()</code> comes from the user's JWT.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>Sessions: easy revocation, but needs a shared store. JWT: no lookup, but hard to revoke, so keep them short-lived.</li>
+    <li>Rolling your own login is risky. Prefer a proven provider or library.</li>
+    <li>Defence in depth: HTTPS + checks in the app + database policies. Any one layer can fail.</li>
+  </ul>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="Login with Google flow in steps: the user clicks login in the app, the browser goes to Google, the user approves, Google sends a code back to the app, the app server exchanges the code for tokens at Google, and the user is logged in">
+      <defs><marker id="ar-m3-8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="110" width="130" height="70" rx="10"/>
+        <rect x="255" y="20" width="130" height="70" rx="10"/>
+        <rect x="255" y="200" width="130" height="70" rx="10"/>
+        <rect x="520" y="110" width="105" height="70" rx="10"/>
+        <path d="M110 108 L255 70" marker-end="url(#ar-m3-8)"/>
+        <path d="M320 92 V198" marker-end="url(#ar-m3-8)"/>
+        <path d="M385 230 L520 180" marker-end="url(#ar-m3-8)"/>
+        <path d="M572 182 V255 H387" marker-end="url(#ar-m3-8)" stroke-dasharray="6 4"/>
+        <path d="M255 235 L100 182" marker-end="url(#ar-m3-8)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="80" y="140" font-size="15" font-weight="700">User</text>
+        <text x="80" y="160" font-size="13">(browser)</text>
+        <text x="320" y="50" font-size="15" font-weight="700">Google</text>
+        <text x="320" y="70" font-size="13">login + consent</text>
+        <text x="320" y="230" font-size="15" font-weight="700">Your app</text>
+        <text x="320" y="250" font-size="13">(server)</text>
+        <text x="572" y="140" font-size="15" font-weight="700">Google</text>
+        <text x="572" y="160" font-size="13">token endpoint</text>
+        <text x="110" y="84" font-size="13">1. Continue with Google</text>
+        <text x="395" y="40" font-size="13" text-anchor="start">2. User logs in and approves</text>
+        <text x="310" y="150" font-size="13" text-anchor="end">3. Redirect with a code</text>
+        <text x="395" y="186" font-size="13" text-anchor="start">4. code + secret</text>
+        <text x="480" y="275" font-size="13">5. Tokens come back</text>
+        <text x="175" y="245" font-size="13">6. Logged in</text>
+        <text x="320" y="294" font-size="13">Your app never sees the Google password.</text>
+      </g>
+    </svg>
+    <figcaption>Steps 1 and 2 happen at Google. Step 3 passes a short code. Steps 4 and 5 are server to server. Step 6 is your own login. Your app never sees the Google password.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m3-8 oauth-login.excalidraw</code> in your Module 3 folder. In the real flow step 3 passes through the browser; you may draw it that way.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+OAuth+2.0+explained" target="_blank" rel="noopener">YouTube search: "ByteByteGo OAuth 2.0 explained"</a>
+      <span class="meta">Short. Watch it all and match the steps to the six above.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Fireship+JWT+explained+in+100+seconds" target="_blank" rel="noopener">YouTube search: "Fireship JWT explained"</a>
+      <span class="meta">A very short intro. Watch the part showing the three dotted parts of a token.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://owasp.org/projects/top-ten" target="_blank" rel="noopener">OWASP Top Ten</a>
+      <span class="meta">Read the list of ten names and open two entries you do not know.</span></li>
+    <li><a href="https://supabase.com/docs/guides/database/postgres/row-level-security" target="_blank" rel="noopener">Supabase docs: Row Level Security</a>
+      <span class="meta">Read the first section and the example policy. Skip the performance notes.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 20 minutes)</h2>
+  <div class="warn"><b>Never paste a real production token, password or API key into any website</b>, including debugger sites. Anyone running the site, or anyone who can read its logs, could use it. For real tokens, decode them on your own machine. The token below is made up and harmless.</div>
+
+  <h3>A. Read a JWT</h3>
+  <ol class="steps">
+    <li>Select this whole sample token and copy it with <kbd>Ctrl</kbd> + <kbd>C</kbd> (or use the Copy button):
+      <pre><code>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyXzEyMyIsIm5hbWUiOiJBc2hhIEV4YW1wbGUiLCJyb2xlIjoic3R1ZGVudCIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI5MjAwfQ.QgVk9Or0Rq3NvgQV6AoA0H3VmxB313RxvnmxvPtYja4</code></pre></li>
+    <li>Open a new tab and go to <code>jwt.io</code>.</li>
+    <li>Find the big text box for the encoded token (labelled <span class="ui">Encoded</span> or <span class="ui">JSON Web Token</span>). Click inside it, press <kbd>Ctrl</kbd> + <kbd>A</kbd> to select any sample already there, and paste yours with <kbd>Ctrl</kbd> + <kbd>V</kbd>. If the site shows a <span class="ui">Debugger</span> tab or button, click it first.</li>
+    <li>The page splits the token into coloured parts. Find the <b>Header</b>. You should see <code>"alg": "HS256"</code> and <code>"typ": "JWT"</code>. Write the algorithm in your notes.</li>
+    <li>Find the <b>Payload</b>. You should see <code>sub: user_123</code>, <code>name: Asha Example</code>, <code>role: student</code>, <code>iat: 1767225600</code> and <code>exp: 1767229200</code>. Notice you could read all of this <b>without any secret</b>.</li>
+    <li>The times are in seconds since 1 Jan 1970. <code>iat</code> is 1 January 2026, 00:00 UTC. <code>exp</code> is 3,600 seconds (one hour) later. Compute: 1767229200 - 1767225600 = 3600. The site may show this in a friendly form and may say the token is <b>expired</b>, since that hour is long past. That is expected: this is what an expired token looks like.</li>
+  </ol>
+
+  <h3>B. Try to break the signature</h3>
+  <ol class="steps">
+    <li>On the same page, find the <b>Verify signature</b> area (it has a box for a secret). Type exactly <code>demo-secret-not-real</code>. The page should say the <b>signature is valid</b> (the wording may differ).</li>
+    <li>Now edit the payload: change <code>"role": "student"</code> to <code>"role": "admin"</code>. The encoded token on the left changes, but the page should now say the <b>signature is invalid</b>, because the signature no longer matches. This is why you cannot just edit a JWT to make yourself admin.</li>
+    <li>Write one sentence: "Signed means tamper-evident, not secret."</li>
+  </ol>
+
+  <h3>C. Paper exercise: protect an endpoint</h3>
+  <ol class="steps">
+    <li>For <code>GET /orders/6</code>, write the checks a server must do, in order: (1) is there a valid token (authentication, otherwise 401)? (2) has it expired? (3) does order 6 belong to <code>sub</code> from the token, or does the role allow it (authorization, otherwise 403)?</li>
+    <li>Write which of these a row-level security policy could also enforce in the database.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Authentication or authorization: "can this user delete this post?"</summary><p>Authorization. Authentication is proving who the user is.</p></details>
+  <details><summary>What are the three parts of a JWT?</summary><p>Header (algorithm), payload (claims such as user id and expiry) and signature (proof it was not changed).</p></details>
+  <details><summary>Is a JWT encrypted?</summary><p>No, normally it is only signed. Anyone with the token can read the payload, so never put secrets in it.</p></details>
+  <details><summary>Why use short-lived access tokens with refresh tokens?</summary><p>A stolen access token stops working soon. The longer-lived refresh token is kept more safely and can be revoked on the server.</p></details>
+  <details><summary>How should you store passwords?</summary><p>As salted hashes made with a slow algorithm such as bcrypt or argon2. Never in plain text.</p></details>
+  <details><summary>Would you use sessions or JWTs for a new web app, and why?</summary><p>For a single web app, server sessions in an HttpOnly cookie are simple and easy to revoke. JWTs suit many services or mobile clients that need stateless checks, if kept short-lived. Either way I would prefer a proven auth provider over writing my own.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Authentication proves who you are; authorization decides what you may do. I check both on the server for every request."</blockquote>
+  <blockquote>"I would use short-lived signed access tokens with refresh tokens, HTTPS everywhere, hashed passwords with bcrypt or argon2, and secrets in environment variables."</blockquote>
+  <p><b>Common follow-up question:</b> How do you log a user out if JWTs are stateless?</p>
+  <p>Keep access tokens short-lived, and revoke the refresh token on the server so no new access token is issued. For immediate cut-off, keep a small deny list of revoked token IDs that servers check.</p>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idempotency, retries and dead-letter queues</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m3-4">
+<main class="lesson">
+
+<section class="story">
+  <h2>The lift button and the impatient uncle</h2>
+  <p>You press the lift button. Nothing seems to happen, so you press it again, and again. Does the lift come three times? No. Pressing the button many times has the same effect as pressing once. The lift knows you want to go to floor 5.</p>
+  <p>Now picture a "Pay Rs 500" button. The network is slow, so you tap it twice. If the shop's computer treats each tap as a new payment, you lose Rs 1000. That would be a terrible lift.</p>
+  <p>In distributed systems, messages get lost, delayed and repeated all the time. The safe design is: <b>doing it twice must be the same as doing it once.</b> That property is called <b>idempotency</b>.</p>
+</section>
+
+<section class="explain">
+  <h2>Retrying safely</h2>
+  <p>A network call can end in three ways: success, failure, or <b>"no idea"</b> (a timeout). On "no idea", the sender cannot tell if the server did the work. The only safe move is to try again. But trying again is only safe if the operation is idempotent.</p>
+
+  <h3>Idempotent operations</h3>
+  <p>An operation is <b>idempotent</b> if running it many times leaves the same result as running it once.</p>
+  <table>
+    <tr><th>Idempotent</th><th>Not idempotent</th></tr>
+    <tr><td>Set the user's city to "Pune"</td><td>Add Rs 100 to the balance</td></tr>
+    <tr><td>Delete order 42</td><td>Create a new order</td></tr>
+    <tr><td><code>PUT /users/7</code> with the full record</td><td><code>POST /payments</code></td></tr>
+  </table>
+  <p>HTTP methods <code>GET</code>, <code>PUT</code> and <code>DELETE</code> are meant to be idempotent (<a href="m1-3.html">HTTP lesson</a>). <code>POST</code> is not. To make a <code>POST</code> safe we add an <b>idempotency key</b>.</p>
+
+  <h3>Idempotency keys (payments)</h3>
+  <p>Payment APIs like Razorpay's and Stripe's let the client send a unique key, for example in an <code>Idempotency-Key</code> header. (Check each provider's docs for exact names and rules; the idea is the same.) The flow:</p>
+  <ol>
+    <li>The client makes a random unique key (a UUID) <b>once per intended payment</b> and sends it with the request.</li>
+    <li>The server looks the key up. If it has never seen it, it does the work and stores the key with the result.</li>
+    <li>If the key is already stored, the server <b>does not charge again</b>. It returns the stored result.</li>
+    <li>If the client times out, it retries with the <b>same key</b>. Whatever happened the first time, the customer is charged once.</li>
+  </ol>
+  <p>The key lives in the database behind a <b>unique constraint</b>, so even two simultaneous requests cannot both succeed. You will try this below.</p>
+
+  <h3>Retries: backoff and jitter</h3>
+  <p>When a call fails, do not retry instantly in a loop. That hammers a server that is already struggling.</p>
+  <ul>
+    <li><b>Exponential backoff:</b> wait longer after each failure: 1 s, 2 s, 4 s, 8 s... and stop after a limit.</li>
+    <li><b>Jitter:</b> add a random amount to each wait. Without it, 10,000 clients that failed together all retry together at 1 s, then 2 s, then 4 s: the server is hit in waves.</li>
+    <li><b>Retry only what is safe and worth it:</b> timeouts and 503s, yes. A 400 (bad request) will fail again, so no. Only retry non-idempotent calls if you have an idempotency key.</li>
+  </ul>
+  <p><b>Retry storm:</b> a server slows down, clients time out and retry, the retries add load, the server slows more, more retries. A small problem becomes an outage. Backoff, jitter, a retry limit and a retry budget (for example "retries may add at most 10% extra traffic") prevent this. See <a href="m3-6.html">circuit breakers</a> for the next layer of defence.</p>
+
+  <h3>At-least-once delivery and idempotent consumers</h3>
+  <p>Queues (<a href="m2-11.html">message queues</a>) usually promise <b>at-least-once</b> delivery: if the consumer does not confirm in time, the message is delivered again. So duplicates will happen. "Exactly once" end to end is very hard. The practical answer: <b>at-least-once delivery + an idempotent consumer</b>. The consumer remembers processed message IDs, or uses an operation like "set status = shipped" that can safely repeat.</p>
+
+  <h3>Dead-letter queues</h3>
+  <p>Some messages fail every time: bad data, a bug. If retried forever they block the line. After a set number of attempts (say 5), the message is moved to a <b>dead-letter queue (DLQ)</b>: a side box for failed messages. A person or tool examines them, fixes the cause and can replay them. Always alert when the DLQ is not empty.</p>
+
+  <h3>The outbox pattern</h3>
+  <p>Problem: after saving an order you must also publish an "order placed" event. If you write to the database and then publish, a crash between the two loses the event. If you publish first and the write fails, you announced an order that does not exist. The database and the queue cannot share one transaction.</p>
+  <p>Fix: in <b>one database transaction</b> write the order and also a row in an <code>outbox</code> table ("event to publish"). Both succeed or both fail. A separate <b>relay</b> process reads unpublished outbox rows, publishes them to the queue, and marks them sent. If the relay crashes after publishing but before marking, the event is sent twice, which is fine because consumers are idempotent.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>Idempotency keys need storage and a policy (how long to keep keys; what if the same key arrives with a different amount, which should be rejected).</li>
+    <li>Retries improve reliability but can cause storms and delay failures from being noticed.</li>
+    <li>The outbox adds a table and a relay, and gives at-least-once publishing with small delay.</li>
+  </ul>
+  <p class="tip">Rule of thumb: assume every message and every request can arrive twice. Design so that is harmless.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="An order service writes an orders row and an outbox row in one transaction. A relay reads the outbox and publishes to a queue. A consumer processes messages idempotently. Failed messages go to a dead-letter queue">
+      <defs><marker id="ar-m3-4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="40" width="130" height="60" rx="8"/>
+        <rect x="190" y="20" width="150" height="40" rx="8"/>
+        <rect x="190" y="80" width="150" height="40" rx="8"/>
+        <rect x="190" y="14" width="150" height="112" rx="10" stroke-dasharray="5 4"/>
+        <rect x="385" y="50" width="110" height="50" rx="8"/>
+        <rect x="530" y="50" width="95" height="50" rx="8"/>
+        <rect x="385" y="190" width="240" height="50" rx="8"/>
+        <path d="M147 70 H187" marker-end="url(#ar-m3-4)"/>
+        <path d="M340 100 L383 85" marker-end="url(#ar-m3-4)"/>
+        <path d="M497 75 H527" marker-end="url(#ar-m3-4)"/>
+        <path d="M577 102 V188" marker-end="url(#ar-m3-4)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="80" y="66" font-size="15" font-weight="700">Order</text>
+        <text x="80" y="86" font-size="14">service</text>
+        <text x="265" y="45" font-size="14">orders row</text>
+        <text x="265" y="105" font-size="14">outbox row</text>
+        <text x="265" y="142" font-size="13">1. One DB transaction</text>
+        <text x="440" y="72" font-size="14">2. Relay</text>
+        <text x="440" y="90" font-size="13">publishes</text>
+        <text x="577" y="72" font-size="14">3. Queue</text>
+        <text x="577" y="90" font-size="13">+ consumer</text>
+        <text x="505" y="212" font-size="14" font-weight="700">4. Dead-letter queue</text>
+        <text x="505" y="230" font-size="13">after 5 failed tries</text>
+        <text x="320" y="275" font-size="13">The consumer checks "have I seen this message ID?" so a duplicate is harmless.</text>
+      </g>
+    </svg>
+    <figcaption>Step 1 keeps order and event together. Step 2 may send an event twice if the relay crashes, step 3 tolerates that, step 4 catches messages that never succeed.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m3-4 outbox-dlq.excalidraw</code> in your Module 3 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+idempotency+payment+API" target="_blank" rel="noopener">YouTube search: "ByteByteGo idempotency payment API"</a>
+      <span class="meta">Short. Watch for how a duplicate request is detected and the stored result is returned.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=outbox+pattern+explained+microservices" target="_blank" rel="noopener">YouTube search: "outbox pattern explained microservices"</a>
+      <span class="meta">Pick one under 15 minutes. Watch the part that shows the outbox table and the relay.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://docs.stripe.com/api/idempotent_requests" target="_blank" rel="noopener">Stripe docs: Idempotent requests</a>
+      <span class="meta">Read the short page to see how a real payment API describes the key and what happens on a retry.</span></li>
+    <li><a href="https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter" target="_blank" rel="noopener">AWS Builders' Library: Timeouts, retries and backoff with jitter</a>
+      <span class="meta">Read the introduction, then the "Backoff" and "Jitter" parts. Skip the details.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes, Supabase SQL Editor)</h2>
+  <p>You will build a tiny payments table that refuses duplicates. Use a throw-away project or a scratch table: nothing here touches your real data, and we remove the table at the end.</p>
+
+  <h3>A. Create the table</h3>
+  <ol class="steps">
+    <li>Open <code>supabase.com/dashboard</code> and click your project.</li>
+    <li>In the left sidebar click <span class="ui">SQL Editor</span>. Click <span class="ui">New query</span> (it may say <span class="ui">+ New query</span> or open a blank tab).</li>
+    <li>Paste this and click <span class="ui">Run</span> (or press <kbd>Ctrl</kbd> + <kbd>Enter</kbd>):
+      <pre><code>create table lesson_payments (
+  id bigint generated always as identity primary key,
+  idempotency_key text not null unique,
+  amount_paise integer not null,
+  status text not null default 'created',
+  created_at timestamptz not null default now()
+);</code></pre></li>
+    <li>You should see "Success. No rows returned". The <code>unique</code> on <code>idempotency_key</code> is what blocks duplicates. (Amounts are in paise, so 49900 means Rs 499.00. Money is stored as whole numbers to avoid rounding errors.)</li>
+  </ol>
+
+  <h3>B. Send the same payment twice</h3>
+  <ol class="steps">
+    <li>Clear the editor (<kbd>Ctrl</kbd> + <kbd>A</kbd>, <kbd>Delete</kbd>) and paste:
+      <pre><code>insert into lesson_payments (idempotency_key, amount_paise)
+values ('order-1001-try-1', 49900)
+on conflict (idempotency_key) do nothing
+returning id, idempotency_key, amount_paise;</code></pre></li>
+    <li>Click <span class="ui">Run</span>. You should see <b>one row</b> in the result with an <code>id</code> (probably 1).</li>
+    <li>Click <span class="ui">Run</span> <b>again</b>, with the exact same text. This time the result should be <b>empty</b> (no rows, or "Success. No rows returned"). The database saw the key already existed and skipped the insert, instead of charging again.</li>
+    <li>Run once more if you like. Same empty result.</li>
+  </ol>
+
+  <h3>C. Prove only one row exists</h3>
+  <ol class="steps">
+    <li>Replace the text with:
+      <pre><code>select * from lesson_payments;</code></pre></li>
+    <li>Click <span class="ui">Run</span>. You should see exactly <b>one row</b>, even though you ran the insert three times.</li>
+    <li>Now see what happens <b>without</b> the safety. Run this:
+      <pre><code>insert into lesson_payments (idempotency_key, amount_paise)
+values ('order-1001-try-1', 49900);</code></pre>
+      You should get a red error mentioning a <b>duplicate key</b> and the unique constraint. The database refuses it. (Your app would catch that error and return the stored result.)</li>
+    <li>A new key is a new payment. Run the first insert again, changing only <code>'order-1001-try-1'</code> to <code>'order-1002-try-1'</code>. Then <code>select * from lesson_payments;</code> shows two rows.</li>
+  </ol>
+
+  <h3>D. Clean up</h3>
+  <ol class="steps">
+    <li>Run:
+      <pre><code>drop table lesson_payments;</code></pre></li>
+    <li>If the editor warns that the query has a destructive operation, read it, make sure it names only <code>lesson_payments</code>, and confirm. You should see "Success".</li>
+  </ol>
+
+  <h3>E. On paper: backoff with jitter</h3>
+  <ol class="steps">
+    <li>A client retries after 1 s, 2 s, 4 s, 8 s. What is the total wait after the 4th retry? 1 + 2 + 4 + 8 = <b>15 seconds</b>.</li>
+    <li>Now say 1,000 clients all failed at 12:00:00 with no jitter. At what times do they all retry? Together at 12:00:01, then 12:00:03 (1 + 2), then 12:00:07 (1 + 2 + 4), and so on: spikes of 1,000 at once.</li>
+    <li>Write in your notes how adding a random 0 to 1 second to each wait would spread each spike over a second.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What does idempotent mean?</summary><p>Doing the operation many times has the same effect as doing it once.</p></details>
+  <details><summary>Why does a payment API need an idempotency key?</summary><p>If the client times out it cannot know whether the charge happened. It retries with the same key, and the server charges only once and returns the stored result.</p></details>
+  <details><summary>Why add jitter to exponential backoff?</summary><p>Without it, many clients that failed together retry together in waves. Randomness spreads the load out.</p></details>
+  <details><summary>What is a dead-letter queue for?</summary><p>It holds messages that keep failing after a set number of attempts, so they stop blocking the queue and a human or tool can inspect and replay them.</p></details>
+  <details><summary>What problem does the outbox pattern solve?</summary><p>Writing to the database and publishing an event cannot be one transaction. Writing the event into an outbox table in the same transaction, and publishing it later by a relay, means neither is lost.</p></details>
+  <details><summary>A queue delivers each message at least once. How do you stop a duplicate from charging a customer twice?</summary><p>Make the consumer idempotent: store processed message IDs or an idempotency key under a unique constraint, and skip work that has been done.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"I assume messages and requests can repeat, so writes carry an idempotency key enforced by a unique constraint, and consumers are idempotent."</blockquote>
+  <blockquote>"Retries use exponential backoff with jitter and a cap, and messages that keep failing go to a dead-letter queue with an alert."</blockquote>
+  <p><b>Common follow-up question:</b> Can you get exactly-once delivery?</p>
+  <p>Not reliably across a network. The practical approach is at-least-once delivery plus idempotent processing, which gives the same effect as exactly-once. The outbox pattern covers the gap between the database write and publishing the event.</p>
+</section>
+
+</main>
+</body>
+</html>

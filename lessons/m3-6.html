@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Circuit breakers, timeouts and bulkheads</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m3-6">
+<main class="lesson">
+
+<section class="story">
+  <h2>The fuse box and the ship's walls</h2>
+  <p>At home, when a fan short-circuits, the <b>fuse</b> (MCB) trips and cuts that line. The fuse sacrifices one room to save the whole house from a fire. After you fix the fan, you flip the switch back on.</p>
+  <p>A big ship has walls inside its hull, called <b>bulkheads</b>. If one compartment fills with water, the walls keep the water in that room. The ship stays afloat.</p>
+  <p>And at a bank, when one counter's clerk is stuck on a hard case, the line behind him does not wait forever: customers move to other counters, or the bank puts up a sign "come back later".</p>
+  <p>Software needs the same three ideas, because one slow part can drag down everything that depends on it.</p>
+</section>
+
+<section class="explain">
+  <h2>Keeping one failure from becoming everyone's failure</h2>
+
+  <h3>Cascading failures</h3>
+  <p>In a system of many services, a slow service is often <b>worse</b> than a dead one. A dead service fails fast. A slow one makes callers <b>wait</b>, and waiting uses up their threads, connections and memory. Soon the callers are also stuck, and then their callers. One sick service spreads its illness upward until the whole site is down. This is a <b>cascading failure</b>. Retries make it worse (<a href="m3-4.html">retry storms</a>).</p>
+
+  <h3>1. Timeouts: always set them</h3>
+  <p>A <b>timeout</b> is "wait at most this long, then give up". Many libraries wait <b>forever</b> by default, or for minutes. Always set one on every network call: to a service, a database, a cache.</p>
+  <ul>
+    <li>Pick it from the real data: for example slightly above the 99th percentile latency (see <a href="m1-5.html">latency and percentiles</a>), not a guess of 30 seconds.</li>
+    <li>Set a <b>total</b> budget for the user's request (say 2 s), and make deeper calls use smaller timeouts, so the user is never left hanging.</li>
+    <li>Too short: healthy calls fail. Too long: threads pile up. It is a trade-off.</li>
+  </ul>
+
+  <h3>2. Circuit breaker</h3>
+  <p>A <b>circuit breaker</b> wraps calls to another service and watches for failures. It has three states:</p>
+  <table>
+    <tr><th>State</th><th>What happens</th></tr>
+    <tr><td><b>Closed</b> (normal)</td><td>Calls go through. The breaker counts failures. If failures pass a limit (say 50% of the last 20 calls), it trips to open.</td></tr>
+    <tr><td><b>Open</b> (tripped)</td><td>Calls are <b>not even attempted</b>. They fail instantly or use a fallback. This gives the sick service a rest and frees the caller's threads. After a wait (say 30 s) it moves to half-open.</td></tr>
+    <tr><td><b>Half-open</b> (testing)</td><td>A few trial calls are let through. If they succeed, go back to closed. If they fail, go back to open and wait again.</td></tr>
+  </table>
+  <p>Note the "closed means working" wording is borrowed from electrical circuits: a closed circuit lets current flow.</p>
+
+  <h3>3. Bulkheads</h3>
+  <p>A <b>bulkhead</b> isolates resources so one failing part cannot drain everything. Examples: give each downstream service its <b>own</b> thread or connection pool (the recommendations service gets 10 connections; if it hangs, payments still has its own 20). Or run critical and non-critical features on separate servers or queues.</p>
+
+  <h3>4. Fallbacks and graceful degradation</h3>
+  <p>When a call fails or the breaker is open, return <b>something useful</b> instead of an error page:</p>
+  <ul>
+    <li>Recommendations service is down: show <b>cached</b> recommendations or a generic "popular items" list.</li>
+    <li>Reviews are slow: show the product without reviews.</li>
+    <li>Payments are the exception: never pretend a payment worked. Fail honestly.</li>
+  </ul>
+  <p>This is <b>graceful degradation</b>: the core job (browse and buy) works even when the extras do not.</p>
+
+  <h3>5. Load shedding</h3>
+  <p>When a server is overloaded, trying to serve everyone means serving no one well. <b>Load shedding</b> deliberately rejects some requests early (for example with HTTP <code>503</code> and a <code>Retry-After</code> header), starting with the least important: background jobs, free users, expensive searches, while keeping logins and payments. It is related to <a href="m2-12.html">rate limiting</a>, but rate limiting caps each client, while shedding protects the server as a whole.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>Circuit breakers add tuning work: a too-sensitive breaker trips for no reason, a too-slow one trips too late.</li>
+    <li>Fallbacks can show stale or generic data. Decide which features may degrade and which must not.</li>
+    <li>Bulkheads waste some capacity (idle pools) in return for safety.</li>
+  </ul>
+  <p class="tip">Together: timeouts stop waiting forever, the breaker stops calling a sick service, bulkheads stop the damage spreading, fallbacks keep users happy, and load shedding protects the server itself.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="State diagram of a circuit breaker: Closed goes to Open when failures pass the limit; Open goes to Half-open after a wait; Half-open goes back to Closed on success or back to Open on failure">
+      <defs><marker id="ar-m3-6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="20" y="40" width="150" height="70" rx="35"/>
+        <rect x="470" y="40" width="150" height="70" rx="35"/>
+        <rect x="245" y="190" width="150" height="70" rx="35"/>
+        <path d="M172 65 H468" marker-end="url(#ar-m3-6)"/>
+        <path d="M545 112 L395 205" marker-end="url(#ar-m3-6)"/>
+        <path d="M245 225 L95 112" marker-end="url(#ar-m3-6)"/>
+        <path d="M320 188 C320 140 400 120 480 108" marker-end="url(#ar-m3-6)" stroke-dasharray="6 4"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="95" y="72" font-size="16" font-weight="700">CLOSED</text>
+        <text x="95" y="92" font-size="13">calls flow</text>
+        <text x="545" y="72" font-size="16" font-weight="700">OPEN</text>
+        <text x="545" y="92" font-size="13">calls blocked</text>
+        <text x="320" y="222" font-size="16" font-weight="700">HALF-OPEN</text>
+        <text x="320" y="242" font-size="13">a few test calls</text>
+        <text x="320" y="55" font-size="14">1. Too many failures: trip</text>
+        <text x="500" y="175" font-size="14" text-anchor="start">2. After a wait</text>
+        <text x="20" y="200" font-size="14" text-anchor="start">3a. Tests succeed:</text>
+        <text x="20" y="218" font-size="14" text-anchor="start">breaker resets</text>
+        <text x="305" y="150" font-size="14" text-anchor="end">3b. Tests fail</text>
+        <text x="320" y="290" font-size="13">Open state: fail fast or return a fallback, so the sick service can recover.</text>
+      </g>
+    </svg>
+    <figcaption>Follow the numbers: 1 trip to Open, 2 wait then Half-open, 3a success closes the breaker, 3b (dashed) failure opens it again.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m3-6 circuit-breaker.excalidraw</code> in your Module 3 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+circuit+breaker+pattern" target="_blank" rel="noopener">YouTube search: "ByteByteGo circuit breaker pattern"</a>
+      <span class="meta">Short. Watch it all and match the three states to the diagram above.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=cascading+failure+timeouts+bulkhead+resilience+patterns+explained" target="_blank" rel="noopener">YouTube search: "cascading failure timeouts bulkhead resilience patterns explained"</a>
+      <span class="meta">Pick one under 15 minutes. Watch the part on bulkheads and timeouts.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://martinfowler.com/bliki/CircuitBreaker.html" target="_blank" rel="noopener">martinfowler.com: Circuit Breaker</a>
+      <span class="meta">A short article. Read the first half: the idea and the state diagram.</span></li>
+    <li><a href="https://builder.aws.com/content/3Eun1EEyX6p2e3VYNyRLSJzLuMV/using-load-shedding-to-avoid-overload" target="_blank" rel="noopener">AWS Builders' Library: Using load shedding to avoid overload</a>
+      <span class="meta">Read the introduction only, to see why too much work makes everything slower.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes, paper or Excalidraw)</h2>
+  <p>Scenario: an online shop. The <b>Web app</b> calls three services when you open a product page: <b>Product</b> (needed), <b>Reviews</b> and <b>Recommendations</b> (nice to have). All calls are synchronous. The Web app has a pool of <b>50 worker threads</b>. There are no timeouts.</p>
+
+  <h3>A. Trace the failure, step by step</h3>
+  <ol class="steps">
+    <li>Draw four boxes: <b>Users</b>, <b>Web app (50 threads)</b>, and under it <b>Product</b>, <b>Reviews</b>, <b>Recommendations</b>. Join them with arrows.</li>
+    <li>Write "t = 0": a bad deploy makes Recommendations very slow. It does not crash; each call now takes 60 seconds.</li>
+    <li>Write "t = 1 min": every product page request takes a Web app thread, which calls Recommendations and waits 60 seconds. Suppose 10 requests arrive each second. Each thread is held for 60 seconds.</li>
+    <li>Compute: how many threads are stuck at steady state? 10 requests per second x 60 seconds = <b>600 threads needed</b>, but only <b>50 exist</b>. After about 5 seconds (50 threads / 10 per second) all 50 threads are busy waiting.</li>
+    <li>Write "t = 5 s": the pool is full. New requests queue up, including ones that do not need Recommendations (like the cart page or checkout).</li>
+    <li>Write "t = 30 s": users see timeouts or blank pages. They hit refresh, which doubles the traffic. Clients retry. Memory grows.</li>
+    <li>Write the final result: <b>the whole shop is down because one optional feature got slow.</b> Circle it in red.</li>
+  </ol>
+
+  <h3>B. Redesign with the patterns</h3>
+  <ol class="steps">
+    <li>On a copy of the drawing, fix it one pattern at a time, and tick each:
+      <ol>
+        <li><b>Timeouts:</b> Recommendations call: 300 ms. Reviews: 500 ms. Product: 1 s. Now a stuck call holds a thread at most 0.3 s, not 60 s. Recompute: 10 per second x 0.3 s = 3 threads busy on that call. Plenty of room.</li>
+        <li><b>Circuit breaker</b> around Recommendations: after, say, 10 failures in a row it opens, and for 30 seconds the Web app does not call it at all.</li>
+        <li><b>Fallback:</b> while the breaker is open, show cached "popular items" instead. Add a box <code>Cache</code> next to Recommendations.</li>
+        <li><b>Bulkhead:</b> split the 50 threads into three pools: Product 30, Reviews 10, Recommendations 10. Recommendations can never use more than 10.</li>
+        <li><b>Load shedding:</b> if the Web app's queue is too long, return <code>503</code> for low-value requests (like recommendations widgets) and keep product and checkout.</li>
+      </ol></li>
+    <li>Write a new timeline: "t = 0 Recommendations slow. t = 0.3 s first calls time out. After 10 failures the breaker opens. From then on pages load with cached recommendations. Product and checkout are unaffected."</li>
+    <li>Add a line: what should the breaker do for the <b>Payment</b> service? Never fake success: fail with a clear message.</li>
+  </ol>
+
+  <h3>C. Say it out loud</h3>
+  <ol class="steps">
+    <li>Set a 2-minute timer. Explain, to an imaginary interviewer, the three breaker states and which pattern fixed which step of your timeline. Then save the drawing as <code>m3-6 cascading-failure.excalidraw</code>.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>Why is a slow service often worse than a dead one?</summary><p>A dead one fails quickly. A slow one makes callers wait, using up their threads and connections, so the failure spreads to the callers.</p></details>
+  <details><summary>Describe the three states of a circuit breaker.</summary><p>Closed: calls pass and failures are counted. Open: calls are blocked and fail fast or use a fallback. Half-open: a few test calls decide whether to close again or reopen.</p></details>
+  <details><summary>What is a bulkhead in software?</summary><p>Separate resource pools (threads, connections, servers) per dependency or feature, so one failing part cannot use up everything.</p></details>
+  <details><summary>What is a fallback? Give one that is safe and one that is not.</summary><p>A fallback is a substitute result when a call fails. Safe: cached recommendations. Not safe: pretending a payment succeeded.</p></details>
+  <details><summary>How is load shedding different from rate limiting?</summary><p>Rate limiting caps each client's request rate. Load shedding drops some requests, least important first, when the server as a whole is overloaded.</p></details>
+  <details><summary>Your checkout calls a coupon service that is sometimes slow. What would you add, and why?</summary><p>A short timeout and a circuit breaker with a fallback of "no coupon applied, try again later", so a slow coupon service cannot block checkout. Coupons are non-critical, so degrading is acceptable.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Every network call gets a timeout, and calls to non-critical dependencies sit behind a circuit breaker with a fallback, so one slow service cannot cascade."</blockquote>
+  <blockquote>"I isolate dependencies with bulkheads, and under overload I shed the least important load first to protect the critical path."</blockquote>
+  <p><b>Common follow-up question:</b> How do you choose a timeout value?</p>
+  <p>From measured latency: a bit above the 99th percentile of the dependency, inside an overall time budget for the user's request. Then I watch timeout rates and adjust. Too short causes false failures, too long lets threads pile up.</p>
+</section>
+
+</main>
+</body>
+</html>

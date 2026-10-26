@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CAP theorem and PACELC</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m3-1">
+<main class="lesson">
+
+<section class="story">
+  <h2>Two branches of one bank, and a cut phone line</h2>
+  <p>A bank has two branches in two towns. Both keep a notebook with your balance: Rs 1000. Every time you deposit or withdraw, the branch phones the other branch so both notebooks match.</p>
+  <p>One day the phone line between the branches is cut. You walk into branch 1 and ask to withdraw Rs 800. Branch 1 cannot reach branch 2. It has two choices. It can say "Sorry, come back when the line works" (safe, but you are turned away). Or it can hand you the cash anyway, and hope nobody withdraws from branch 2 at the same time (you are served, but the notebooks may now disagree).</p>
+  <p>There is no third choice that is perfect. That is the whole CAP theorem.</p>
+</section>
+
+<section class="explain">
+  <h2>C, A and P, and what you really choose</h2>
+  <p>You met replication in <a href="m2-9.html">the replication lesson</a>: the same data lives on several machines. CAP describes what happens to such a system when the machines cannot talk to each other.</p>
+
+  <h3>The three letters</h3>
+  <table>
+    <tr><th>Letter</th><th>Meaning</th><th>Plain words</th></tr>
+    <tr><td><b>C</b>onsistency</td><td>Every read sees the latest write (or an error)</td><td>All branches show the same balance</td></tr>
+    <tr><td><b>A</b>vailability</td><td>Every request to a working node gets a real answer</td><td>No customer is turned away</td></tr>
+    <tr><td><b>P</b>artition tolerance</td><td>The system keeps working even when the network between nodes breaks</td><td>The phone line is cut, the branches still open</td></tr>
+  </table>
+
+  <h3>Why P is not optional</h3>
+  <p>A <b>partition</b> is when some nodes cannot reach others: a cable cut, a switch fails, a data centre is overloaded. On a real network over many machines, this <b>will</b> happen sometimes. You cannot "choose" a network that never breaks. So the theorem, in practice, says: <b>when a partition happens, you must choose between C and A.</b></p>
+  <ul>
+    <li><b>CP (consistent, not always available):</b> during the partition, refuse or delay requests that might return stale or conflicting data. The branch says "come back later".</li>
+    <li><b>AP (available, maybe inconsistent):</b> keep answering, accept that nodes may disagree for a while, and fix it up after the partition heals. The branch hands out the cash.</li>
+  </ul>
+  <p>When there is no partition (most of the time), you can have both C and A. CAP only talks about the bad moment.</p>
+
+  <h3>CP vs AP examples</h3>
+  <table>
+    <tr><th>Feature</th><th>Pick</th><th>Why</th></tr>
+    <tr><td>Bank balance, money transfer</td><td>CP</td><td>A wrong balance costs real money. Better to say "try again".</td></tr>
+    <tr><td>Likes count on a post</td><td>AP</td><td>If one person sees 1,203 and another 1,204 for a minute, nobody is hurt.</td></tr>
+  </table>
+
+  <h3>PACELC: the part CAP forgot</h3>
+  <p>CAP says nothing about normal days. <b>PACELC</b> adds it: if there is a <b>P</b>artition, choose <b>A</b> or <b>C</b>; <b>E</b>lse (no partition), choose <b>L</b>atency or <b>C</b>onsistency.</p>
+  <p>Why is there a trade-off on a normal day? To make every replica agree before answering, the system must wait for messages between machines (see <a href="m2-9.html">replication</a>: synchronous vs asynchronous). Waiting costs time. Answering from the nearest replica without waiting is fast but may be a little stale. So "strongly consistent" usually means "slower".</p>
+  <table>
+    <tr><th>Style</th><th>During partition</th><th>Normal day</th></tr>
+    <tr><td>PC/EC (e.g. a strict bank ledger)</td><td>Consistency</td><td>Consistency, accept slower</td></tr>
+    <tr><td>PA/EL (e.g. a likes counter, a feed)</td><td>Availability</td><td>Low latency, accept stale</td></tr>
+  </table>
+  <p>Many databases let you tune this per query. The next lesson, <a href="m3-2.html">consistency models</a>, shows how.</p>
+
+  <h3>Common myths</h3>
+  <ul>
+    <li><b>"Pick any 2 of 3."</b> Misleading. P is forced on you, so the real choice is C or A, and only during a partition.</li>
+    <li><b>"AP means data is lost."</b> No. It means replicas may disagree for a while and then converge.</li>
+    <li><b>"A whole system is either CP or AP."</b> No. Different features in one app choose differently: payments CP, likes AP.</li>
+    <li><b>"CAP's availability = 99.99% uptime."</b> No. In CAP, "available" means every working node answers every request. It is a strict idea, not an uptime number (see <a href="m3-3.html">availability and nines</a>).</li>
+    <li><b>"A single-node Postgres is CA."</b> It has no partition to worry about between nodes, so the question does not arise until you add replicas.</li>
+  </ul>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>CP: correct data, but some users see errors or timeouts during a failure.</li>
+    <li>AP: always responsive, but you must design for stale reads and conflicts (for example "last write wins", or merging).</li>
+  </ul>
+  <p class="tip">The best interview habit: do not say "I pick CP". Say "for this feature, wrong data is worse than no data, so during a partition I would refuse writes (CP). For that other feature, I would stay up and fix it later (AP)."</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="Two replicas with a broken link between them. A client writes to node 1. A CP system rejects the request. An AP system accepts it and node 2 is stale until the link heals">
+      <defs><marker id="ar-m3-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="30" y="90" width="150" height="80" rx="10"/>
+        <rect x="460" y="90" width="150" height="80" rx="10"/>
+        <path d="M185 130 H250" stroke-dasharray="6 5"/>
+        <path d="M390 130 H455" stroke-dasharray="6 5"/>
+        <path d="M270 112 L370 148"/>
+        <path d="M370 112 L270 148"/>
+        <path d="M105 60 V87" marker-end="url(#ar-m3-1)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="105" y="125" font-size="16" font-weight="700">Node 1</text>
+        <text x="105" y="148" font-size="14">balance = 1000</text>
+        <text x="535" y="125" font-size="16" font-weight="700">Node 2</text>
+        <text x="535" y="148" font-size="14">balance = 1000</text>
+        <text x="320" y="100" font-size="14">1. Link broken</text>
+        <text x="105" y="52" font-size="14">2. Client: withdraw 800</text>
+        <text x="160" y="215" font-size="15" font-weight="700">3a. CP: reject</text>
+        <text x="160" y="236" font-size="14">"try again later"</text>
+        <text x="160" y="257" font-size="14">data stays correct</text>
+        <text x="480" y="215" font-size="15" font-weight="700">3b. AP: accept</text>
+        <text x="480" y="236" font-size="14">node 1 says 200, node 2 still 1000</text>
+        <text x="480" y="257" font-size="14">fix after the link heals</text>
+      </g>
+    </svg>
+    <figcaption>Step 1 is the partition. Steps 3a and 3b are the only two honest answers: refuse (CP) or accept and reconcile later (AP).</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m3-1 cap-choice.excalidraw</code> in your Module 3 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+CAP+theorem" target="_blank" rel="noopener">YouTube search: "ByteByteGo CAP theorem"</a>
+      <span class="meta">Short. Watch it all and listen for why "pick 2 of 3" is misleading.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Gaurav+Sen+CAP+theorem" target="_blank" rel="noopener">YouTube search: "Gaurav Sen CAP theorem"</a>
+      <span class="meta">Pick the main result. Watch the part with the two-node example and the partition.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#cap-theorem" target="_blank" rel="noopener">System Design Primer: CAP theorem</a>
+      <span class="meta">Read the CP and AP sub-sections and the "consistency patterns" that follow.</span></li>
+    <li><a href="https://en.wikipedia.org/wiki/PACELC_theorem" target="_blank" rel="noopener">Wikipedia: PACELC theorem</a>
+      <span class="meta">Read the introduction and the examples table only.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 25 minutes, paper or notes)</h2>
+  <p>For each feature you decide: when the network between two data centres breaks, do you refuse (CP) or keep serving possibly stale data (AP)? Then you justify it in one sentence and name what you give up.</p>
+
+  <h3>A. Pick CP or AP for six features</h3>
+  <ol class="steps">
+    <li>Open a text file or notebook. Draw a table with 5 columns: <b>Feature</b>, <b>CP or AP</b>, <b>Why</b>, <b>What the user sees during a partition</b>, <b>What we give up</b>.</li>
+    <li>Fill in one row each for these six features:
+      <ol>
+        <li>A UPI payment (money leaves your account).</li>
+        <li>Likes count on an Instagram-style post.</li>
+        <li>Train seat booking (one seat, many buyers).</li>
+        <li>Chat "last seen" time.</li>
+        <li>Shopping cart on an e-commerce site.</li>
+        <li>Stock count shown on a product page ("only 3 left").</li>
+      </ol></li>
+    <li>For each, ask the key question: <b>"Is a wrong answer worse than no answer?"</b> If yes, lean CP. If a slightly old answer is fine, lean AP.</li>
+    <li>Write your answers before opening the next step.</li>
+  </ol>
+
+  <h3>B. Compare with a sensible answer key</h3>
+  <ol class="steps">
+    <li>Check your table against this. Your reasons matter more than the label, and there can be good arguments both ways.
+      <table>
+        <tr><th>Feature</th><th>Likely</th><th>Reason</th></tr>
+        <tr><td>UPI payment</td><td>CP</td><td>Never debit twice or show a wrong balance. A failed "try again" is acceptable.</td></tr>
+        <tr><td>Likes count</td><td>AP</td><td>An off-by-a-few count harms nobody. Always responsive.</td></tr>
+        <tr><td>Train seat booking</td><td>CP</td><td>Two people must never get the same seat. Make people wait or retry.</td></tr>
+        <tr><td>"Last seen"</td><td>AP</td><td>A minute-old time is fine. Fast and always up is more valuable.</td></tr>
+        <tr><td>Shopping cart</td><td>AP</td><td>Better to always let people add items and merge copies later than to block shopping.</td></tr>
+        <tr><td>Stock count</td><td>Split</td><td>Display on the product page: AP (a stale "3 left" is okay). Final decrement at checkout: CP, so you never oversell.</td></tr>
+      </table></li>
+    <li>Notice the last row: one feature can use both choices in different places. Write down one more example from an app you use where this happens.</li>
+  </ol>
+
+  <h3>C. Add PACELC</h3>
+  <ol class="steps">
+    <li>Add a sixth column: <b>Normal day: latency or consistency?</b>.</li>
+    <li>For each feature, write L (fast, maybe slightly stale) or C (wait for agreement). Payment: C. Likes: L.</li>
+    <li>Save the table as <code>m3-1 cap-table.txt</code> in your Module 3 folder.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>What do C, A and P stand for?</summary><p>Consistency (reads see the latest write), Availability (every working node answers), Partition tolerance (system keeps working when the network between nodes breaks).</p></details>
+  <details><summary>Why is partition tolerance not really optional?</summary><p>Networks between machines do fail. A distributed system that cannot survive that is not usable, so the real choice is between C and A during a partition.</p></details>
+  <details><summary>What does PACELC add to CAP?</summary><p>It covers the normal case: if there is no partition, you still trade latency against consistency, because waiting for replicas to agree takes time.</p></details>
+  <details><summary>Is "AP" the same as "data gets lost"?</summary><p>No. Replicas may disagree for a short time, then converge after the partition heals. You must design for stale reads and conflicts.</p></details>
+  <details><summary>Your app has a wallet balance and a "trending now" list. What would you choose for each, and why?</summary><p>Wallet: CP, a wrong balance can lose money, so I would reject or delay during a partition. Trending: AP, a slightly old list is harmless and staying responsive matters more.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Partitions will happen, so the real choice is consistency or availability while one is happening. For payments I choose consistency; for likes I choose availability."</blockquote>
+  <blockquote>"Even without a partition there is a latency versus consistency trade-off, which is the PACELC extension."</blockquote>
+  <p><b>Common follow-up question:</b> Is your whole system CP or AP?</p>
+  <p>Neither as a whole. I decide per feature. The ledger and inventory checkout are CP, because a wrong answer costs money. The feed, counters and last-seen are AP, because being up and fast matters more than being exact.</p>
+</section>
+
+</main>
+</body>
+</html>

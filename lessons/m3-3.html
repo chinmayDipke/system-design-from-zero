@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Availability, nines and single points of failure</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m3-3">
+<main class="lesson">
+
+<section class="story">
+  <h2>One key, one lock, one very bad Monday</h2>
+  <p>A small shop has one key for the shutter. The shopkeeper keeps it in his pocket. One Monday he falls ill and stays home. The key is at home. The shop stays shut all day, even though the goods, the shelves and the staff are all fine.</p>
+  <p>The key was a <b>single point of failure</b>: one thing which, if it breaks, stops everything. The fix is boring and clever: make a spare key and give it to the manager. Now the shop opens if either of them comes.</p>
+  <p>Keeping a service "open" as much of the time as possible is called <b>availability</b>.</p>
+</section>
+
+<section class="explain">
+  <h2>Measuring "open": the nines</h2>
+  <p><b>Availability</b> is the share of time a system works: uptime divided by total time. We quote it in "nines". A year has 365 x 24 = 8,760 hours. A month, on average, has about 730 hours (8,760 / 12).</p>
+  <table>
+    <tr><th>Availability</th><th>Called</th><th>Downtime per year</th><th>Downtime per month</th></tr>
+    <tr><td>99%</td><td>two nines</td><td>87.6 hours (about 3.65 days)</td><td>about 7.3 hours</td></tr>
+    <tr><td>99.9%</td><td>three nines</td><td>8.76 hours</td><td>about 43.8 minutes</td></tr>
+    <tr><td>99.99%</td><td>four nines</td><td>about 52.6 minutes</td><td>about 4.38 minutes</td></tr>
+    <tr><td>99.999%</td><td>five nines</td><td>about 5.26 minutes</td><td>about 26 seconds</td></tr>
+  </table>
+  <p>Check one yourself: 99.9% means 0.1% downtime. 0.1% of 8,760 hours = 8.76 hours. Each extra nine cuts downtime by 10 times, but usually costs far more than 10 times the money and effort.</p>
+
+  <h3>SLI, SLO, SLA</h3>
+  <table>
+    <tr><th>Term</th><th>Meaning</th><th>Example</th></tr>
+    <tr><td><b>SLI</b> (indicator)</td><td>A number you measure</td><td>Share of requests that returned success in the last 30 days</td></tr>
+    <tr><td><b>SLO</b> (objective)</td><td>The target you set for the SLI, internal</td><td>99.9% of requests succeed</td></tr>
+    <tr><td><b>SLA</b> (agreement)</td><td>A promise to customers, often with money back if broken</td><td>"99.5% monthly uptime or you get a credit"</td></tr>
+  </table>
+  <p>Set the SLA looser than the SLO, so you have a safety margin before you owe anyone money.</p>
+
+  <h3>Series vs parallel: the maths</h3>
+  <p><b>In series</b> (a request must pass through all parts), availabilities <b>multiply</b>. The chain is weaker than its weakest link.</p>
+  <p>Example: load balancer 99.99%, one app server 99.9%, one database 99.9%.<br>
+  0.9999 x 0.999 x 0.999 = 0.9979 (rounded), so <b>about 99.79%</b>. Downtime: 0.21% of 8,760 hours, about <b>18.4 hours a year</b>. Three "good" parts gave a system worse than three nines.</p>
+  <p><b>In parallel</b> (either copy can serve), the system fails only if <b>all</b> copies fail at the same time. Failure chances multiply:<br>
+  Two app servers, each 99.9% (0.1% failure = 0.001): both fail = 0.001 x 0.001 = 0.000001. Availability = 1 - 0.000001 = <b>99.9999%</b>.</p>
+  <p>Now improve the chain: keep the load balancer (99.99%), use two app servers in parallel (99.9999%), and a database with a standby in parallel (99.9999%). Series: 0.9999 x 0.999999 x 0.999999 = about 0.9999, so <b>about 99.99%</b>, roughly 53 minutes a year. The load balancer is now the weakest link, so it is the next thing to duplicate.</p>
+  <div class="warn">This maths assumes copies fail <b>independently</b>. Two servers in the same rack on the same power strip do not. A shared bug, a bad deploy or a full disk can take both down together. Real availability is lower than the neat formula.</div>
+
+  <h3>Redundancy and failover</h3>
+  <ul>
+    <li><b>Active-passive:</b> one node serves; a standby waits and takes over if it dies (failover). Simple, but the standby is idle, and the switch takes seconds to minutes. Typical for databases.</li>
+    <li><b>Active-active:</b> all nodes serve at once behind a load balancer (<a href="m2-5.html">load balancers</a>). No idle money, no switch gap, but you must handle shared state, and each node must be able to handle the extra load when one dies.</li>
+    <li><b>Multi-AZ:</b> copies in several <b>availability zones</b> (separate data centres in one city/region). Survives a building-level failure. Common and affordable.</li>
+    <li><b>Multi-region:</b> copies in different cities or countries. Survives a whole region going down, but costs more, adds latency and makes data consistency hard (<a href="m3-1.html">CAP</a>).</li>
+  </ul>
+
+  <h3>Finding single points of failure</h3>
+  <p>Walk the request path and ask of each box: <b>"If this dies right now, does the user still get served?"</b> If not, it is a SPOF. Common ones: one load balancer, one database, one cache, one DNS provider, one queue, one config server, a single region, a single person who knows the deploy steps, an expiring TLS certificate.</p>
+
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>More redundancy: more cost, more moving parts, and failover itself can fail (untested standbys often do).</li>
+    <li>Higher nines help only if users really need them. A college notice site does not need five nines; a payment switch does.</li>
+    <li>Test failover on purpose. A standby never tried is a hope, not a plan.</li>
+  </ul>
+  <p class="tip">In an interview, say the nines you are aiming for, then show where each SPOF is and how you duplicate it. Mention that redundancy has to be tested.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="Top: one load balancer, one app server and one database in a chain, all marked as single points of failure. Bottom: two load balancers, two app servers and a primary with a standby database">
+      <defs><marker id="ar-m3-3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="20" y="30" width="150" height="50" rx="8"/>
+        <rect x="245" y="30" width="150" height="50" rx="8"/>
+        <rect x="470" y="30" width="150" height="50" rx="8"/>
+        <path d="M172 55 H242" marker-end="url(#ar-m3-3)"/>
+        <path d="M397 55 H467" marker-end="url(#ar-m3-3)"/>
+        <rect x="20" y="170" width="150" height="40" rx="8"/>
+        <rect x="20" y="225" width="150" height="40" rx="8"/>
+        <rect x="245" y="170" width="150" height="40" rx="8"/>
+        <rect x="245" y="225" width="150" height="40" rx="8"/>
+        <rect x="470" y="170" width="150" height="40" rx="8"/>
+        <rect x="470" y="225" width="150" height="40" rx="8" stroke-dasharray="6 4"/>
+        <path d="M172 190 H242" marker-end="url(#ar-m3-3)"/>
+        <path d="M172 245 H242" marker-end="url(#ar-m3-3)"/>
+        <path d="M397 190 H467" marker-end="url(#ar-m3-3)"/>
+        <path d="M397 245 H440 V200 H467" marker-end="url(#ar-m3-3)"/>
+        <path d="M545 212 V222" marker-end="url(#ar-m3-3)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="320" y="16" font-size="15" font-weight="700">Before: every box is a single point of failure</text>
+        <text x="95" y="60" font-size="14">1. Load balancer</text>
+        <text x="320" y="60" font-size="14">2. App server</text>
+        <text x="545" y="60" font-size="14">3. Database</text>
+        <text x="320" y="150" font-size="15" font-weight="700">After: each layer is duplicated</text>
+        <text x="95" y="195" font-size="14">Load balancer A</text>
+        <text x="95" y="250" font-size="14">Load balancer B</text>
+        <text x="320" y="195" font-size="14">App server 1</text>
+        <text x="320" y="250" font-size="14">App server 2</text>
+        <text x="545" y="195" font-size="14">DB primary</text>
+        <text x="545" y="250" font-size="14">DB standby</text>
+        <text x="320" y="292" font-size="13">Numbers match the "before" row. The standby copies the primary and takes over if it dies.</text>
+      </g>
+    </svg>
+    <figcaption>Top row: three SPOFs, numbered 1 to 3. Bottom row: each one has a partner, so one failure no longer stops the service.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m3-3 spof-before-after.excalidraw</code> in your Module 3 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+high+availability+explained" target="_blank" rel="noopener">YouTube search: "ByteByteGo high availability explained"</a>
+      <span class="meta">Short. Watch it all and note the words failover and redundancy.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=SLA+SLO+SLI+explained+simply" target="_blank" rel="noopener">YouTube search: "SLA SLO SLI explained simply"</a>
+      <span class="meta">Pick a result under 10 minutes. Watch just the part that defines the three terms with an example.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#availability-in-numbers" target="_blank" rel="noopener">System Design Primer: Availability in numbers</a>
+      <span class="meta">Read the nines table and the sections on availability in series and in parallel.</span></li>
+    <li><a href="https://aws.amazon.com/what-is/high-availability/" target="_blank" rel="noopener">AWS: What is high availability?</a>
+      <span class="meta">Skim the definition and the section on how it is achieved.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes, Excalidraw)</h2>
+  <h3>A. Draw a fragile system</h3>
+  <ol class="steps">
+    <li>Open <code>excalidraw.com</code>. Press <kbd>R</kbd> and draw 7 boxes left to right (or in two rows): <b>User</b>, <b>DNS</b>, <b>Load balancer</b>, <b>App server</b>, <b>Cache (Redis)</b>, <b>Database</b>, <b>Queue + one worker</b>.</li>
+    <li>Press <kbd>A</kbd> and join them with arrows in the order a request travels (user to DNS, then to the load balancer, to the app server, then to cache and database; the app also puts jobs on the queue for the worker).</li>
+    <li>Add a big dashed rectangle around everything and write at the corner: <code>All in one data centre</code>.</li>
+  </ol>
+
+  <h3>B. Find every single point of failure</h3>
+  <ol class="steps">
+    <li>Press <kbd>O</kbd> (ellipse tool) and draw a red or bold circle around every box that has no partner. In the drawing above, the answer is: <b>all of them</b>, plus the data centre itself.</li>
+    <li>For each, write one line under it: "If this dies, then ...". Example: "If the database dies, no one can log in or buy."</li>
+    <li>Number the circles 1 to 8 (seven boxes, plus the data centre). Rank them by how likely they are to fail and how much damage they do. Writes to the database usually come first.</li>
+  </ol>
+
+  <h3>C. Fix them one by one</h3>
+  <ol class="steps">
+    <li>Press <kbd>Ctrl</kbd> + <kbd>D</kbd> on selected boxes to duplicate them and build the fix:
+      <ul>
+        <li>DNS: use a provider that already runs many servers (it is a managed, redundant service).</li>
+        <li>Load balancer: two, active-active (the DNS name points to both, or a managed load balancer does it).</li>
+        <li>App server: at least two, behind the load balancer.</li>
+        <li>Cache: a replica of Redis, or make the app work (slower) if the cache is down.</li>
+        <li>Database: a primary with a standby (see <a href="m2-9.html">replication</a>), in another availability zone.</li>
+        <li>Queue and worker: a managed queue stored across zones, and two workers.</li>
+        <li>Data centre: spread across 2 or 3 availability zones.</li>
+      </ul></li>
+    <li>Cross off each numbered circle as you fix it. Write "tested?" next to every standby: what is your plan to prove the failover works?</li>
+  </ol>
+
+  <h3>D. Do the maths on your design</h3>
+  <ol class="steps">
+    <li>Say each single box is 99.9% available. For your <b>fragile</b> version with 4 boxes in the request path (load balancer, app, cache, database), multiply: 0.999 x 0.999 x 0.999 x 0.999 = 0.996 (rounded). That is about 99.6%, so about 35 hours of downtime a year (0.4% of 8,760 is 35).</li>
+    <li>For the <b>fixed</b> version, each layer has two copies: 1 - 0.001 x 0.001 = 0.999999 per layer. Four layers: about 0.999996, so about 99.9996%, around 2 minutes a year in theory.</li>
+    <li>Write one sentence about why the real figure is worse than the theory (shared failures, bad deploys, untested failover).</li>
+    <li>Save as <code>m3-3 spof-exercise.excalidraw</code>.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>How much downtime per year does 99.9% allow?</summary><p>About 8.76 hours (0.1% of 8,760 hours), or about 43.8 minutes a month.</p></details>
+  <details><summary>What is the difference between SLI, SLO and SLA?</summary><p>SLI is the measured number. SLO is the internal target for it. SLA is the promise to customers, usually with a penalty. Keep the SLA looser than the SLO.</p></details>
+  <details><summary>A request passes through a 99.9% app and a 99.9% database in series. What is the availability?</summary><p>0.999 x 0.999 = 0.998001, about 99.8%. Series parts multiply, so it is lower than either one.</p></details>
+  <details><summary>Active-passive versus active-active: one trade-off each?</summary><p>Active-passive is simple but the standby sits idle and failover takes time. Active-active uses all capacity and has no switch gap, but shared state is harder and each node must be able to take on extra load.</p></details>
+  <details><summary>Your design has one database in one availability zone. What do you say, and how do you fix it?</summary><p>It is a single point of failure for both the machine and the zone. Add a standby replica in another zone with automatic failover, take backups, and rehearse a failover to prove it works.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Components in series multiply their availability, so I remove single points of failure by putting copies in parallel across availability zones."</blockquote>
+  <blockquote>"I would target 99.9% for this service, about 8.76 hours of downtime a year, and only go higher if the business needs it, because each extra nine costs a lot."</blockquote>
+  <p><b>Common follow-up question:</b> Is multi-region worth it?</p>
+  <p>Only when the business needs to survive a whole region failing or must serve users far away with low latency. It costs more and makes consistency hard. For most products, multi-AZ in one region with good backups gives a strong balance.</p>
+</section>
+
+</main>
+</body>
+</html>

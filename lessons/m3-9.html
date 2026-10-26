@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Back-of-the-envelope estimation</title>
+<link rel="icon" href="../assets/icon.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/course.js" defer></script>
+<script src="../assets/app.js" defer></script>
+</head>
+<body data-lesson="m3-9">
+<main class="lesson">
+
+<section class="story">
+  <h2>How many chapatis for the wedding?</h2>
+  <p>A caterer is told: "800 guests are coming." He does not know exactly how many will eat. But he thinks quickly: "Each person eats about 3 chapatis. 800 x 3 = 2,400. Some will eat more, so I will make about 3,000. One cook makes 300 an hour, so 4 cooks for 2.5 hours." He did not need a computer or an exact answer. He needed a <b>sensible number in a minute</b>, so he could order flour and hire cooks.</p>
+  <p>System design uses the same trick. Before drawing servers, we ask, "Roughly how big is this? 10 requests a second, or 100,000?" The answer decides whether one machine is enough or you need a whole fleet. Rough sums on the back of an envelope are called <b>back-of-the-envelope estimation</b>.</p>
+</section>
+
+<section class="explain">
+  <h2>Quick sums that guide the design</h2>
+  <p><b>Why do it?</b> Design choices depend on scale: one Postgres is fine for 100 requests per second but not for 100,000. Estimation tells you which problem you really have (storage? bandwidth? reads?), and in an interview it shows you think with numbers. The goal is the right <b>order of magnitude</b>, not exact answers. Round aggressively, write down every assumption, and say them aloud.</p>
+
+  <h3>The numbers to carry in your head</h3>
+  <table>
+    <tr><th>Fact</th><th>Value</th><th>Use</th></tr>
+    <tr><td>Seconds in a day</td><td>86,400, call it <b>~10^5</b> (100,000)</td><td>requests per day / 10^5 = requests per second</td></tr>
+    <tr><td>Seconds in a month</td><td>~2.5 million</td><td>per-month figures to per second</td></tr>
+    <tr><td>Seconds in a year</td><td>~31.5 million (about 3 x 10^7)</td><td>per-year figures</td></tr>
+    <tr><td>1 KB, 1 MB, 1 GB, 1 TB, 1 PB</td><td>10^3, 10^6, 10^9, 10^12, 10^15 bytes</td><td>units</td></tr>
+    <tr><td>A line of text or a chat message</td><td>about 100 bytes to 1 KB</td><td>text storage</td></tr>
+    <tr><td>A compressed photo</td><td>about 200 KB to 2 MB</td><td>media storage</td></tr>
+    <tr><td>Peak traffic</td><td>about <b>2 to 3 times</b> the average</td><td>size for the peak, not the average</td></tr>
+    <tr><td>Read to write ratio</td><td>social and content apps: often 10:1 to 100:1 or more</td><td>cache and replica needs</td></tr>
+    <tr><td>One typical web server</td><td>roughly hundreds to a few thousand simple requests per second</td><td>server count (state your assumption)</td></tr>
+  </table>
+  <p>Latency numbers (memory versus disk versus network) are in <a href="m1-5.html">the latency lesson</a>.</p>
+
+  <h3>The recipe</h3>
+  <ol>
+    <li><b>Clarify and assume.</b> Users, daily active users (DAU), actions per user per day, size of one item.</li>
+    <li><b>Requests per second (QPS).</b> Actions per day / 10^5. Then peak = 2 to 3 times that.</li>
+    <li><b>Storage.</b> New items per day x size per item. Multiply by 365 for a year, by years kept. Remember replicas (usually 3 copies) if it matters.</li>
+    <li><b>Bandwidth.</b> QPS x size per response. Do incoming and outgoing separately.</li>
+    <li><b>Cache memory.</b> The 80/20 rule: about 20% of the data gets about 80% of the reads. Cache that 20% of one day's data.</li>
+    <li><b>Servers.</b> Peak QPS / what one server can do. Add headroom and spare machines.</li>
+  </ol>
+
+  <h3>Worked example: a photo-sharing app</h3>
+  <p><b>Assumptions (say these first):</b> 10 million DAU. On average 1 in 10 users uploads one photo a day, so <b>1 million uploads a day</b>. Each user views 50 photos a day, so <b>500 million views a day</b>. A stored photo is 2 MB. A photo as viewed in the feed (resized) is 200 KB.</p>
+  <table>
+    <tr><th>Quantity</th><th>Working</th><th>Result</th></tr>
+    <tr><td>Upload QPS</td><td>1,000,000 / 100,000</td><td><b>10 per second</b> average; peak 3 x 10 = <b>30 per second</b></td></tr>
+    <tr><td>View QPS</td><td>500,000,000 / 100,000</td><td><b>5,000 per second</b> average; peak 3 x 5,000 = <b>15,000 per second</b></td></tr>
+    <tr><td>Read:write ratio</td><td>5,000 / 10</td><td><b>500 : 1</b>. Very read-heavy: caches and a CDN are a must.</td></tr>
+    <tr><td>Storage per day</td><td>1,000,000 x 2 MB = 2,000,000 MB</td><td><b>2 TB per day</b></td></tr>
+    <tr><td>Storage per year</td><td>2 TB x 365</td><td><b>730 TB</b>; over 5 years about <b>3.65 PB</b> (before replication)</td></tr>
+    <tr><td>Upload bandwidth</td><td>10 per second x 2 MB</td><td>20 MB/s average, about 160 megabits per second; peak 60 MB/s, about 480 Mbps</td></tr>
+    <tr><td>Download bandwidth</td><td>5,000 per second x 200 KB = 1,000,000 KB/s</td><td>1 GB/s, about <b>8 Gbps</b> average; peak 3 GB/s, about <b>24 Gbps</b></td></tr>
+    <tr><td>Cache memory</td><td>New photos per day as viewed: 1,000,000 x 200 KB = 200 GB. Keep 20%: 0.2 x 200 GB</td><td><b>40 GB</b> of hot images, which fits in the memory of a small cache cluster</td></tr>
+    <tr><td>App servers</td><td>Assume 1,000 requests per second each: 15,000 / 1,000 = 15. Add headroom and a spare for failures.</td><td><b>about 20 servers</b></td></tr>
+  </table>
+  <p>(To turn bytes per second into bits per second, multiply by 8: 1 GB/s = 8 Gbps. Most network speeds are quoted in bits.)</p>
+  <p><b>What the numbers tell us:</b> 2 TB per day of photos does not belong in a database: use object storage (<a href="m2-13.html">object storage</a>). 8 to 24 Gbps of downloads is too much for our own servers: use a CDN (<a href="m2-8.html">CDN</a>). 500:1 reads means caching (<a href="m2-7.html">caching</a>). Only the metadata (user, caption, links) lives in the database, which is tiny: 1,000,000 rows a day is easy.</p>
+
+  <h3>Trade-offs and traps</h3>
+  <ul>
+    <li>Precision is false comfort. Round to one digit and move on. "About 5,000 per second" is as useful as "4,937".</li>
+    <li>The average hides the peak. Always size for the peak (2 to 3 times; a one-off event like a sale or a cricket final can be 10 times).</li>
+    <li>Watch units: bits versus bytes, MB versus MiB, per day versus per second. Most mistakes are unit mistakes.</li>
+    <li>State assumptions out loud. The interviewer cares more that you reason clearly than that your numbers match theirs.</li>
+  </ul>
+  <p class="tip">Do the maths on a visible whiteboard, in powers of ten, and finish every estimate with "so this means we need ...". An estimate that changes no design decision was wasted time.</p>
+</section>
+
+<section class="picture">
+  <h2>The picture to remember</h2>
+  <figure>
+    <svg viewBox="0 0 640 300" role="img" aria-label="Estimation steps as boxes with the photo app numbers: DAU 10 million, QPS 5000 views per second and 10 uploads, peak 15000, storage 2 terabytes per day, bandwidth 8 gigabits per second, cache 40 gigabytes, servers about 20">
+      <defs><marker id="ar-m3-9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="30" width="185" height="70" rx="8"/>
+        <rect x="228" y="30" width="185" height="70" rx="8"/>
+        <rect x="440" y="30" width="185" height="70" rx="8"/>
+        <rect x="15" y="160" width="185" height="70" rx="8"/>
+        <rect x="228" y="160" width="185" height="70" rx="8"/>
+        <rect x="440" y="160" width="185" height="70" rx="8"/>
+        <path d="M202 65 H226" marker-end="url(#ar-m3-9)"/>
+        <path d="M415 65 H438" marker-end="url(#ar-m3-9)"/>
+        <path d="M532 102 V130 H108 V157" marker-end="url(#ar-m3-9)"/>
+        <path d="M202 195 H226" marker-end="url(#ar-m3-9)"/>
+        <path d="M415 195 H438" marker-end="url(#ar-m3-9)"/>
+      </g>
+      <g fill="currentColor" font-family="system-ui, sans-serif" text-anchor="middle">
+        <text x="107" y="56" font-size="15" font-weight="700">1. Users (DAU)</text>
+        <text x="107" y="78" font-size="14">10 million</text>
+        <text x="320" y="56" font-size="15" font-weight="700">2. Average QPS</text>
+        <text x="320" y="78" font-size="14">5,000 views, 10 uploads</text>
+        <text x="532" y="56" font-size="15" font-weight="700">3. Peak (x3)</text>
+        <text x="532" y="78" font-size="14">15,000 views per second</text>
+        <text x="107" y="186" font-size="15" font-weight="700">4. Storage</text>
+        <text x="107" y="208" font-size="14">2 TB/day, 730 TB/year</text>
+        <text x="320" y="186" font-size="15" font-weight="700">5. Bandwidth</text>
+        <text x="320" y="208" font-size="14">8 Gbps avg, 24 peak</text>
+        <text x="532" y="186" font-size="15" font-weight="700">6. Cache + servers</text>
+        <text x="532" y="208" font-size="14">40 GB, about 20 servers</text>
+        <text x="320" y="270" font-size="13">Each box gives a number that changes a design choice: CDN, object storage, cache.</text>
+      </g>
+    </svg>
+    <figcaption>Follow the numbers 1 to 6. The arrow from box 3 wraps round to start the second row.</figcaption>
+  </figure>
+  <p>Redraw this in Excalidraw and save it as <code>m3-9 estimation-steps.excalidraw</code> in your Module 3 folder.</p>
+</section>
+
+<section class="watch">
+  <h2>See it in action</h2>
+  <ul class="links">
+    <li><a href="https://www.youtube.com/results?search_query=ByteByteGo+back+of+the+envelope+estimation" target="_blank" rel="noopener">YouTube search: "ByteByteGo back of the envelope estimation"</a>
+      <span class="meta">Short. Watch it all and notice the powers-of-two or ten table he uses.</span></li>
+    <li><a href="https://www.youtube.com/results?search_query=Hello+Interview+back+of+the+envelope+estimation+system+design" target="_blank" rel="noopener">YouTube search: "Hello Interview back of the envelope estimation system design"</a>
+      <span class="meta">Pick one result. Watch how the speaker states assumptions and rounds.</span></li>
+  </ul>
+</section>
+
+<section class="read">
+  <h2>Read a little</h2>
+  <ul class="links">
+    <li><a href="https://github.com/donnemartin/system-design-primer#back-of-the-envelope-calculations" target="_blank" rel="noopener">System Design Primer: Back-of-the-envelope calculations</a>
+      <span class="meta">Read the intro and the latency numbers table. Skim the usage example.</span></li>
+    <li><a href="https://www.hellointerview.com/learn/system-design" target="_blank" rel="noopener">Hello Interview: System design learning path</a>
+      <span class="meta">Skim the headings and open one article on numbers or scale; read only what you recognise.</span></li>
+  </ul>
+</section>
+
+<section class="do">
+  <h2>Do it yourself (about 30 minutes)</h2>
+  <p>You need a calculator. On Windows press <kbd>⊞ Win</kbd>, type <code>Calculator</code> and press <kbd>Enter</kbd>. Or open Chrome, press <kbd>F12</kbd>, click <span class="ui">Console</span>, and type sums like <code>2000000 / 100000</code> then <kbd>Enter</kbd>. Round as you go. For each practice: write assumptions first, do the sums on paper, then open the answer.</p>
+
+  <h3>A. Practice 1: a URL shortener</h3>
+  <p>A service like bit.ly turns a long link into a short one and redirects when someone opens it.</p>
+  <ol class="steps">
+    <li>Assume <b>100 million new short URLs per month</b>, a read:write ratio of <b>100 : 1</b>, each record about <b>500 bytes</b>, kept for <b>5 years</b>.</li>
+    <li>Work out: (a) writes per second, average and peak; (b) reads per second, average and peak; (c) storage in 5 years; (d) how long the short code must be if it uses letters and digits (62 symbols); (e) cache size using the 80/20 rule on one day's reads.</li>
+    <li>Do it on paper first. Then open the answer:
+      <details><summary>Show the answer</summary>
+        <p>(a) Seconds per month about 2.5 million. Writes = 100,000,000 / 2,500,000 = <b>40 per second</b>; peak 3 x 40 = <b>120 per second</b>.</p>
+        <p>(b) Reads = 100 x 40 = <b>4,000 per second</b>; peak <b>12,000 per second</b>.</p>
+        <p>(c) Per month: 100,000,000 x 500 B = 50 GB. Five years = 60 months: 60 x 50 GB = <b>3,000 GB = 3 TB</b>. Total records: 60 x 100 million = <b>6 billion</b>.</p>
+        <p>(d) Length 5 gives 62^5 = about 0.9 billion, too few. Length 6 gives 62^6 = about 56.8 billion, enough for 6 billion. Length 7 gives about 3.5 trillion, a very safe choice. So <b>6 to 7 characters</b>.</p>
+        <p>(e) Reads per day = 4,000 x 100,000 = 400 million. Assume 20% of that, 80 million lookups, are for distinct hot URLs: 80,000,000 x 500 B = <b>40 GB</b>. That fits in one big cache server's memory, or a small cluster.</p>
+        <p><b>Takeaway:</b> 3 TB in five years is small. One database (with replicas for reads) and a cache is enough; this is a read-heavy, small-data problem. Sharding is not needed on day one.</p>
+      </details></li>
+    <li>Compare with your own numbers. If you differ by 2 times, that is fine; if by 100 times, find the unit mistake.</li>
+  </ol>
+
+  <h3>B. Practice 2: a chat app</h3>
+  <ol class="steps">
+    <li>Assume <b>50 million DAU</b>, each sends <b>40 messages a day</b>, a message is <b>100 bytes</b> (text, with metadata). At peak <b>10%</b> of DAU are connected at once, and one server can hold about <b>50,000</b> open connections (an assumption, see <a href="m2-1.html">WebSockets</a>).</li>
+    <li>Work out: (a) messages per day; (b) messages per second, average and peak; (c) storage per day and per year; (d) concurrent connections and how many chat servers; (e) incoming bandwidth at peak.</li>
+    <li>Do it on paper, then open the answer:
+      <details><summary>Show the answer</summary>
+        <p>(a) 50,000,000 x 40 = 2,000,000,000 = <b>2 billion messages a day</b>.</p>
+        <p>(b) 2,000,000,000 / 100,000 = <b>20,000 per second</b>; peak 3 x 20,000 = <b>60,000 per second</b>.</p>
+        <p>(c) 2,000,000,000 x 100 B = 200,000,000,000 B = <b>200 GB per day</b>. Year: 200 GB x 365 = 73,000 GB = <b>73 TB</b> (times about 3 for replicas, around 220 TB). This is a lot of small writes, so a write-friendly store, sharded by conversation or user, is a good fit.</p>
+        <p>(d) 10% of 50 million = <b>5 million</b> concurrent connections. 5,000,000 / 50,000 = <b>100 chat servers</b> (more for headroom).</p>
+        <p>(e) 60,000 x 100 B = 6,000,000 B/s = <b>6 MB/s</b>, about 48 Mbps. Tiny. Text is cheap; the cost is in the number of connections and the write volume. (Photos and video would change this completely.)</p>
+        <p><b>Takeaway:</b> the hard parts are holding millions of open connections and storing billions of messages, not bandwidth.</p>
+      </details></li>
+  </ol>
+
+  <h3>C. Make your own cheat sheet</h3>
+  <ol class="steps">
+    <li>Open a new file <code>m3-9 cheat-sheet.txt</code>. Copy the numbers table from this lesson.</li>
+    <li>Add three lines in your own words: "Per day / 100,000 = per second", "Peak = 3 x average", "Cache = 20% of a day's hot data".</li>
+    <li>Pick one app you use daily (a food app, a payment app). Estimate its QPS and storage in 10 minutes, and write one design decision your numbers justify.</li>
+  </ol>
+</section>
+
+<section class="check">
+  <h2>Quick quiz</h2>
+  <details><summary>How do you convert requests per day into requests per second quickly?</summary><p>Divide by about 100,000 (10^5), since a day has 86,400 seconds.</p></details>
+  <details><summary>Why size for peak instead of average?</summary><p>The system must survive the busiest moments. Peak is usually 2 to 3 times the average, and sometimes more during events.</p></details>
+  <details><summary>An app gets 200 million requests a day. What is the average QPS and the peak?</summary><p>200,000,000 / 100,000 = 2,000 per second on average. Peak about 3 x 2,000 = 6,000 per second.</p></details>
+  <details><summary>1 million uploads a day of 2 MB each: storage per day and per year?</summary><p>1,000,000 x 2 MB = 2 TB per day. 2 TB x 365 = 730 TB per year.</p></details>
+  <details><summary>What does the 80/20 rule say about cache size?</summary><p>About 20% of the data serves about 80% of reads, so cache roughly 20% of a day's hot data rather than everything.</p></details>
+  <details><summary>Your estimate says 24 Gbps of downloads. What design decision does it drive?</summary><p>Serve images from a CDN, not from our own servers, and store the originals in object storage. Our app servers would not cope with that traffic and it would be very expensive.</p></details>
+</section>
+
+<section class="interview">
+  <h2>Say it in an interview</h2>
+  <blockquote>"Let me state assumptions: 10 million daily users, 50 views each. That is 500 million views a day, divided by roughly 10^5 seconds, so about 5,000 per second on average and 15,000 at peak."</blockquote>
+  <blockquote>"Two terabytes a day of photos means object storage and a CDN, not a database."</blockquote>
+  <p><b>Common follow-up question:</b> What if your assumptions are wrong?</p>
+  <p>I would say that the design is driven by orders of magnitude, so being off by 2 times changes little. The key point is which resource is the bottleneck. I would also make the system easy to scale (stateless servers, a CDN, sharding when needed) and re-measure after launch.</p>
+</section>
+
+</main>
+</body>
+</html>
